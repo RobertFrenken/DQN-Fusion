@@ -369,6 +369,12 @@ class DistillationTrainer:
             if teacher_trainer.best_val_loss < best_val_loss:
                 best_val_loss = teacher_trainer.best_val_loss
                 self.best_teacher_model = teacher_trainer.model.state_dict().copy()
+        
+        # save metrics, which will be dumped to json
+        self.teacher_metrics = {
+        "loss": teacher_trainer.metrics['train']['loss'],
+        "accuracy": teacher_trainer.metrics['train']['accuracy']
+        }
 
     def train_student(self, train_loader, test_loader=None):
         """Train the student model using PyTorchDistillationTrainer."""
@@ -391,6 +397,12 @@ class DistillationTrainer:
             print(f"Student Epoch {epoch+1} | Train Loss: {metrics_train['loss']:.4f} | Train Acc: {metrics_train['accuracy']:.4f} | "
               f"Test Loss: {metrics_test['loss']:.4f} | Test Acc: {metrics_test['accuracy']:.4f}")
             
+        # save metrics, which will be dumped to json
+        self.student_metrics = {
+        "loss": student_trainer.metrics['train']['loss'],
+        "accuracy": student_trainer.metrics['train']['accuracy']
+        }
+
     def train_sequential(self, train_loader, test_loader=None):
         """Train the teacher first, then the student."""
         if self.teacher:
