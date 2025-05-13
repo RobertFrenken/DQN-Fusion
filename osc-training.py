@@ -16,6 +16,7 @@ import json
 from models.models import GATWithJK
 from preprocessing import graph_creation
 from training_utils import PyTorchTrainer, PyTorchDistillationTrainer, DistillationTrainer
+import torch.profiler
 
 @hydra.main(config_path="conf", config_name="base", version_base=None)
 def main(config: DictConfig):
@@ -104,7 +105,16 @@ def main(config: DictConfig):
     
     # Train teacher first, then student
     print("Starting sequential training...")
-    trainer.train_sequential(train_loader, test_loader)
+    with torch.profiler.profile(
+            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+            record_shapes=True,
+            profile_memory=True,
+            with_stack=True
+        ) as prof:
+            trainer.train_sequential(train_loader, test_loader)
+
+    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
+    # trainer.train_sequential(train_loader, test_loader)
 
     # Define the folder to save the models
     save_folder = "saved_models"
