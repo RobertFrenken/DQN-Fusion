@@ -10,3 +10,4 @@ optimizer: torch.optim.SGD
 _target_: trainers.DistillationTrainer
 device: cuda
 use_focal_loss: true
+profile: false

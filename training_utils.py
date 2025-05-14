@@ -313,6 +313,8 @@ class PyTorchDistillationTrainer(PyTorchTrainer):
                 metrics['train']['distill_loss'] = self.metrics['train']['distill_loss'][-1]
         return metrics
 
+def safe_fmt(val):
+    return f"{val:.4f}" if val is not None else "   N/A   "
 class DistillationTrainer:
     def __init__(self, student, teacher=None, device="cuda", **kwargs):
         self.student = student.to(device)
@@ -330,53 +332,70 @@ class DistillationTrainer:
         self.teacher_metrics = {"loss": [], "accuracy": []}  # Add other metrics as needed
         self.student_metrics = {"loss": [], "accuracy": []}  # Add other metrics as needed
 
-    def train_teacher(self, train_loader, test_loader=None):
-        """Train the teacher model using PyTorchTrainer."""
-        if not self.teacher:
-            raise ValueError("Teacher model is not defined.")
-        
-        if self.use_focal_loss:
-            loss_fn = FocalLoss(alpha=1.0, gamma=1.0)
-            print("Using Focal Loss for teacher model training.")
-        else:
-            loss_fn = torch.nn.BCEWithLogitsLoss()
-            print("Using BCE Loss for teacher model training.")
+    def train_teacher(self, train_loader, test_loader=None, max_batches=None):
+            """Train the teacher model using PyTorchTrainer."""
+            if not self.teacher:
+                raise ValueError("Teacher model is not defined.")
             
-        
-        teacher_trainer = PyTorchTrainer(
-            model=self.teacher,
-            optimizer=torch.optim.Adam(self.teacher.parameters(), lr=self.lr),
-            loss_fn=loss_fn,
-            device=self.device
-        )
+            if self.use_focal_loss:
+                loss_fn = FocalLoss(alpha=1.0, gamma=1.0)
+                print("Using Focal Loss for teacher model training.")
+            else:
+                loss_fn = torch.nn.BCEWithLogitsLoss()
+                print("Using BCE Loss for teacher model training.")
+                
+            teacher_trainer = PyTorchTrainer(
+                model=self.teacher,
+                optimizer=torch.optim.Adam(self.teacher.parameters(), lr=self.lr),
+                loss_fn=loss_fn,
+                device=self.device
+            )
 
-        self.best_teacher_model = None  # Initialize best_teacher_model
-        best_val_loss = float('inf')  # Track the best validation loss
-        
-        for epoch in range(self.teacher_epochs):
-            # Print teacher epoch metrics in a table-like format
-            if epoch == 0:  # Print the header only once
-                print(f"{'Epoch':<10} | {'Train Loss':<10} | {'Train Acc':<10} | {'Test Loss':<10} | {'Test Acc':<10}")
-                print("-" * 60)
-            teacher_trainer.train_one_epoch(train_loader)
-            teacher_trainer.validate(test_loader)
-            metrics_train = teacher_trainer.report_latest_metrics()['train']
-            metrics_test = teacher_trainer.report_latest_metrics()['val']
-            print(f"{epoch+1:<10} | {metrics_train['loss']:<10.4f} | {metrics_train['accuracy']:<10.4f} | {metrics_test['loss']:<10.4f} | {metrics_test['accuracy']:<10.4f}")
+            self.best_teacher_model = None  # Initialize best_teacher_model
+            best_val_loss = float('inf')  # Track the best validation loss
             
-
-            # Save the best teacher model
-            if teacher_trainer.best_val_loss < best_val_loss:
-                best_val_loss = teacher_trainer.best_val_loss
-                self.best_teacher_model = teacher_trainer.model.state_dict().copy()
-        
-        # save metrics, which will be dumped to json
-        self.teacher_metrics = {
-        "loss": teacher_trainer.metrics['train']['loss'],
-        "accuracy": teacher_trainer.metrics['train']['accuracy']
-        }
-
-    def train_student(self, train_loader, test_loader=None):
+            for epoch in range(self.teacher_epochs):
+                if epoch == 0:  # Print the header only once
+                    print(f"{'Epoch':<10} | {'Train Loss':<10} | {'Train Acc':<10} | {'Test Loss':<10} | {'Test Acc':<10}")
+                    print("-" * 60)
+                if max_batches is not None:
+                    batch_count = 0
+                    for batch in train_loader:
+                        # Simulate one batch step (forward, backward, optimizer)
+                        teacher_trainer.model.train()
+                        batch = batch.to(self.device)
+                        targets = batch.y.float()
+                        teacher_trainer.optimizer.zero_grad()
+                        outputs = teacher_trainer.model(batch).squeeze()
+                        loss = loss_fn(outputs, targets)
+                        loss.backward()
+                        teacher_trainer.optimizer.step()
+                        batch_count += 1
+                        if batch_count >= max_batches:
+                            break
+                    teacher_trainer.validate(test_loader)
+                else:
+                    teacher_trainer.train_one_epoch(train_loader)
+                    teacher_trainer.validate(test_loader)
+                metrics_train = teacher_trainer.report_latest_metrics()['train']
+                metrics_test = teacher_trainer.report_latest_metrics()['val']
+                print(f"Teacher Epoch {epoch+1} | Train Loss: {safe_fmt(metrics_train['loss'])} | "
+                  f"Train Acc: {safe_fmt(metrics_train['accuracy'])} | "
+                  f"Test Loss: {safe_fmt(metrics_test['loss'])} | "
+                  f"Test Acc: {safe_fmt(metrics_test['accuracy'])}")
+                
+                # Save the best teacher model
+                if teacher_trainer.best_val_loss < best_val_loss:
+                    best_val_loss = teacher_trainer.best_val_loss
+                    self.best_teacher_model = teacher_trainer.model.state_dict().copy()
+            
+            # save metrics, which will be dumped to json
+            self.teacher_metrics = {
+            "loss": teacher_trainer.metrics['train']['loss'],
+            "accuracy": teacher_trainer.metrics['train']['accuracy']
+            }
+    
+    def train_student(self, train_loader, test_loader=None, max_batches=None):
         """Train the student model using PyTorchDistillationTrainer."""
         student_trainer = PyTorchDistillationTrainer(
             model=self.student,
@@ -390,12 +409,34 @@ class DistillationTrainer:
         )
         
         for epoch in range(self.student_epochs):
-            student_trainer.train_one_epoch(train_loader)
-            student_trainer.validate(test_loader) 
+            if max_batches is not None:
+                batch_count = 0
+                for batch in train_loader:
+                    student_trainer.model.train()
+                    batch = batch.to(self.device)
+                    targets = batch.y.float()
+                    student_trainer.optimizer.zero_grad()
+                    outputs = student_trainer.model(batch).squeeze()
+                    if student_trainer.use_focal_loss:
+                        loss_fn = FocalLoss(alpha=1.0, gamma=1.0)
+                    else:
+                        loss_fn = student_trainer.loss_fn
+                    loss = loss_fn(outputs, targets)
+                    loss.backward()
+                    student_trainer.optimizer.step()
+                    batch_count += 1
+                    if batch_count >= max_batches:
+                        break
+                student_trainer.validate(test_loader)
+            else:
+                student_trainer.train_one_epoch(train_loader)
+                student_trainer.validate(test_loader)
             metrics_train = student_trainer.report_latest_metrics()['train']
             metrics_test = student_trainer.report_latest_metrics()['val']
-            print(f"Student Epoch {epoch+1} | Train Loss: {metrics_train['loss']:.4f} | Train Acc: {metrics_train['accuracy']:.4f} | "
-              f"Test Loss: {metrics_test['loss']:.4f} | Test Acc: {metrics_test['accuracy']:.4f}")
+            print(f"Student Epoch {epoch+1} | Train Loss: {safe_fmt(metrics_train['loss'])} | "
+                  f"Train Acc: {safe_fmt(metrics_train['accuracy'])} | "
+                  f"Test Loss: {safe_fmt(metrics_test['loss'])} | "
+                  f"Test Acc: {safe_fmt(metrics_test['accuracy'])}")
             
         # save metrics, which will be dumped to json
         self.student_metrics = {
@@ -403,13 +444,14 @@ class DistillationTrainer:
         "accuracy": student_trainer.metrics['train']['accuracy']
         }
 
-    def train_sequential(self, train_loader, test_loader=None):
+
+    def train_sequential(self, train_loader, test_loader=None, max_batches=None):
         """Train the teacher first, then the student."""
         if self.teacher:
             print("Training teacher model...")
-            self.train_teacher(train_loader, test_loader)
+            self.train_teacher(train_loader, test_loader, max_batches=max_batches)
         
         print("Training student model...")
-        self.train_student(train_loader, test_loader)
+        self.train_student(train_loader, test_loader, max_batches=max_batches)
 
 

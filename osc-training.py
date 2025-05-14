@@ -105,16 +105,24 @@ def main(config: DictConfig):
     
     # Train teacher first, then student
     print("Starting sequential training...")
-    with torch.profiler.profile(
-            activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-            record_shapes=True,
-            profile_memory=True,
-            with_stack=True
-        ) as prof:
-            trainer.train_sequential(train_loader, test_loader)
+    PROFILE = config_dict['profile']
+    if PROFILE:
+        print("Profiling the first 5 batches...")
+        with torch.profiler.profile(
+                activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+                record_shapes=False,
+                profile_memory=False,
+                with_stack=False
+            ) as prof:
+                trainer.train_sequential(train_loader, test_loader, max_batches=5)
+        print("Profiler results:")
+        print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
+        print("Continuing training without profiler...")
+        trainer.train_sequential(train_loader, test_loader)
 
-    print(prof.key_averages().table(sort_by="cuda_time_total", row_limit=20))
-    # trainer.train_sequential(train_loader, test_loader)
+    else:
+        trainer.train_sequential(train_loader, test_loader)
+
 
     # Define the folder to save the models
     save_folder = "saved_models"
