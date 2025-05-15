@@ -18,7 +18,8 @@ class GATWithJK(torch.nn.Module):
         
         # JK aggregation (LSTM mode)
         self.jk = JumpingKnowledge(
-            mode="lstm",
+            # will try cat for speed and lower memory usage
+            mode="lstm", # "cat" or "max" or "mean"
             channels=hidden_channels * heads,
             num_layers=num_layers
         )
