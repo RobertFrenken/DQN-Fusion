@@ -4,7 +4,7 @@ from torch_geometric.nn import GATConv, global_mean_pool
 from torch_geometric.data import Data, Batch, DataLoader
 from torch_geometric.utils import unbatch
 
-class TSGATAutoencoder(nn.Module):
+class Autoencoder(nn.Module):
     """Processes time-series graphs through GAT layers"""
     def __init__(self, time_dim, hidden_dim=32, heads=4):
         super().__init__()
@@ -25,7 +25,7 @@ class TSGATAutoencoder(nn.Module):
         x = self.dec1(x, edge_index).relu()
         return self.dec2(x, edge_index).sigmoid()
 
-class TSGATClassifier(nn.Module):
+class Classifier(nn.Module):
     """Classification with temporal attention"""
     def __init__(self, time_dim, hidden_dim=32, heads=4):
         super().__init__()
@@ -41,11 +41,11 @@ class TSGATClassifier(nn.Module):
         # Temporal pooling and classification
         return self.class_head(global_mean_pool(x, batch)).sigmoid()
 
-class TimeSeriesGATPipeline:
+class GATPipeline:
     def __init__(self, time_dim, device='cpu'):
         self.device = device
-        self.autoencoder = TSGATAutoencoder(time_dim).to(device)
-        self.classifier = TSGATClassifier(time_dim).to(device)
+        self.autoencoder = Autoencoder(time_dim).to(device)
+        self.classifier = Classifier(time_dim).to(device)
         self.threshold = None
 
     def train_stage1(self, train_loader, epochs=50):
@@ -71,7 +71,7 @@ class TimeSeriesGATPipeline:
                 recon = self.autoencoder(batch.x, batch.edge_index)
                 errors.append((recon - batch.x).pow(2).mean(dim=1))
         
-        self.threshold = torch.cat(errors).quantile(0.95).item()
+        self.threshold = torch.cat(errors).quantile(0.90).item()
 
     def train_stage2(self, full_loader, epochs=50):
         """Train classifier on filtered graphs"""
