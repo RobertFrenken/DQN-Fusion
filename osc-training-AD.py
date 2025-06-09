@@ -30,6 +30,10 @@ class GATPipeline:
     
     # NOTE: How does the train1 know to only train on normal graphs?
     # is stage 2 handling sample by sample or the entire batch?
+    # NOTE: The reconstruction error is likely low since most of the nodes
+    # in the graph are normal, there is really only one node that is an attack,
+    # so the error would be low. I will have to check this to see if error is any
+    # node or the entire graph.
 
     def train_stage1(self, train_loader, epochs=50):
         self.autoencoder.train()
