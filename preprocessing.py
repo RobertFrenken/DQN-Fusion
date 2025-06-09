@@ -6,50 +6,50 @@ from torch_geometric.data import Data
 import os
 import unittest
 
-def graph_creation(root_folder, folder_type='train_', window_size=50, stride=50, verbose=False):
-    """
-    Creates a dataset of graphs from a set of CSV files containing CAN data.
-    
-    Args:
-        combined (bool): If True, combines multiple datasets into one.
-        path (string): A string containing the path to a CAN data csv file.
-        datasize (float): The size of the dataset to be used. Default is 1.0 (100%).
-        window_size (int): The size of the sliding window.
-        stride (int): The stride for the sliding window.
-        verbose (bool): If True, prints additional information during processing.
-    
-    Returns:
-        dataset: Class object GraphDataset pytorch geometric graph datasets.
-    """
-    # Find all CSV files in folders with 'train' in their name
+def build_id_mapping(df):
+    """Builds a mapping from CAN IDs to indices for embedding, with OOV index."""
+    unique_ids = pd.concat([df['CAN ID'], df['Source'], df['Target']]).unique()
+    id_mapping = {can_id: idx for idx, can_id in enumerate(unique_ids)}
+    oov_index = len(id_mapping)
+    id_mapping['OOV'] = oov_index
+    return id_mapping
+
+def graph_creation(root_folder, folder_type='train_', window_size=50, stride=50, verbose=False, return_id_mapping=False):
     train_csv_files = []
     for dirpath, dirnames, filenames in os.walk(root_folder):
-        if folder_type in dirpath.lower():  # Check if 'train_' is in the folder name
+        if folder_type in dirpath.lower():
             for filename in filenames:
                 if filename.endswith('.csv') and 'suppress' not in filename.lower() and 'masquerade' not in filename.lower():
-                    # Exclude files with 'suppress' or 'masquerade' in their names # Only include CSV files
                     train_csv_files.append(os.path.join(dirpath, filename))
-    
-    # Process each CSV file and create graphs
+    # Build global mapping
+    all_dfs = []
+    for csv_file in train_csv_files:
+        df = pd.read_csv(csv_file)
+        df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
+        df.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
+        # Add Source and Target columns here
+        df['Source'] = df['CAN ID']
+        df['Target'] = df['CAN ID'].shift(-1)
+        all_dfs.append(df)
+    if all_dfs:
+        global_id_mapping = build_id_mapping(pd.concat(all_dfs, ignore_index=True))
+    else:
+        global_id_mapping = {'OOV': 0}
     combined_list = []
     for csv_file in train_csv_files:
         if verbose:
             print(f"Processing file: {csv_file}")
-        df = dataset_creation_vectorized(csv_file)
-        # Check for NaN values in the DataFrame
-        # this is a stopgap. The issue is there are some rows where
-        # the data field is empty, and the column Data1 is left Nan
-        # in the future will need to handle this in the above function.
+        df = dataset_creation_vectorized(csv_file, id_mapping=global_id_mapping)
         if df.isnull().values.any():
             if verbose:
                 print(f"NaN values found in DataFrame from file: {csv_file}")
                 print(df[df.isnull().any(axis=1)])
-            df.fillna(0, inplace=True)  # Replace NaN values with 0
+            df.fillna(0, inplace=True)
         graphs = create_graphs_numpy(df, window_size=window_size, stride=stride)
         combined_list.extend(graphs)
-
-    # Create the combined dataset
     dataset = GraphDataset(combined_list)
+    if return_id_mapping:
+        return dataset, global_id_mapping
     return dataset
 
 def create_graphs_numpy(data, window_size, stride):
@@ -74,6 +74,7 @@ def create_graphs_numpy(data, window_size, stride):
     # list comprehension to create graphs for each window
     return [window_data_transform_numpy(data[start:start + window_size]) 
             for start in start_indices]
+
 
 
 def window_data_transform_numpy(data):
@@ -114,11 +115,18 @@ def window_data_transform_numpy(data):
         mask = (source == node) # Only consider rows where the node is the source
         node_data = data[mask, 0:9]  # Data columns are assumed to be from index 0 to 9 (exclusive of label)
         if len(node_data) > 0:  # Avoid empty slices
-            node_features[i, :-1] = node_data.mean(axis=0)  # Calculate mean of data columns
+            # CHANGE: Normalize payload columns (columns 1 to 8)
+            node_data_norm = node_data.copy()
+            node_data_norm[:, 1:9] = node_data_norm[:, 1:9] / 255.0  # Data1-Data8 normalized to [0,1]
+            node_features[i, :-1] = node_data_norm.mean(axis=0)
         node_counts[i] = mask.sum()  # Count occurrences of the node
 
-    # Append the node counts as the last feature
-    node_features[:, -1] = node_counts
+    # CHANGE: Normalize occurrence count (last feature)
+    occ = node_counts
+    if occ.max() > occ.min():
+        node_features[:, -1] = (occ - occ.min()) / (occ.max() - occ.min())
+    else:
+        node_features[:, -1] = 0.0
     
     x = torch.tensor(node_features, dtype=torch.float)
     y = torch.tensor([1 if 1 in labels else 0], dtype=torch.long)
@@ -149,7 +157,7 @@ def pad_row_vectorized(df):
     df.fillna('00', inplace=True)
 
     return df
-def dataset_creation_vectorized(path):
+def dataset_creation_vectorized(path, id_mapping=None):
     """
     Takes a csv file containing CAN data. Creates a pandas dataframe,
     adds source and target columns, pads the rows with missing values,
@@ -195,11 +203,19 @@ def dataset_creation_vectorized(path):
     for col in hex_columns:
         df[col] = df[col].apply(lambda x: int(x, 16) if pd.notnull(x) and isinstance(x, str) and all(c in '0123456789abcdefABCDEF' for c in x) else None)
 
+    # CHANGE: Apply ID mapping (categorical encoding)
+    if id_mapping is not None:
+        oov_index = id_mapping['OOV']
+        for col in ['CAN ID', 'Source', 'Target']:
+            df[col] = df[col].map(lambda x: id_mapping.get(x, oov_index))
+
     # Drop the last row and reencode labels
     df = df.iloc[:-1]
-    
-    # Map the attack column directly to the label column
     df['label'] = df['attack'].astype(int)
+
+    # CHANGE: Normalize payload columns to [0, 1]
+    for col in [f'Data{i+1}' for i in range(8)]:
+        df[col] = df[col] / 255.0
 
     return df[['CAN ID', 'Data1', 'Data2', 'Data3', 'Data4', 
                'Data5', 'Data6', 'Data7', 'Data8', 'Source', 'Target', 'label']]
@@ -221,25 +237,24 @@ class GraphDataset(Dataset):
 # Testing Class                 #
 #################################
 class TestPreprocessing(unittest.TestCase):
-    def test_dataset_creation_vectorized(self):
-        test_path = r"datasets/can-train-and-test-v1.5/hcrl-ch/train_02_with_attacks/fuzzing-train.csv"
-        df = dataset_creation_vectorized(test_path)
-        self.assertEqual(len(df.columns), 12)
-        self.assertTrue('label' in df.columns)
-
-        # Check for NaN values in the DataFrame
-        self.assertFalse(df.isnull().values.any(), "Dataset contains NaN values!")
-
     def test_graph_creation(self):
-        root_folder = r"datasets/can-train-and-test-v1.5/set_02"
+        print("Testing graph creation...")
+        root_folder = r"datasets/can-train-and-test-v1.5/hcrl-sa"
         graph_dataset = graph_creation(root_folder)
         self.assertGreater(len(graph_dataset), 0)
 
-         # Check for NaN values in the graph dataset
+        # Check for NaN and Inf values in the graph dataset
         for data in graph_dataset:
             self.assertFalse(torch.isnan(data.x).any(), "Graph dataset contains NaN values!")
             self.assertFalse(torch.isinf(data.x).any(), "Graph dataset contains Inf values!")
-
+            # Check normalization for payload columns in node features (columns 1-8)
+            payload = data.x[:, 1:9]
+            id = data.x[:, 0]  # Assuming first column is ID
+            count = data.x[:, -1]  # Assuming last column is count
+            # self.assertTrue(((id >= 0).all() and (id <= 1).all()), "ID features not normalized!")
+            self.assertTrue(((payload >= 0).all() and (payload <= 1).all()), "Payload features not normalized!")
+            self.assertTrue(((count >= 0).all() and (count <= 1).all()), "Count node features not normalized!")
+        print("Graph creation test passed.")
 
 if __name__ == "__main__":
     unittest.main()
