@@ -1,7 +1,6 @@
 import numpy as np # Successfully installed numpy-1.23.5
 import pandas as pd # Successfully installed pandas-1.3.5
 import matplotlib.pyplot as plt
-import seaborn as sns
 import os
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
@@ -11,15 +10,29 @@ import sys
 import time
 import hydra
 from omegaconf import DictConfig, OmegaConf
-import wandb
-import json
 from models.models import GATWithJK, Autoencoder
 from preprocessing import graph_creation
 from training_utils import PyTorchTrainer, PyTorchDistillationTrainer, DistillationTrainer
-import torch.profiler
-from torch_geometric.utils import unbatch
 from torch_geometric.data import Batch
+from sklearn.metrics import confusion_matrix
+import random
 
+def print_graph_stats(graphs, label):
+    import torch
+    all_x = torch.cat([g.x for g in graphs], dim=0)
+    print(f"\n--- {label} Graphs ---")
+    print(f"Num graphs: {len(graphs)}")
+    print(f"Node feature means: {all_x.mean(dim=0)}")
+    print(f"Node feature stds: {all_x.std(dim=0)}")
+    print(f"Unique CAN IDs: {all_x[:,0].unique()}")
+    print(f"Sample node features:\n{all_x[:5]}")
+
+def print_graph_structure(graphs, label):
+    num_nodes = [g.num_nodes for g in graphs]
+    num_edges = [g.num_edges for g in graphs]
+    print(f"\n--- {label} Graphs Structure ---")
+    print(f"Avg num nodes: {sum(num_nodes)/len(num_nodes):.2f}")
+    print(f"Avg num edges: {sum(num_edges)/len(num_edges):.2f}")
 class GATPipeline:
     def __init__(self, num_ids, embedding_dim=8, device='cpu'):
         self.device = device
@@ -37,7 +50,7 @@ class GATPipeline:
 
     def train_stage1(self, train_loader, epochs=50):
         self.autoencoder.train()
-        opt = torch.optim.Adam(self.autoencoder.parameters(), lr=1e-3, weight_decay=1e-4)
+        opt = torch.optim.Adam(self.autoencoder.parameters(), lr=1e-2, weight_decay=1e-4)
         for _ in range(epochs):
             for batch in train_loader:
                 batch = batch.to(self.device)
@@ -53,8 +66,8 @@ class GATPipeline:
                 batch = batch.to(self.device)
                 recon = self.autoencoder(batch.x, batch.edge_index)
                 errors.append((recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1))
-        # self.threshold = torch.cat(errors).quantile(0.0001).item()
-        self.threshold = 0
+        self.threshold = torch.cat(errors).quantile(0.5).item()
+        # self.threshold = 0
 
     def train_stage2(self, full_loader, epochs=50):
         """Train classifier on filtered graphs"""
@@ -84,7 +97,8 @@ class GATPipeline:
                     num_nodes = graph.x.size(0)
                     node_errors = error[start:start+num_nodes]
                     if node_errors.numel() > 0:
-                        graph_error = node_errors.mean().item()
+                        # graph_error = node_errors.mean().item()
+                        graph_error = node_errors.max().item()  # <-- Use max instead of mean
                         if graph.y.item() == 0:
                             errors_normal.append(graph_error)
                         else:
@@ -133,18 +147,57 @@ class GATPipeline:
             print("No graphs exceeded the anomaly threshold. Skipping classifier training.")
             return
         
+        # TESTING EVEN ATTACK AND ATTACK-FREE SPLIT
+        # After filtering, before training:
+        labels = [graph.y.item() for graph in filtered]
+        attack_graphs = [g.cpu() for g in filtered if g.y.item() == 1]
+        normal_graphs = [g.cpu() for g in filtered if g.y.item() == 0]
+
+        # After splitting filtered into attack_graphs and normal_graphs
+        print_graph_stats(normal_graphs, "Normal")
+        print_graph_stats(attack_graphs, "Attack")
+        print_graph_structure(normal_graphs, "Normal")
+        print_graph_structure(attack_graphs, "Attack")
+
+        # Downsample normal graphs to match the number of attack graphs
+        num_attack = len(attack_graphs)
+        if len(normal_graphs) > num_attack:
+            random.seed(42)
+            normal_graphs = random.sample(normal_graphs, num_attack)
+
+        # Combine and shuffle
+        balanced_filtered = attack_graphs + normal_graphs
+        np.random.shuffle(balanced_filtered)
+
+        # Use balanced_filtered for training
+        filtered = balanced_filtered
         # Print label distribution in filtered graphs
         labels = [graph.y.item() for graph in filtered]
         unique, counts = np.unique(labels, return_counts=True)
         print("Label distribution in filtered graphs (for classifier):")
         for u, c in zip(unique, counts):
             print(f"Label {u}: {c} samples")
+        
+        # After filtering, before training:
+        labels = [graph.y.item() for graph in filtered]
+        num_pos = sum(labels)
+        num_neg = len(labels) - num_pos
+
+        # Avoid division by zero
+        # num_pos = 0
+        if num_pos == 0:
+            pos_weight = torch.tensor(1.0, device=self.device)
+        else:
+            pos_weight = torch.tensor(num_neg / num_pos, device=self.device)
+        print(f"Using pos_weight={pos_weight.item():.4f} for BCEWithLogitsLoss")
         # Train classifier
         self.classifier.train()
         opt = torch.optim.Adam(self.classifier.parameters(), lr=1e-3, weight_decay=1e-4)
-        criterion = nn.BCEWithLogitsLoss()
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
         
         for epoch in range(epochs):
+            epoch_loss = 0.0
+            num_batches = 0
             for batch in DataLoader(filtered, batch_size=32, shuffle=True):
                 batch = batch.to(self.device)
                 preds = self.classifier(batch)
@@ -153,6 +206,18 @@ class GATPipeline:
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
+
+                epoch_loss += loss.item()
+                num_batches += 1
+
+                if epoch == 1 and num_batches == 1:
+                    print("Batch features (x):", batch.x[:5])
+                    print("Batch labels (y):", batch.y[:5])
+                    print("Classifier raw outputs:", preds[:5].detach().cpu().numpy())
+                    print("Unique CAN ID indices in batch:", batch.x[:, 0].unique())
+            
+            avg_loss = epoch_loss / num_batches if num_batches > 0 else 0
+            print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
             # Print accuracy every 10 epochs
             # (epoch + 1) % 10 == 0 or epoch == epochs - 1:
             if True:
@@ -170,6 +235,7 @@ class GATPipeline:
                 all_labels = torch.cat(all_labels)
                 acc = (all_preds == all_labels).float().mean().item()
                 print(f"Classifier accuracy at epoch {epoch+1}: {acc:.4f}")
+                
                 self.classifier.train()
 
     def predict(self, data):
@@ -279,6 +345,11 @@ def main(config: DictConfig):
 
     # Optionally: Evaluate on test set
     print("Evaluating on test set...")
+    test_labels = [data.y.item() for data in test_dataset]
+    unique, counts = np.unique(test_labels, return_counts=True)
+    print("Test set label distribution:")
+    for u, c in zip(unique, counts):
+        print(f"Label {u}: {c} samples")
     preds = []
     labels = []
     for batch in test_loader:
@@ -290,6 +361,11 @@ def main(config: DictConfig):
     labels = torch.cat(labels)
     accuracy = (preds == labels).float().mean().item()
     print(f"Test Accuracy: {accuracy:.4f}")
+
+    # Print confusion matrix
+    cm = confusion_matrix(labels.cpu().numpy(), preds.cpu().numpy())
+    print("Confusion Matrix:")
+    print(cm)
 
     # Save metrics
     metrics = {"test_accuracy": accuracy}

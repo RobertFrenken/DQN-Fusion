@@ -33,9 +33,11 @@ def graph_creation(root_folder, folder_type='train_', window_size=50, stride=50,
         all_dfs.append(df)
     if all_dfs:
         global_id_mapping = build_id_mapping(pd.concat(all_dfs, ignore_index=True))
+        # print("Global CAN ID mapping:", global_id_mapping)
     else:
         global_id_mapping = {'OOV': 0}
     combined_list = []
+    
     for csv_file in train_csv_files:
         if verbose:
             print(f"Processing file: {csv_file}")
@@ -93,6 +95,8 @@ def window_data_transform_numpy(data):
     source = data[:, 0]  # Assuming Source is the first column
     target = data[:, -2]  # Assuming Target is the second to last column
     labels = data[:, -1]  # Assuming label is the last column
+    # print("Raw CAN IDs in window (source):", np.unique(source))
+    # print("Raw CAN IDs in window (target):", np.unique(target))
 
     # Calculate edge counts for each unique (Source, Target) pair
     unique_edges, edge_counts = np.unique(np.stack((source, target), axis=1), axis=0, return_counts=True)
@@ -207,7 +211,8 @@ def dataset_creation_vectorized(path, id_mapping=None):
     if id_mapping is not None:
         oov_index = id_mapping['OOV']
         for col in ['CAN ID', 'Source', 'Target']:
-            df[col] = df[col].map(lambda x: id_mapping.get(x, oov_index))
+            df[col] = df[col].astype(str).map(lambda x: id_mapping.get(x, oov_index))
+        # print("Mapped CAN IDs in DataFrame:", df['CAN ID'].unique())
 
     # Drop the last row and reencode labels
     df = df.iloc[:-1]
@@ -237,6 +242,7 @@ class GraphDataset(Dataset):
 # Testing Class                 #
 #################################
 class TestPreprocessing(unittest.TestCase):
+    # NOTE: Add test about the ID embedding mapping
     def test_graph_creation(self):
         print("Testing graph creation...")
         root_folder = r"datasets/can-train-and-test-v1.5/hcrl-sa"
