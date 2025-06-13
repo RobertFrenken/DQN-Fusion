@@ -10,12 +10,80 @@ import sys
 import time
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from models.models import GATWithJK, Autoencoder
+from models.models import GATWithJK, Autoencoder, GraphAutoencoder
 from preprocessing import graph_creation
 from training_utils import PyTorchTrainer, PyTorchDistillationTrainer, DistillationTrainer
 from torch_geometric.data import Batch
 from sklearn.metrics import confusion_matrix
 import random
+import matplotlib.pyplot as plt
+
+def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon_subplot.png"):
+    """Plot node-level reconstruction errors for a mix of normal and attack graphs."""
+    pipeline.autoencoder.eval()
+    normal_graphs = []
+    attack_graphs = []
+    errors_normal = []
+    errors_attack = []
+
+    # Collect graphs and their node errors
+    with torch.no_grad():
+        for batch in loader:
+            batch = batch.to(pipeline.device)
+            x_recon, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
+            node_errors = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
+            graphs = Batch.to_data_list(batch)
+            start = 0
+            for graph in graphs:
+                n = graph.x.size(0)
+                errs = node_errors[start:start+n].cpu().numpy()
+                if graph.y.item() == 0 and len(normal_graphs) < num_graphs:
+                    normal_graphs.append(graph)
+                    errors_normal.append(errs)
+                elif graph.y.item() == 1 and len(attack_graphs) < num_graphs:
+                    attack_graphs.append(graph)
+                    errors_attack.append(errs)
+                start += n
+                if len(normal_graphs) >= num_graphs and len(attack_graphs) >= num_graphs:
+                    break
+            if len(normal_graphs) >= num_graphs and len(attack_graphs) >= num_graphs:
+                break
+
+    # --- Debug: Print last node info for each plotted graph ---
+    print("Last node info for plotted graphs:")
+    for i, graph in enumerate(normal_graphs):
+        print(f"Normal Graph {i+1} last node features: {graph.x[-1]}")
+        print(f"Normal Graph {i+1} last node CAN ID: {graph.x[-1,0]}")
+        # Degree: count how many times last node index appears in edge_index
+        last_idx = graph.x.size(0) - 1
+        degree = (graph.edge_index[0] == last_idx).sum().item() + (graph.edge_index[1] == last_idx).sum().item()
+        print(f"Normal Graph {i+1} last node degree: {degree}")
+    for i, graph in enumerate(attack_graphs):
+        print(f"Attack Graph {i+1} last node features: {graph.x[-1]}")
+        print(f"Attack Graph {i+1} last node CAN ID: {graph.x[-1,0]}")
+        last_idx = graph.x.size(0) - 1
+        degree = (graph.edge_index[0] == last_idx).sum().item() + (graph.edge_index[1] == last_idx).sum().item()
+        print(f"Attack Graph {i+1} last node degree: {degree}")
+    for i, graph in enumerate(normal_graphs + attack_graphs):
+        print(f"Graph {i+1} last node features: {graph.x[-2]}")  # -2 to skip virtual node
+        n = graph.x.size(0)
+        recon_feats = pipeline.autoencoder(graph.x, graph.edge_index, torch.zeros(n, dtype=torch.long, device=graph.x.device))
+        print(f"Graph {i+1} last node recon: {recon_feats[-2]}")
+    
+    fig, axes = plt.subplots(2, num_graphs, figsize=(4*num_graphs, 8), sharey=True)
+    for i in range(num_graphs):
+        axes[0, i].bar(range(len(errors_normal[i])), errors_normal[i], color='blue')
+        axes[0, i].set_title(f"Normal Graph {i+1}")
+        axes[0, i].set_xlabel("Node Index")
+        axes[0, i].set_ylabel("Recon Error")
+        axes[1, i].bar(range(len(errors_attack[i])), errors_attack[i], color='red')
+        axes[1, i].set_title(f"Attack Graph {i+1}")
+        axes[1, i].set_xlabel("Node Index")
+        axes[1, i].set_ylabel("Recon Error")
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Saved node-level reconstruction error subplot as '{save_path}'")
 
 def print_graph_stats(graphs, label):
     import torch
@@ -36,8 +104,8 @@ def print_graph_structure(graphs, label):
 class GATPipeline:
     def __init__(self, num_ids, embedding_dim=8, device='cpu'):
         self.device = device
-        self.autoencoder = Autoencoder(num_ids=num_ids, in_channels=10, embedding_dim=embedding_dim).to(device)
-        self.classifier = GATWithJK(num_ids=num_ids, in_channels=10, hidden_channels=32, out_channels=1, num_layers=3, heads=8, embedding_dim=embedding_dim).to(device)
+        self.autoencoder = GraphAutoencoder(num_ids=num_ids, in_channels=11, embedding_dim=embedding_dim).to(device)
+        self.classifier = GATWithJK(num_ids=num_ids, in_channels=11, hidden_channels=32, out_channels=1, num_layers=3, heads=8, embedding_dim=embedding_dim).to(device)
         self.threshold = 0.0000
 
     
@@ -54,8 +122,28 @@ class GATPipeline:
         for _ in range(epochs):
             for batch in train_loader:
                 batch = batch.to(self.device)
-                recon = self.autoencoder(batch.x, batch.edge_index)
-                loss = nn.MSELoss()(recon[:, 1:], batch.x[:, 1:])
+                # recon = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                # # Mask: occurrence count is last feature (adjust index if needed)
+                # singleton_mask = (batch.x[:, -2] == 1.0)  # or == batch.x[:, -2].min() if normalized
+                # loss = nn.MSELoss()(recon[~singleton_mask, 1:], batch.x[~singleton_mask, 1:])
+                # loss = nn.MSELoss()(recon[:, 1:], batch.x[:, 1:])
+                x_recon, z = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                # Node feature loss
+                singleton_mask = (batch.x[:, -2] == 1.0)
+                node_loss = nn.MSELoss()(x_recon[~singleton_mask, 1:], batch.x[~singleton_mask, 1:])
+                # Edge reconstruction loss
+                pos_edge_index = batch.edge_index
+                pos_edge_preds = self.autoencoder.decode_edge(z, pos_edge_index)
+                pos_edge_labels = torch.ones(pos_edge_preds.size(0), device=pos_edge_preds.device)
+                num_nodes = batch.x.size(0)
+                num_neg = pos_edge_index.size(1)
+                neg_edge_index = torch.randint(0, num_nodes, pos_edge_index.shape, device=pos_edge_index.device)
+                neg_edge_preds = self.autoencoder.decode_edge(z, neg_edge_index)
+                neg_edge_labels = torch.zeros(neg_edge_preds.size(0), device=neg_edge_preds.device)
+                edge_preds = torch.cat([pos_edge_preds, neg_edge_preds])
+                edge_labels = torch.cat([pos_edge_labels, neg_edge_labels])
+                edge_loss = nn.BCELoss()(edge_preds, edge_labels)
+                loss = node_loss + edge_loss
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
@@ -64,8 +152,8 @@ class GATPipeline:
         with torch.no_grad():
             for batch in train_loader:
                 batch = batch.to(self.device)
-                recon = self.autoencoder(batch.x, batch.edge_index)
-                errors.append((recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1))
+                x_recon, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                errors.append((x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1))
         self.threshold = torch.cat(errors).quantile(0.5).item()
         # self.threshold = 0
 
@@ -83,13 +171,15 @@ class GATPipeline:
             print(f"Label {u}: {c} samples")
 
         # --- Print mean reconstruction error for normal vs. attack graphs ---
+        # 3x3 subplot of graphs reconstruction error distribution BY NODEs
+        # based of observation, develop a new way to threhold
         errors_normal = []
         errors_attack = []
         with torch.no_grad():
             for batch in full_loader:
                 batch = batch.to(self.device)
-                recon = self.autoencoder(batch.x, batch.edge_index)
-                error = (recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
+                x_recon, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                error = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
                 graphs = Batch.to_data_list(batch)
                 batch_vec = batch.batch.cpu().numpy()
                 start = 0
@@ -129,8 +219,8 @@ class GATPipeline:
         with torch.no_grad():
             for batch in full_loader:
                 batch = batch.to(self.device)
-                recon = self.autoencoder(batch.x, batch.edge_index)
-                error = (recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
+                x_recon, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                error = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
                 graphs = Batch.to_data_list(batch)
                 start = 0
                 for graph in graphs:
@@ -244,8 +334,8 @@ class GATPipeline:
         
         # Stage 1: Anomaly detection
         with torch.no_grad():
-            recon = self.autoencoder(data.x, data.edge_index)
-            error = (recon - data.x).pow(2).mean(dim=1)
+            x_recon, _ = self.autoencoder(data.x, data.edge_index, data.batch)
+            error = (x_recon - data.x).pow(2).mean(dim=1)
             
             # Process each graph in batch
             preds = []
@@ -281,7 +371,7 @@ def main(config: DictConfig):
     root_folder = root_folders[KEY]
     print(f"Root folder: {root_folder}")
 
-    dataset, id_mapping = graph_creation(root_folder, return_id_mapping=True)
+    dataset, id_mapping = graph_creation(root_folder, return_id_mapping=True, window_size=100)
     num_ids = len(id_mapping)
     embedding_dim = 8  # or your choice
     print(f"Number of graphs: {len(dataset)}")
@@ -331,9 +421,15 @@ def main(config: DictConfig):
     print("Stage 1: Training autoencoder for anomaly detection...")
     pipeline.train_stage1(train_loader, epochs=EPOCHS)
 
+    # Visualize node-level reconstruction errors
+    # plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="node_recon_subplot.png")
+
     print("Stage 2: Training classifier on filtered graphs...")
     # For classifier, use all graphs (normal + attack)
     full_train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+
+    # Visualize node-level reconstruction errors
+    plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="node_recon_subplot.png")
     pipeline.train_stage2(full_train_loader, epochs=EPOCHS)
 
     # Save models

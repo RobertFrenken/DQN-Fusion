@@ -70,6 +70,7 @@ class GATWithJK(nn.Module):
             in_dim = embedding_dim + (in_channels - 1) if i == 0 else hidden_channels * heads
             self.convs.append(GATConv(in_dim, hidden_channels, heads=heads, concat=True))
 
+
         self.jk = JumpingKnowledge(
             mode="cat",
             channels=hidden_channels * heads,
@@ -84,6 +85,7 @@ class GATWithJK(nn.Module):
             fc_input_dim = hidden_channels * heads
         
         for _ in range(num_fc_layers - 1):
+            # rotuer top2 experts
             self.fc_layers.append(nn.Linear(fc_input_dim, fc_input_dim))
             self.fc_layers.append(nn.ReLU())
             self.fc_layers.append(nn.Dropout(p=dropout))
@@ -95,6 +97,8 @@ class GATWithJK(nn.Module):
         id_emb = self.id_embedding(x[:, 0].long())  # [num_nodes, embedding_dim]
         other_feats = x[:, 1:]  # [num_nodes, in_channels-1]
         x = torch.cat([id_emb, other_feats], dim=1)
+
+
         xs = []
         for conv in self.convs:
             x = conv(x, edge_index).relu()
@@ -110,11 +114,12 @@ class GATWithJK(nn.Module):
 
 class Autoencoder(torch.nn.Module):
     """Autoencoder with CAN ID embedding for static graphs"""
-    def __init__(self, num_ids, in_channels, hidden_dim=32, heads=4, embedding_dim=8, dropout=0.8):
+    def __init__(self, num_ids, in_channels, hidden_dim=32, heads=4, embedding_dim=8, dropout=0.5):
         super().__init__()
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
         self.dropout = nn.Dropout(p=dropout)
         gat_in_dim = embedding_dim + (in_channels - 1)
+        
         # Encoder
         self.enc1 = GATConv(gat_in_dim, hidden_dim, heads=heads)
         self.enc2 = GATConv(hidden_dim * heads, hidden_dim, heads=1)
@@ -123,11 +128,12 @@ class Autoencoder(torch.nn.Module):
         self.dec2 = GATConv(hidden_dim * heads, in_channels, heads=1)
         self.gat_in_dim = gat_in_dim  # Save for output slicing
 
-    def forward(self, x, edge_index):
+    def forward(self, x, edge_index, batch):
         id_emb = self.id_embedding(x[:, 0].long())
         other_feats = x[:, 1:]
         x = torch.cat([id_emb, other_feats], dim=1)
         x = self.enc1(x, edge_index).relu()
+        
         x = self.dropout(x)
         x = self.enc2(x, edge_index).relu()
         x = self.dropout(x)
@@ -135,7 +141,49 @@ class Autoencoder(torch.nn.Module):
         x = self.dropout(x)
         x = self.dec2(x, edge_index).sigmoid()
         return x  # shape: [num_nodes, in_channels]
+class GraphAutoencoder(nn.Module):
+    """Graph Autoencoder: reconstructs node features and edge list."""
+    def __init__(self, num_ids, in_channels, hidden_dim=32, heads=4, embedding_dim=8, dropout=0.5):
+        super().__init__()
+        self.id_embedding = nn.Embedding(num_ids, embedding_dim)
+        self.dropout = nn.Dropout(p=dropout)
+        gat_in_dim = embedding_dim + (in_channels - 1)
+        # Encoder
+        self.enc1 = GATConv(gat_in_dim, hidden_dim, heads=heads)
+        self.enc2 = GATConv(hidden_dim * heads, hidden_dim, heads=1)
+        # Decoder for node features
+        self.dec1 = GATConv(hidden_dim, hidden_dim, heads=heads)
+        self.dec2 = GATConv(hidden_dim * heads, in_channels, heads=1)
+        self.gat_in_dim = gat_in_dim
 
+    def encode(self, x, edge_index):
+        id_emb = self.id_embedding(x[:, 0].long())
+        other_feats = x[:, 1:]
+        x = torch.cat([id_emb, other_feats], dim=1)
+        x = self.enc1(x, edge_index).relu()
+        x = self.dropout(x)
+        z = self.enc2(x, edge_index).relu()
+        return z
+
+    def decode_node(self, z, edge_index):
+        x = self.dec1(z, edge_index).relu()
+        x = self.dropout(x)
+        x = self.dec2(x, edge_index).sigmoid()
+        return x
+
+    def decode_edge(self, z, edge_index):
+        # Dot product decoder for edges
+        z_src = z[edge_index[0]]
+        z_dst = z[edge_index[1]]
+        edge_logits = (z_src * z_dst).sum(dim=1)
+        edge_probs = torch.sigmoid(edge_logits)
+        return edge_probs
+
+    def forward(self, x, edge_index, batch):
+        z = self.encode(x, edge_index)
+        x_recon = self.decode_node(z, edge_index)
+        return x_recon, z
+    
 if __name__ == '__main__':
     # Knowledge Distillation Scenario
     teacher_model = GATWithJK(in_channels=10, hidden_channels=32, out_channels=1, num_layers=5, heads=8)

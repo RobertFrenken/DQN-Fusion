@@ -5,6 +5,7 @@ from torch_geometric.data import Dataset
 from torch_geometric.data import Data
 import os
 import unittest
+from torch_geometric.transforms import VirtualNode
 
 def build_id_mapping(df):
     """Builds a mapping from CAN IDs to indices for embedding, with OOV index."""
@@ -113,29 +114,41 @@ def window_data_transform_numpy(data):
     edge_attr = torch.tensor(edge_counts, dtype=torch.float).view(-1, 1)
 
     # Calculate node features (mean of data columns for each node)
-    node_features = np.zeros((len(nodes), 10))  # 9 features: ID + 8 data columns
-    node_counts = np.zeros(len(nodes))  # To store the count of each node
-    for i, node in enumerate(nodes):
-        mask = (source == node) # Only consider rows where the node is the source
-        node_data = data[mask, 0:9]  # Data columns are assumed to be from index 0 to 9 (exclusive of label)
-        if len(node_data) > 0:  # Avoid empty slices
-            # CHANGE: Normalize payload columns (columns 1 to 8)
-            node_data_norm = node_data.copy()
-            node_data_norm[:, 1:9] = node_data_norm[:, 1:9] / 255.0  # Data1-Data8 normalized to [0,1]
-            node_features[i, :-1] = node_data_norm.mean(axis=0)
-        node_counts[i] = mask.sum()  # Count occurrences of the node
+    node_features = np.zeros((len(nodes), 11))  # 10 features + 1 for position
+    node_counts = np.zeros(len(nodes))
+    node_positions = np.zeros(len(nodes))  # New: position feature
 
-    # CHANGE: Normalize occurrence count (last feature)
+    for i, node in enumerate(nodes):
+        mask = (source == node)
+        node_data = data[mask, 0:9]
+        if len(node_data) > 0:
+            node_data_norm = node_data.copy()
+            node_data_norm[:, 1:9] = node_data_norm[:, 1:9] / 255.0
+            node_features[i, :-2] = node_data_norm.mean(axis=0)
+        node_counts[i] = mask.sum()
+        # Position: last occurrence of this node as source, normalized
+        indices = np.where(source == node)[0]
+        if len(indices) > 0:
+            node_positions[i] = indices[-1] / (len(source) - 1) if len(source) > 1 else 0.0
+
+    # Normalize occurrence count (second to last feature)
     occ = node_counts
     if occ.max() > occ.min():
-        node_features[:, -1] = (occ - occ.min()) / (occ.max() - occ.min())
+        node_features[:, -2] = (occ - occ.min()) / (occ.max() - occ.min())
     else:
-        node_features[:, -1] = 0.0
-    
+        node_features[:, -2] = 0.0
+
+    # Set last feature as position
+    node_features[:, -1] = node_positions
+
     x = torch.tensor(node_features, dtype=torch.float)
     y = torch.tensor([1 if 1 in labels else 0], dtype=torch.long)
 
-    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
+    # Final step- add virtual node
+    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
+    virtual_node_transform = 1
+    data = VirtualNode()(data)
+    return data
 
 def pad_row_vectorized(df):
     """
