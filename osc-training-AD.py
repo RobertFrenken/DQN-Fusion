@@ -11,7 +11,7 @@ import time
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from models.models import GATWithJK, Autoencoder, GraphAutoencoder
-from preprocessing import graph_creation
+from preprocessing import graph_creation, build_id_mapping_from_normal
 from training_utils import PyTorchTrainer, PyTorchDistillationTrainer, DistillationTrainer
 from torch_geometric.data import Batch
 from sklearn.metrics import confusion_matrix
@@ -37,10 +37,10 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon
             for graph in graphs:
                 n = graph.x.size(0)
                 errs = node_errors[start:start+n].cpu().numpy()
-                if graph.y.item() == 0 and len(normal_graphs) < num_graphs:
+                if int(graph.y.flatten()[0]) == 0 and len(normal_graphs) < num_graphs:
                     normal_graphs.append(graph)
                     errors_normal.append(errs)
-                elif graph.y.item() == 1 and len(attack_graphs) < num_graphs:
+                elif int(graph.y.flatten()[0]) == 1 and len(attack_graphs) < num_graphs:
                     attack_graphs.append(graph)
                     errors_attack.append(errs)
                 start += n
@@ -202,7 +202,7 @@ class GATPipeline:
                     if node_errors.numel() > 0:
                         # graph_error = node_errors.mean().item()
                         graph_error = node_errors.max().item()  # <-- Use max instead of mean
-                        if graph.y.item() == 0:
+                        if int(graph.y.flatten()[0]) == 0:
                             errors_normal.append(graph_error)
                         else:
                             errors_attack.append(graph_error)
@@ -252,7 +252,7 @@ class GATPipeline:
         
         # TESTING EVEN ATTACK AND ATTACK-FREE SPLIT
         # After filtering, before training:
-        labels = [graph.y.item() for graph in filtered]
+        labels = [int(graph.y.flatten()[0]) for graph in filtered]
         attack_graphs = [g.cpu() for g in filtered if g.y.item() == 1]
         normal_graphs = [g.cpu() for g in filtered if g.y.item() == 0]
 
@@ -275,14 +275,14 @@ class GATPipeline:
         # Use balanced_filtered for training
         filtered = balanced_filtered
         # Print label distribution in filtered graphs
-        labels = [graph.y.item() for graph in filtered]
+        labels = [int(graph.y.flatten()[0]) for graph in filtered]
         unique, counts = np.unique(labels, return_counts=True)
         print("Label distribution in filtered graphs (for classifier):")
         for u, c in zip(unique, counts):
             print(f"Label {u}: {c} samples")
         
         # After filtering, before training:
-        labels = [graph.y.item() for graph in filtered]
+        labels = [int(graph.y.flatten()[0]) for graph in filtered]
         num_pos = sum(labels)
         num_neg = len(labels) - num_pos
 
@@ -384,7 +384,10 @@ def main(config: DictConfig):
     root_folder = root_folders[KEY]
     print(f"Root folder: {root_folder}")
 
-    dataset, id_mapping = graph_creation(root_folder, return_id_mapping=True, window_size=100)
+    # Step 1: Build ID mapping from only normal graphs
+    id_mapping = build_id_mapping_from_normal(root_folder)
+
+    dataset = graph_creation(root_folder, id_mapping=id_mapping, window_size=100)
     num_ids = len(id_mapping)
     embedding_dim = 8  # or your choice
     print(f"Number of graphs: {len(dataset)}")
@@ -412,7 +415,7 @@ def main(config: DictConfig):
 
     # --------- FILTER NORMAL GRAPHS FOR AUTOENCODER TRAINING ----------
     # Only keep graphs with label == 0 for autoencoder training
-    normal_indices = [i for i, data in enumerate(train_dataset) if data.y.item() == 0]
+    normal_indices = [i for i, data in enumerate(train_dataset) if int(data.y.flatten()[0]) == 0]
     if DATASIZE < 1.0:
         subset_size = int(len(normal_indices) * DATASIZE)
         indices = np.random.choice(normal_indices, subset_size, replace=False)
@@ -432,7 +435,7 @@ def main(config: DictConfig):
     pipeline = GATPipeline(num_ids=num_ids, embedding_dim=embedding_dim, device=device)
 
     print("Stage 1: Training autoencoder for anomaly detection...")
-    pipeline.train_stage1(train_loader, epochs=EPOCHS)
+    pipeline.train_stage1(train_loader, epochs=50)
 
     # Visualize node-level reconstruction errors
     # plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="node_recon_subplot.png")

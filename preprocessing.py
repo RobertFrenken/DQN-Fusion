@@ -9,20 +9,62 @@ from torch_geometric.transforms import VirtualNode
 
 def build_id_mapping(df):
     """Builds a mapping from CAN IDs to indices for embedding, with OOV index."""
-    unique_ids = pd.concat([df['CAN ID'], df['Source'], df['Target']]).unique()
+    # Convert all IDs to integer (from hex string)
+    def to_int(x):
+        try:
+            return int(x, 16) if isinstance(x, str) and all(c in '0123456789abcdefABCDEF' for c in x) else int(x)
+        except Exception:
+            return None
+    unique_ids = pd.concat([df['CAN ID'], df['Source'], df['Target']]).dropna().unique()
+    unique_ids = [to_int(x) for x in unique_ids if x is not None]
     id_mapping = {can_id: idx for idx, can_id in enumerate(unique_ids)}
     oov_index = len(id_mapping)
     id_mapping['OOV'] = oov_index
     return id_mapping
 
-def graph_creation(root_folder, folder_type='train_', window_size=50, stride=50, verbose=False, return_id_mapping=False):
+def build_id_mapping_from_normal(root_folder, folder_type='train_'):
+    """Builds CAN ID mapping using only normal (attack==0) rows from all CSVs."""
     train_csv_files = []
     for dirpath, dirnames, filenames in os.walk(root_folder):
         if folder_type in dirpath.lower():
             for filename in filenames:
                 if filename.endswith('.csv') and 'suppress' not in filename.lower() and 'masquerade' not in filename.lower():
                     train_csv_files.append(os.path.join(dirpath, filename))
-    # Build global mapping
+    all_dfs = []
+    for csv_file in train_csv_files:
+        df = pd.read_csv(csv_file)
+        df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
+        df.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
+        df['Source'] = df['CAN ID']
+        df['Target'] = df['CAN ID'].shift(-1)
+        # Only keep normal rows
+        df = df[df['attack'] == 0]
+        all_dfs.append(df)
+    if all_dfs:
+        # --- Use integer conversion for mapping ---
+        def to_int(x):
+            try:
+                return int(x, 16) if isinstance(x, str) and all(c in '0123456789abcdefABCDEF' for c in x) else int(x)
+            except Exception:
+                return None
+        concat_df = pd.concat(all_dfs, ignore_index=True)
+        unique_ids = pd.concat([concat_df['CAN ID'], concat_df['Source'], concat_df['Target']]).dropna().unique()
+        unique_ids = [to_int(x) for x in unique_ids if x is not None]
+        id_mapping = {can_id: idx for idx, can_id in enumerate(unique_ids)}
+        oov_index = len(id_mapping)
+        id_mapping['OOV'] = oov_index
+        return id_mapping
+    else:
+        return {'OOV': 0}
+
+def graph_creation(root_folder, folder_type='train_', window_size=50, stride=50, verbose=False, return_id_mapping=False, id_mapping=None):
+    train_csv_files = []
+    for dirpath, dirnames, filenames in os.walk(root_folder):
+        if folder_type in dirpath.lower():
+            for filename in filenames:
+                if filename.endswith('.csv') and 'suppress' not in filename.lower() and 'masquerade' not in filename.lower():
+                    train_csv_files.append(os.path.join(dirpath, filename))
+    # Build global mapping ONLY if not provided
     all_dfs = []
     for csv_file in train_csv_files:
         df = pd.read_csv(csv_file)
@@ -32,11 +74,13 @@ def graph_creation(root_folder, folder_type='train_', window_size=50, stride=50,
         df['Source'] = df['CAN ID']
         df['Target'] = df['CAN ID'].shift(-1)
         all_dfs.append(df)
-    if all_dfs:
-        global_id_mapping = build_id_mapping(pd.concat(all_dfs, ignore_index=True))
-        # print("Global CAN ID mapping:", global_id_mapping)
+    if id_mapping is None:
+        if all_dfs:
+            global_id_mapping = build_id_mapping(pd.concat(all_dfs, ignore_index=True))
+        else:
+            global_id_mapping = {'OOV': 0}
     else:
-        global_id_mapping = {'OOV': 0}
+        global_id_mapping = id_mapping
     combined_list = []
     
     for csv_file in train_csv_files:
@@ -142,12 +186,14 @@ def window_data_transform_numpy(data):
     node_features[:, -1] = node_positions
 
     x = torch.tensor(node_features, dtype=torch.float)
-    y = torch.tensor([1 if 1 in labels else 0], dtype=torch.long)
+    label_value = 1 if (labels == 1).any() else 0
+    y = torch.tensor(label_value, dtype=torch.long)
+    # y = torch.tensor([1 if 1 in labels else 0], dtype=torch.long)
 
     # Final step- add virtual node
     data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
     virtual_node_transform = 1
-    data = VirtualNode()(data)
+    # data = VirtualNode()(data)
     return data
 
 def pad_row_vectorized(df):
@@ -224,7 +270,7 @@ def dataset_creation_vectorized(path, id_mapping=None):
     if id_mapping is not None:
         oov_index = id_mapping['OOV']
         for col in ['CAN ID', 'Source', 'Target']:
-            df[col] = df[col].astype(str).map(lambda x: id_mapping.get(x, oov_index))
+            df[col] = df[col].apply(lambda x: id_mapping.get(x, oov_index))
         # print("Mapped CAN IDs in DataFrame:", df['CAN ID'].unique())
 
     # Drop the last row and reencode labels
