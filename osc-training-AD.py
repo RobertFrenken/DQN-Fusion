@@ -122,15 +122,26 @@ class GATPipeline:
         for _ in range(epochs):
             for batch in train_loader:
                 batch = batch.to(self.device)
-                # recon = self.autoencoder(batch.x, batch.edge_index, batch.batch)
-                # # Mask: occurrence count is last feature (adjust index if needed)
-                # singleton_mask = (batch.x[:, -2] == 1.0)  # or == batch.x[:, -2].min() if normalized
-                # loss = nn.MSELoss()(recon[~singleton_mask, 1:], batch.x[~singleton_mask, 1:])
-                # loss = nn.MSELoss()(recon[:, 1:], batch.x[:, 1:])
                 x_recon, z = self.autoencoder(batch.x, batch.edge_index, batch.batch)
                 # Node feature loss
-                singleton_mask = (batch.x[:, -2] == 1.0)
-                node_loss = nn.MSELoss()(x_recon[~singleton_mask, 1:], batch.x[~singleton_mask, 1:])
+                # singleton_mask = (batch.x[:, -2] == 1.0)
+                # node_loss = nn.MSELoss()(x_recon[~singleton_mask, 1:], batch.x[~singleton_mask, 1:])
+
+                # Node reconstruction error (exclude CAN ID column)
+                node_errors = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
+
+                # Mask out the last node of each graph in the batch
+                mask = torch.ones_like(node_errors, dtype=torch.bool)
+                graphs = Batch.to_data_list(batch)
+                start = 0
+                for graph in graphs:
+                    n = graph.x.size(0)
+                    mask[start + n - 1] = False  # Mask last node
+                    start += n
+
+                node_loss = node_errors[mask].mean()
+                
+                
                 # Edge reconstruction loss
                 pos_edge_index = batch.edge_index
                 pos_edge_preds = self.autoencoder.decode_edge(z, pos_edge_index)
@@ -143,6 +154,8 @@ class GATPipeline:
                 edge_preds = torch.cat([pos_edge_preds, neg_edge_preds])
                 edge_labels = torch.cat([pos_edge_labels, neg_edge_labels])
                 edge_loss = nn.BCELoss()(edge_preds, edge_labels)
+                
+                
                 loss = node_loss + edge_loss
                 opt.zero_grad()
                 loss.backward()

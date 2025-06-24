@@ -1,0 +1,12 @@
+epochs: 10
+lr: 0.0005
+train_ratio: 0.8
+root_folder: hcrl_sa
+batch_size: 512
+momentum: 0.9
+datasize: 0.5
+optimizer: torch.optim.SGD
+_target_: trainers.DistillationTrainer
+device: cuda
+use_focal_loss: true
+profile: false
