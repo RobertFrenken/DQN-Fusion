@@ -85,6 +85,57 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon
     plt.close()
     print(f"Saved node-level reconstruction error subplot as '{save_path}'")
 
+def plot_graph_reconstruction(pipeline, loader, num_graphs=3, save_path="graph_recon_examples.png"):
+    """
+    Plots input vs. reconstructed node features for a few graphs.
+    Left: Only payload/continuous features (excluding CAN ID).
+    Right: CAN ID input vs. reconstructed CAN ID (for visualization).
+    """
+    pipeline.autoencoder.eval()
+    shown = 0
+    with torch.no_grad():
+        for batch in loader:
+            batch = batch.to(pipeline.device)
+            x_recon, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
+            graphs = Batch.to_data_list(batch)
+            start = 0
+            for i, graph in enumerate(graphs):
+                n = graph.x.size(0)
+                input_feats = graph.x.cpu().numpy()
+                recon_feats = x_recon[start:start+n].cpu().numpy()
+                start += n
+
+                # Exclude CAN ID (column 0) for main feature comparison
+                input_payload = input_feats[:, 1:]
+                recon_payload = recon_feats[:, 1:]
+
+                # CAN ID comparison (column 0)
+                input_canid = input_feats[:, 0]
+                recon_canid = recon_feats[:, 0]
+
+                fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+                # Payload/continuous features
+                im0 = axes[0].imshow(input_payload, aspect='auto', interpolation='none')
+                axes[0].set_title(f"Input Payload/Features\n(Graph {shown+1})")
+                plt.colorbar(im0, ax=axes[0])
+                im1 = axes[1].imshow(recon_payload, aspect='auto', interpolation='none')
+                axes[1].set_title(f"Reconstructed Payload/Features\n(Graph {shown+1})")
+                plt.colorbar(im1, ax=axes[1])
+                # CAN ID comparison
+                axes[2].plot(input_canid, label="Input CAN ID", marker='o')
+                axes[2].plot(recon_canid, label="Recon CAN ID", marker='x')
+                axes[2].set_title("CAN ID (Input vs Recon)")
+                axes[2].set_xlabel("Node Index")
+                axes[2].set_ylabel("CAN ID Value")
+                axes[2].legend()
+                plt.suptitle(f"Graph {shown+1} (Label: {int(graph.y.flatten()[0])})")
+                plt.tight_layout(rect=[0, 0, 1, 0.95])
+                plt.savefig(f"{save_path.rstrip('.png')}_{shown+1}.png")
+                plt.close()
+                shown += 1
+                if shown >= num_graphs:
+                    return
+                
 def print_graph_stats(graphs, label):
     import torch
     all_x = torch.cat([g.x for g in graphs], dim=0)
@@ -116,30 +167,41 @@ class GATPipeline:
     # so the error would be low. I will have to check this to see if error is any
     # node or the entire graph.
 
-    def train_stage1(self, train_loader, epochs=50):
+    def train_stage1(self, train_loader, epochs=100):
         self.autoencoder.train()
         opt = torch.optim.Adam(self.autoencoder.parameters(), lr=1e-2, weight_decay=1e-4)
         for _ in range(epochs):
             for batch in train_loader:
                 batch = batch.to(self.device)
                 x_recon, z = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+
+
+
+                # Focus loss on payload features (columns 1-8)
+                payload_loss = (x_recon[:, 1:9] - batch.x[:, 1:9]).pow(2).mean()
+                # Optionally, add small weighted loss for count and position (last two columns)
+                count_loss = (x_recon[:, -2] - batch.x[:, -2]).pow(2).mean()
+                position_loss = (x_recon[:, -1] - batch.x[:, -1]).pow(2).mean()
+                node_loss = payload_loss + 0.1 * (count_loss + position_loss)
+                
                 # Node feature loss
                 # singleton_mask = (batch.x[:, -2] == 1.0)
                 # node_loss = nn.MSELoss()(x_recon[~singleton_mask, 1:], batch.x[~singleton_mask, 1:])
 
                 # Node reconstruction error (exclude CAN ID column)
-                node_errors = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
+                # node_errors = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
 
-                # Mask out the last node of each graph in the batch
-                mask = torch.ones_like(node_errors, dtype=torch.bool)
-                graphs = Batch.to_data_list(batch)
-                start = 0
-                for graph in graphs:
-                    n = graph.x.size(0)
-                    mask[start + n - 1] = False  # Mask last node
-                    start += n
 
-                node_loss = node_errors[mask].mean()
+                # # Mask out the last node of each graph in the batch
+                # mask = torch.ones_like(node_errors, dtype=torch.bool)
+                # graphs = Batch.to_data_list(batch)
+                # start = 0
+                # for graph in graphs:
+                #     n = graph.x.size(0)
+                #     mask[start + n - 1] = False  # Mask last node
+                #     start += n
+
+                # node_loss = node_errors[mask].mean()
                 
                 
                 # Edge reconstruction loss
@@ -437,6 +499,9 @@ def main(config: DictConfig):
     print("Stage 1: Training autoencoder for anomaly detection...")
     pipeline.train_stage1(train_loader, epochs=50)
 
+    # Visualize input vs. reconstructed features for a few graphs
+    plot_graph_reconstruction(pipeline, train_loader, num_graphs=3, save_path="graph_recon_examples.png")
+
     # Visualize node-level reconstruction errors
     # plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="node_recon_subplot.png")
 
@@ -446,45 +511,45 @@ def main(config: DictConfig):
 
     # Visualize node-level reconstruction errors
     plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="node_recon_subplot.png")
-    pipeline.train_stage2(full_train_loader, epochs=EPOCHS)
+    # pipeline.train_stage2(full_train_loader, epochs=EPOCHS)
 
-    # Save models
-    save_folder = "saved_models"
-    os.makedirs(save_folder, exist_ok=True)
-    torch.save(pipeline.autoencoder.state_dict(), os.path.join(save_folder, f'autoencoder_{KEY}.pth'))
-    torch.save(pipeline.classifier.state_dict(), os.path.join(save_folder, f'classifier_{KEY}.pth'))
-    print(f"Models saved in '{save_folder}'.")
+    # # Save models
+    # save_folder = "saved_models"
+    # os.makedirs(save_folder, exist_ok=True)
+    # torch.save(pipeline.autoencoder.state_dict(), os.path.join(save_folder, f'autoencoder_{KEY}.pth'))
+    # torch.save(pipeline.classifier.state_dict(), os.path.join(save_folder, f'classifier_{KEY}.pth'))
+    # print(f"Models saved in '{save_folder}'.")
 
-    # Optionally: Evaluate on test set
-    print("Evaluating on test set...")
-    test_labels = [data.y.item() for data in test_dataset]
-    unique, counts = np.unique(test_labels, return_counts=True)
-    print("Test set label distribution:")
-    for u, c in zip(unique, counts):
-        print(f"Label {u}: {c} samples")
-    preds = []
-    labels = []
-    for batch in test_loader:
-        batch = batch.to(device)
-        pred = pipeline.predict(batch)
-        preds.append(pred.cpu())
-        labels.append(batch.y.cpu())
-    preds = torch.cat(preds)
-    labels = torch.cat(labels)
-    accuracy = (preds == labels).float().mean().item()
-    print(f"Test Accuracy: {accuracy:.4f}")
+    # # Optionally: Evaluate on test set
+    # print("Evaluating on test set...")
+    # test_labels = [data.y.item() for data in test_dataset]
+    # unique, counts = np.unique(test_labels, return_counts=True)
+    # print("Test set label distribution:")
+    # for u, c in zip(unique, counts):
+    #     print(f"Label {u}: {c} samples")
+    # preds = []
+    # labels = []
+    # for batch in test_loader:
+    #     batch = batch.to(device)
+    #     pred = pipeline.predict(batch)
+    #     preds.append(pred.cpu())
+    #     labels.append(batch.y.cpu())
+    # preds = torch.cat(preds)
+    # labels = torch.cat(labels)
+    # accuracy = (preds == labels).float().mean().item()
+    # print(f"Test Accuracy: {accuracy:.4f}")
 
-    # Print confusion matrix
-    cm = confusion_matrix(labels.cpu().numpy(), preds.cpu().numpy())
-    print("Confusion Matrix:")
-    print(cm)
+    # # Print confusion matrix
+    # cm = confusion_matrix(labels.cpu().numpy(), preds.cpu().numpy())
+    # print("Confusion Matrix:")
+    # print(cm)
 
-    # Save metrics
-    metrics = {"test_accuracy": accuracy}
-    with open('ad_metrics.json', 'w') as f:
-        import json
-        json.dump(metrics, f, indent=4)
-    print("Metrics saved as 'ad_metrics.json'.")
+    # # Save metrics
+    # metrics = {"test_accuracy": accuracy}
+    # with open('ad_metrics.json', 'w') as f:
+    #     import json
+    #     json.dump(metrics, f, indent=4)
+    # print("Metrics saved as 'ad_metrics.json'.")
 
 
 if __name__ == "__main__":
