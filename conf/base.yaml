@@ -5,7 +5,7 @@ train_ratio: 0.8
 root_folder: hcrl_sa
 batch_size: 512
 momentum: 0.9
-datasize: 0.5
+datasize: 1.0
 optimizer: torch.optim.SGD
 _target_: trainers.DistillationTrainer
 device: cuda

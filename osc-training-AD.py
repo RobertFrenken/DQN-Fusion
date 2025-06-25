@@ -135,7 +135,31 @@ def plot_graph_reconstruction(pipeline, loader, num_graphs=3, save_path="graph_r
                 shown += 1
                 if shown >= num_graphs:
                     return
-                
+
+def plot_feature_histograms(graphs, feature_names=None, save_path="feature_histograms.png"):
+    all_x = torch.cat([g.x for g in graphs], dim=0).cpu().numpy()
+    num_features = all_x.shape[1]
+    # Extend feature_names if too short
+    if feature_names is None:
+        feature_names = [f"Feature {i}" for i in range(num_features)]
+    elif len(feature_names) < num_features:
+        feature_names = feature_names + [f"Feature {i}" for i in range(len(feature_names), num_features)]
+    n_cols = 5
+    n_rows = int(np.ceil(num_features / n_cols))
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(4 * n_cols, 3 * n_rows))
+    axes = axes.flatten()
+    for i in range(num_features):
+        axes[i].hist(all_x[:, i], bins=50, color='skyblue', edgecolor='black')
+        axes[i].set_title(feature_names[i])
+        axes[i].set_xlabel("Value")
+        axes[i].set_ylabel("Count")
+    for i in range(num_features, len(axes)):
+        axes[i].axis('off')
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Saved feature histograms as '{save_path}'")
+         
 def print_graph_stats(graphs, label):
     import torch
     all_x = torch.cat([g.x for g in graphs], dim=0)
@@ -467,6 +491,10 @@ def main(config: DictConfig):
 
     print("Size of the total dataset: ", len(dataset))
 
+    # plot the features in a histogram
+    feature_names = ["CAN ID", "data1", "data2", "data3", "data4", "data5", "data6", "data7", "data8", "count", "position"]
+    plot_feature_histograms([data for data in dataset], feature_names=feature_names)
+
     train_size = int(TRAIN_RATIO * len(dataset))
     test_size = len(dataset) - train_size
     generator1 = torch.Generator().manual_seed(42)
@@ -511,7 +539,7 @@ def main(config: DictConfig):
 
     # Visualize node-level reconstruction errors
     plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="node_recon_subplot.png")
-    # pipeline.train_stage2(full_train_loader, epochs=EPOCHS)
+    pipeline.train_stage2(full_train_loader, epochs=3)
 
     # # Save models
     # save_folder = "saved_models"

@@ -167,7 +167,7 @@ def window_data_transform_numpy(data):
         node_data = data[mask, 0:9]
         if len(node_data) > 0:
             node_data_norm = node_data.copy()
-            node_data_norm[:, 1:9] = node_data_norm[:, 1:9] / 255.0
+            # node_data_norm[:, 1:9] = node_data_norm[:, 1:9] / 255.0 ALREADY NORMALIZED
             node_features[i, :-2] = node_data_norm.mean(axis=0)
         node_counts[i] = mask.sum()
         # Position: last occurrence of this node as source, normalized
