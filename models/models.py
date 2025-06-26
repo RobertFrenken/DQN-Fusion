@@ -197,7 +197,22 @@ class GraphAutoencoder(nn.Module):
         z = self.encode(x, edge_index)
         cont_out, canid_logits = self.decode_node(z, edge_index)
         return cont_out, canid_logits, z
-    
+
+
+'''
+Variational Graph Autoencoder (VGAE) Latent Regularization
+# Add mean and logvar heads for z, sample z ~ N(mu, sigma)
+self.z_mean = nn.Linear(hidden_dim, latent_dim)
+self.z_logvar = nn.Linear(hidden_dim, latent_dim)
+# In encode():
+mu = self.z_mean(x)
+logvar = self.z_logvar(x)
+std = torch.exp(0.5 * logvar)
+eps = torch.randn_like(std)
+z = mu + eps * std
+# Add KL loss to your total loss
+kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+'''
 if __name__ == '__main__':
     # Knowledge Distillation Scenario
     teacher_model = GATWithJK(in_channels=10, hidden_channels=32, out_channels=1, num_layers=5, heads=8)
