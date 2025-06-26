@@ -30,8 +30,8 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(pipeline.device)
-            x_recon, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
-            node_errors = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
+            cont_out, canid_logits, z = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
+            node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
             graphs = Batch.to_data_list(batch)
             start = 0
             for graph in graphs:
@@ -85,55 +85,68 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon
     plt.close()
     print(f"Saved node-level reconstruction error subplot as '{save_path}'")
 
-def plot_graph_reconstruction(pipeline, loader, num_graphs=3, save_path="graph_recon_examples.png"):
+def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="graph_recon_examples.png"):
     """
     Plots input vs. reconstructed node features for a few graphs.
-    Left: Only payload/continuous features (excluding CAN ID).
-    Right: CAN ID input vs. reconstructed CAN ID (for visualization).
+    Plots 2 normal and 2 attack graphs (if available).
     """
     pipeline.autoencoder.eval()
-    shown = 0
+    shown_normal = 0
+    shown_attack = 0
+    max_normal = 2
+    max_attack = 2
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(pipeline.device)
-            x_recon, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
+            cont_out, canid_logits, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
             graphs = Batch.to_data_list(batch)
             start = 0
             for i, graph in enumerate(graphs):
                 n = graph.x.size(0)
                 input_feats = graph.x.cpu().numpy()
-                recon_feats = x_recon[start:start+n].cpu().numpy()
+                recon_feats = cont_out[start:start+n].cpu().numpy()
+                canid_pred = canid_logits[start:start+n].argmax(dim=1).cpu().numpy()
+                recon_canid = cont_out[start:start+n, 0] if cont_out.shape[1] > 0 else np.zeros(n)
+                input_canid = input_feats[:, 0]
                 start += n
 
                 # Exclude CAN ID (column 0) for main feature comparison
                 input_payload = input_feats[:, 1:]
                 recon_payload = recon_feats[:, 1:]
 
-                # CAN ID comparison (column 0)
-                input_canid = input_feats[:, 0]
-                recon_canid = recon_feats[:, 0]
+                label = int(graph.y.flatten()[0])
+                if label == 0 and shown_normal < max_normal:
+                    graph_type = "Normal"
+                    shown_normal += 1
+                elif label == 1 and shown_attack < max_attack:
+                    graph_type = "Attack"
+                    shown_attack += 1
+                else:
+                    continue  # Skip if we've already shown enough of this type
 
                 fig, axes = plt.subplots(1, 3, figsize=(15, 4))
                 # Payload/continuous features
                 im0 = axes[0].imshow(input_payload, aspect='auto', interpolation='none')
-                axes[0].set_title(f"Input Payload/Features\n(Graph {shown+1})")
+                axes[0].set_title(f"Input Payload/Features\n({graph_type} Graph {shown_normal if label==0 else shown_attack})")
                 plt.colorbar(im0, ax=axes[0])
                 im1 = axes[1].imshow(recon_payload, aspect='auto', interpolation='none')
-                axes[1].set_title(f"Reconstructed Payload/Features\n(Graph {shown+1})")
+                axes[1].set_title(f"Reconstructed Payload/Features\n({graph_type} Graph {shown_normal if label==0 else shown_attack})")
                 plt.colorbar(im1, ax=axes[1])
                 # CAN ID comparison
                 axes[2].plot(input_canid, label="Input CAN ID", marker='o')
                 axes[2].plot(recon_canid, label="Recon CAN ID", marker='x')
-                axes[2].set_title("CAN ID (Input vs Recon)")
+                axes[2].plot(canid_pred, label="Pred CAN ID", marker='*')
+                axes[2].set_title("CAN ID (Input vs Recon vs Pred)")
                 axes[2].set_xlabel("Node Index")
                 axes[2].set_ylabel("CAN ID Value")
                 axes[2].legend()
-                plt.suptitle(f"Graph {shown+1} (Label: {int(graph.y.flatten()[0])})")
+                plt.suptitle(f"{graph_type} Graph {shown_normal if label==0 else shown_attack} (Label: {label})")
                 plt.tight_layout(rect=[0, 0, 1, 0.95])
-                plt.savefig(f"{save_path.rstrip('.png')}_{shown+1}.png")
+                plt.savefig(f"{save_path.rstrip('.png')}_{graph_type.lower()}_{shown_normal if label==0 else shown_attack}.png")
                 plt.close()
-                shown += 1
-                if shown >= num_graphs:
+
+                # Stop if we've shown enough
+                if shown_normal >= max_normal and shown_attack >= max_attack:
                     return
 
 def plot_feature_histograms(graphs, feature_names=None, save_path="feature_histograms.png"):
@@ -183,13 +196,6 @@ class GATPipeline:
         self.classifier = GATWithJK(num_ids=num_ids, in_channels=11, hidden_channels=32, out_channels=1, num_layers=3, heads=8, embedding_dim=embedding_dim).to(device)
         self.threshold = 0.0000
 
-    
-    # NOTE: How does the train1 know to only train on normal graphs?
-    # is stage 2 handling sample by sample or the entire batch?
-    # NOTE: The reconstruction error is likely low since most of the nodes
-    # in the graph are normal, there is really only one node that is an attack,
-    # so the error would be low. I will have to check this to see if error is any
-    # node or the entire graph.
 
     def train_stage1(self, train_loader, epochs=100):
         self.autoencoder.train()
@@ -197,38 +203,12 @@ class GATPipeline:
         for _ in range(epochs):
             for batch in train_loader:
                 batch = batch.to(self.device)
-                x_recon, z = self.autoencoder(batch.x, batch.edge_index, batch.batch)
-
-
-
-                # Focus loss on payload features (columns 1-8)
-                payload_loss = (x_recon[:, 1:9] - batch.x[:, 1:9]).pow(2).mean()
-                # Optionally, add small weighted loss for count and position (last two columns)
-                count_loss = (x_recon[:, -2] - batch.x[:, -2]).pow(2).mean()
-                position_loss = (x_recon[:, -1] - batch.x[:, -1]).pow(2).mean()
-                node_loss = payload_loss + 0.1 * (count_loss + position_loss)
-                
-                # Node feature loss
-                # singleton_mask = (batch.x[:, -2] == 1.0)
-                # node_loss = nn.MSELoss()(x_recon[~singleton_mask, 1:], batch.x[~singleton_mask, 1:])
-
-                # Node reconstruction error (exclude CAN ID column)
-                # node_errors = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
-
-
-                # # Mask out the last node of each graph in the batch
-                # mask = torch.ones_like(node_errors, dtype=torch.bool)
-                # graphs = Batch.to_data_list(batch)
-                # start = 0
-                # for graph in graphs:
-                #     n = graph.x.size(0)
-                #     mask[start + n - 1] = False  # Mask last node
-                #     start += n
-
-                # node_loss = node_errors[mask].mean()
-                
-                
-                # Edge reconstruction loss
+                cont_out, canid_logits, z = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                # Continuous features loss (payload, count, position)
+                cont_loss = (cont_out - batch.x[:, 1:]).pow(2).mean()
+                # CAN ID loss (cross-entropy)
+                canid_loss = nn.CrossEntropyLoss()(canid_logits, batch.x[:, 0].long())
+                # Edge reconstruction loss (unchanged)
                 pos_edge_index = batch.edge_index
                 pos_edge_preds = self.autoencoder.decode_edge(z, pos_edge_index)
                 pos_edge_labels = torch.ones(pos_edge_preds.size(0), device=pos_edge_preds.device)
@@ -240,9 +220,8 @@ class GATPipeline:
                 edge_preds = torch.cat([pos_edge_preds, neg_edge_preds])
                 edge_labels = torch.cat([pos_edge_labels, neg_edge_labels])
                 edge_loss = nn.BCELoss()(edge_preds, edge_labels)
-                
-                
-                loss = node_loss + edge_loss
+                # Combine losses (you can weight canid_loss if desired)
+                loss = cont_loss + canid_loss + edge_loss
                 opt.zero_grad()
                 loss.backward()
                 opt.step()
@@ -251,10 +230,9 @@ class GATPipeline:
         with torch.no_grad():
             for batch in train_loader:
                 batch = batch.to(self.device)
-                x_recon, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
-                errors.append((x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1))
+                cont_out, canid_logits, z = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                errors.append((cont_out - batch.x[:, 1:]).pow(2).mean(dim=1))
         self.threshold = torch.cat(errors).quantile(0.5).item()
-        # self.threshold = 0
 
     def train_stage2(self, full_loader, epochs=50):
         """Train classifier on filtered graphs"""
@@ -270,15 +248,14 @@ class GATPipeline:
             print(f"Label {u}: {c} samples")
 
         # --- Print mean reconstruction error for normal vs. attack graphs ---
-        # 3x3 subplot of graphs reconstruction error distribution BY NODEs
         # based of observation, develop a new way to threhold
         errors_normal = []
         errors_attack = []
         with torch.no_grad():
             for batch in full_loader:
                 batch = batch.to(self.device)
-                x_recon, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
-                error = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
+                cont_out, canid_logits, z = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                error = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
                 graphs = Batch.to_data_list(batch)
                 batch_vec = batch.batch.cpu().numpy()
                 start = 0
@@ -318,8 +295,8 @@ class GATPipeline:
         with torch.no_grad():
             for batch in full_loader:
                 batch = batch.to(self.device)
-                x_recon, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
-                error = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
+                cont_out, canid_logits, z = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                error = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
                 graphs = Batch.to_data_list(batch)
                 start = 0
                 for graph in graphs:
@@ -343,10 +320,10 @@ class GATPipeline:
         normal_graphs = [g.cpu() for g in filtered if g.y.item() == 0]
 
         # After splitting filtered into attack_graphs and normal_graphs
-        print_graph_stats(normal_graphs, "Normal")
-        print_graph_stats(attack_graphs, "Attack")
-        print_graph_structure(normal_graphs, "Normal")
-        print_graph_structure(attack_graphs, "Attack")
+        # print_graph_stats(normal_graphs, "Normal")
+        # print_graph_stats(attack_graphs, "Attack")
+        # print_graph_structure(normal_graphs, "Normal")
+        # print_graph_structure(attack_graphs, "Attack")
 
         # Downsample normal graphs to match the number of attack graphs
         num_attack = len(attack_graphs)
@@ -400,7 +377,7 @@ class GATPipeline:
                 num_batches += 1
 
                 if epoch == 1 and num_batches == 1:
-                    print("Batch features (x):", batch.x[:5])
+                    # print("Batch features (x):", batch.x[:5])
                     print("Batch labels (y):", batch.y[:5])
                     print("Classifier raw outputs:", preds[:5].detach().cpu().numpy())
                     print("Unique CAN ID indices in batch:", batch.x[:, 0].unique())
@@ -433,8 +410,8 @@ class GATPipeline:
         
         # Stage 1: Anomaly detection
         with torch.no_grad():
-            x_recon, _ = self.autoencoder(data.x, data.edge_index, data.batch)
-            error = (x_recon - data.x).pow(2).mean(dim=1)
+            cont_out, canid_logits, z = self.autoencoder(data.x, data.edge_index, data.batch)
+            error = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
             
             # Process each graph in batch
             preds = []
@@ -525,10 +502,11 @@ def main(config: DictConfig):
     pipeline = GATPipeline(num_ids=num_ids, embedding_dim=embedding_dim, device=device)
 
     print("Stage 1: Training autoencoder for anomaly detection...")
-    pipeline.train_stage1(train_loader, epochs=50)
+    pipeline.train_stage1(train_loader, epochs=100)
 
     # Visualize input vs. reconstructed features for a few graphs
-    plot_graph_reconstruction(pipeline, train_loader, num_graphs=3, save_path="graph_recon_examples.png")
+    full_train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    plot_graph_reconstruction(pipeline, full_train_loader, num_graphs=4, save_path="graph_recon_examples.png")
 
     # Visualize node-level reconstruction errors
     # plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="node_recon_subplot.png")

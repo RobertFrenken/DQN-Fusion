@@ -146,33 +146,47 @@ class GraphAutoencoder(nn.Module):
     def __init__(self, num_ids, in_channels, hidden_dim=32, heads=4, embedding_dim=8, dropout=0.5):
         super().__init__()
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
-        self.dropout = nn.Dropout(p=dropout)
         gat_in_dim = embedding_dim + (in_channels - 1)
-        # Encoder
+
+        # Encoder: 3 GAT layers with batch norm and residuals
         self.enc1 = GATConv(gat_in_dim, hidden_dim, heads=heads)
+        self.bn1 = nn.BatchNorm1d(hidden_dim * heads)
         self.enc2 = GATConv(hidden_dim * heads, hidden_dim, heads=1)
-        # Decoder for node features
+        self.bn2 = nn.BatchNorm1d(hidden_dim)
+        self.enc3 = GATConv(hidden_dim, hidden_dim, heads=1)
+        self.bn3 = nn.BatchNorm1d(hidden_dim)
+        self.dropout = nn.Dropout(p=dropout)
+
+        # Decoder for node features: 3 GAT layers
         self.dec1 = GATConv(hidden_dim, hidden_dim, heads=heads)
-        self.dec2 = GATConv(hidden_dim * heads, in_channels, heads=1)
+        self.dbn1 = nn.BatchNorm1d(hidden_dim * heads)
+        self.dec2 = GATConv(hidden_dim * heads, hidden_dim, heads=1)
+        self.dbn2 = nn.BatchNorm1d(hidden_dim)
+        self.dec3 = GATConv(hidden_dim, in_channels - 1, heads=1)  # Exclude CAN ID from continuous output
+
+        # CAN ID classifier head
+        self.canid_classifier = nn.Linear(hidden_dim, num_ids)
         self.gat_in_dim = gat_in_dim
 
     def encode(self, x, edge_index):
         id_emb = self.id_embedding(x[:, 0].long())
         other_feats = x[:, 1:]
         x = torch.cat([id_emb, other_feats], dim=1)
-        x = self.enc1(x, edge_index).relu()
-        x = self.dropout(x)
-        z = self.enc2(x, edge_index).relu()
+        x1 = self.dropout(F.relu(self.bn1(self.enc1(x, edge_index))))
+        x2 = self.dropout(F.relu(self.bn2(self.enc2(x1, edge_index))))
+        # Residual connection
+        x3 = self.dropout(F.relu(self.bn3(self.enc3(x2, edge_index))))
+        z = x3 + x2  # Residual
         return z
 
     def decode_node(self, z, edge_index):
-        x = self.dec1(z, edge_index).relu()
-        x = self.dropout(x)
-        x = self.dec2(x, edge_index).sigmoid()
-        return x
+        x1 = self.dropout(F.relu(self.dbn1(self.dec1(z, edge_index))))
+        x2 = self.dropout(F.relu(self.dbn2(self.dec2(x1, edge_index))))
+        cont_out = torch.sigmoid(self.dec3(x2, edge_index))  # shape: [num_nodes, in_channels-1]
+        canid_logits = self.canid_classifier(x2)  # shape: [num_nodes, num_ids]
+        return cont_out, canid_logits
 
     def decode_edge(self, z, edge_index):
-        # Dot product decoder for edges
         z_src = z[edge_index[0]]
         z_dst = z[edge_index[1]]
         edge_logits = (z_src * z_dst).sum(dim=1)
@@ -181,8 +195,8 @@ class GraphAutoencoder(nn.Module):
 
     def forward(self, x, edge_index, batch):
         z = self.encode(x, edge_index)
-        x_recon = self.decode_node(z, edge_index)
-        return x_recon, z
+        cont_out, canid_logits = self.decode_node(z, edge_index)
+        return cont_out, canid_logits, z
     
 if __name__ == '__main__':
     # Knowledge Distillation Scenario
