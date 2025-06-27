@@ -391,14 +391,14 @@ def main(config: DictConfig):
     pipeline = GATPipeline(num_ids=num_ids, embedding_dim=embedding_dim, device=device)
 
     print("Stage 1: Training autoencoder for anomaly detection...")
-    pipeline.train_stage1(train_loader, epochs=50)
+    pipeline.train_stage1(train_loader, epochs=100)
 
     # Visualize input vs. reconstructed features for a few graphs
     # For classifier, use all graphs (normal + attack)
     full_train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
     plot_graph_reconstruction(pipeline, full_train_loader, num_graphs=4, save_path="graph_recon_examples.png")
 
-    N = 5000  # or any number you like
+    N = 10000  # or any number you like
     indices = np.random.choice(len(train_dataset), size=N, replace=False)
     subsample = [train_dataset[i] for i in indices]
     subsample_loader = DataLoader(subsample, batch_size=BATCH_SIZE, shuffle=False)
