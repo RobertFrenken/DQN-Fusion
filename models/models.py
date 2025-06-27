@@ -111,7 +111,61 @@ class GATWithJK(nn.Module):
         for layer in self.fc_layers:
             x = layer(x)
         return x
+class GATMoEJK(nn.Module):
+    def __init__(self, num_ids, in_channels, hidden_channels, out_channels, 
+                 num_layers=3, heads=4, dropout=0.2, num_fc_layers=3, embedding_dim=8):
+        super().__init__()
+        self.id_embedding = nn.Embedding(num_ids, embedding_dim)
+        self.dropout = dropout
 
+        # GAT layers
+        self.convs = nn.ModuleList()
+        for i in range(num_layers):
+            in_dim = embedding_dim + (in_channels - 1) if i == 0 else hidden_channels * heads
+            self.convs.append(GATConv(in_dim, hidden_channels, heads=heads, concat=True))
+
+
+        self.jk = JumpingKnowledge(
+            mode="cat",
+            channels=hidden_channels * heads,
+            num_layers=num_layers
+        )
+
+        # Fully connected layers
+        self.fc_layers = nn.ModuleList()
+        if self.jk.mode == "cat":
+            fc_input_dim = hidden_channels * heads * num_layers
+        else:
+            fc_input_dim = hidden_channels * heads
+        
+        # TODO: Add MoE layers
+        for _ in range(num_fc_layers - 1):
+            # rotuer top2 experts
+            self.fc_layers.append(nn.Linear(fc_input_dim, fc_input_dim))
+            self.fc_layers.append(nn.ReLU())
+            self.fc_layers.append(nn.Dropout(p=dropout))
+        self.fc_layers.append(nn.Linear(fc_input_dim, out_channels))
+
+    def forward(self, data, return_intermediate=False):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+        # x shape: [num_nodes, in_channels], where x[:,0] is CAN ID index
+        id_emb = self.id_embedding(x[:, 0].long())  # [num_nodes, embedding_dim]
+        other_feats = x[:, 1:]  # [num_nodes, in_channels-1]
+        x = torch.cat([id_emb, other_feats], dim=1)
+
+
+        xs = []
+        for conv in self.convs:
+            x = conv(x, edge_index).relu()
+            x = F.dropout(x, p=self.dropout, training=self.training)
+            xs.append(x)
+        if return_intermediate:
+            return xs
+        x = self.jk(xs)
+        x = global_mean_pool(x, batch)
+        for layer in self.fc_layers:
+            x = layer(x)
+        return x
 class Autoencoder(torch.nn.Module):
     """Autoencoder with CAN ID embedding for static graphs"""
     def __init__(self, num_ids, in_channels, hidden_dim=32, heads=4, embedding_dim=8, dropout=0.5):
@@ -229,9 +283,10 @@ kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
 '''
 if __name__ == '__main__':
     # Knowledge Distillation Scenario
-    teacher_model = GATWithJK(in_channels=10, hidden_channels=32, out_channels=1, num_layers=5, heads=8)
-    student_model = GATWithJK(in_channels=10, hidden_channels=32, out_channels=1, num_layers=2, heads=4)
-    net = GATWithJK(10, 8, 1)
+    # teacher_model = GATWithJK(in_channels=10, hidden_channels=32, out_channels=1, num_layers=5, heads=8)
+    # student_model = GATWithJK(in_channels=10, hidden_channels=32, out_channels=1, num_layers=2, heads=4)
+    autoencoder = GraphAutoencoder(num_ids=2000, in_channels=11, embedding_dim=8)
+    # net = GATWithJK(10, 8, 1)
 
     def model_characteristics(model):
         num_params = sum(p.numel() for p in model.parameters())
@@ -245,7 +300,9 @@ if __name__ == '__main__':
         print(f'Number of Parameters: {num_params:.3f}')
         print(f'Model size: {size_all_mb:.3f} MB')
 
-    model_characteristics(teacher_model)
-    print(teacher_model)
-    model_characteristics(student_model)
-    print(student_model)
+    # model_characteristics(teacher_model)
+    # print(teacher_model)
+    # model_characteristics(student_model)
+    # print(student_model)
+    model_characteristics(autoencoder)
+    print(autoencoder)
