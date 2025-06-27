@@ -143,7 +143,8 @@ class Autoencoder(torch.nn.Module):
         return x  # shape: [num_nodes, in_channels]
 class GraphAutoencoder(nn.Module):
     """Graph Autoencoder: reconstructs node features and edge list."""
-    def __init__(self, num_ids, in_channels, hidden_dim=32, heads=4, embedding_dim=8, dropout=0.5):
+    def __init__(self, num_ids, in_channels, hidden_dim=32, latent_dim=32,
+                  heads=4, embedding_dim=8, dropout=0.35):
         super().__init__()
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
         gat_in_dim = embedding_dim + (in_channels - 1)
@@ -156,6 +157,10 @@ class GraphAutoencoder(nn.Module):
         self.enc3 = GATConv(hidden_dim, hidden_dim, heads=1)
         self.bn3 = nn.BatchNorm1d(hidden_dim)
         self.dropout = nn.Dropout(p=dropout)
+
+        # Add mean and logvar heads for z, sample z ~ N(mu, sigma)
+        self.z_mean = nn.Linear(hidden_dim, latent_dim)
+        self.z_logvar = nn.Linear(hidden_dim, latent_dim)
 
         # Decoder for node features: 3 GAT layers
         self.dec1 = GATConv(hidden_dim, hidden_dim, heads=heads)
@@ -176,8 +181,17 @@ class GraphAutoencoder(nn.Module):
         x2 = self.dropout(F.relu(self.bn2(self.enc2(x1, edge_index))))
         # Residual connection
         x3 = self.dropout(F.relu(self.bn3(self.enc3(x2, edge_index))))
-        z = x3 + x2  # Residual
-        return z
+        h = x3 + x2  # Residual
+
+        # VGAE Latent Regularization
+        mu = self.z_mean(h)
+        logvar = self.z_logvar(h)
+        std = torch.exp(0.5 * logvar)
+        eps = torch.randn_like(std)
+        z = mu + eps * std  # Reparameterization trick
+        # KL divergence loss (mean over all nodes)
+        kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
+        return z, kl_loss
 
     def decode_node(self, z, edge_index):
         x1 = self.dropout(F.relu(self.dbn1(self.dec1(z, edge_index))))
@@ -194,9 +208,9 @@ class GraphAutoencoder(nn.Module):
         return edge_probs
 
     def forward(self, x, edge_index, batch):
-        z = self.encode(x, edge_index)
+        z, kl_loss = self.encode(x, edge_index)
         cont_out, canid_logits = self.decode_node(z, edge_index)
-        return cont_out, canid_logits, z
+        return cont_out, canid_logits, z, kl_loss
 
 
 '''

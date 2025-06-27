@@ -9,6 +9,41 @@ import torch
 from torch_geometric.data import Batch
 import random
 import matplotlib.pyplot as plt
+from sklearn.manifold import TSNE
+def plot_latent_space(zs, labels, save_path="latent_space.png"):
+    tsne = TSNE(n_components=2, random_state=42)
+    zs_2d = tsne.fit_transform(zs)
+    plt.figure(figsize=(8,6))
+    for label in np.unique(labels):
+        idx = labels == label
+        plt.scatter(zs_2d[idx, 0], zs_2d[idx, 1], label=f"Label {label}", alpha=0.6)
+    plt.legend()
+    plt.title("Latent Space Visualization (t-SNE)")
+    plt.xlabel("Dim 1")
+    plt.ylabel("Dim 2")
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Saved latent space plot as '{save_path}'")
+
+def plot_edge_error_hist(errors_normal, errors_attack, threshold, save_path='edge_error_hist.png'):
+    import matplotlib.pyplot as plt
+    if errors_normal and errors_attack:
+        plt.figure(figsize=(8, 5))
+        plt.hist(errors_normal, bins=50, alpha=0.6, label='Normal', color='blue', density=True)
+        plt.hist(errors_attack, bins=50, alpha=0.6, label='Attack', color='red', density=True)
+        plt.axvline(threshold, color='black', linestyle='--', label='Threshold')
+        plt.xlabel('Edge Reconstruction Error')
+        plt.ylabel('Density')
+        plt.title('Edge Error Distribution')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
+        print(f"Saved edge error histogram as '{save_path}'")
+    else:
+        print("Not enough data to plot edge error distributions.")
+
 
 def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon_subplot.png"):
     """Plot node-level reconstruction errors for a mix of normal and attack graphs."""
@@ -22,8 +57,8 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(pipeline.device)
-            x_recon, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
-            node_errors = (x_recon[:, 1:] - batch.x[:, 1:]).pow(2).mean(dim=1)
+            cont_out, canid_logits, z, kl_loss = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
+            node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
             graphs = Batch.to_data_list(batch)
             start = 0
             for graph in graphs:
@@ -60,7 +95,7 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon
         print(f"Graph {i+1} last node features: {graph.x[-2]}")  # -2 to skip virtual node
         n = graph.x.size(0)
         recon_feats = pipeline.autoencoder(graph.x, graph.edge_index, torch.zeros(n, dtype=torch.long, device=graph.x.device))
-        print(f"Graph {i+1} last node recon: {recon_feats[-2]}")
+        # print(f"Graph {i+1} last node recon: {recon_feats[-2]}")
     
     fig, axes = plt.subplots(2, num_graphs, figsize=(4*num_graphs, 8), sharey=True)
     for i in range(num_graphs):
@@ -77,55 +112,68 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon
     plt.close()
     print(f"Saved node-level reconstruction error subplot as '{save_path}'")
 
-def plot_graph_reconstruction(pipeline, loader, num_graphs=3, save_path="graph_recon_examples.png"):
+def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="graph_recon_examples.png"):
     """
     Plots input vs. reconstructed node features for a few graphs.
-    Left: Only payload/continuous features (excluding CAN ID).
-    Right: CAN ID input vs. reconstructed CAN ID (for visualization).
+    Plots 2 normal and 2 attack graphs (if available).
     """
     pipeline.autoencoder.eval()
-    shown = 0
+    shown_normal = 0
+    shown_attack = 0
+    max_normal = 2
+    max_attack = 2
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(pipeline.device)
-            x_recon, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
+            cont_out, canid_logits, z, kl_loss = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
             graphs = Batch.to_data_list(batch)
             start = 0
             for i, graph in enumerate(graphs):
                 n = graph.x.size(0)
                 input_feats = graph.x.cpu().numpy()
-                recon_feats = x_recon[start:start+n].cpu().numpy()
+                recon_feats = cont_out[start:start+n].cpu().numpy()
+                canid_pred = canid_logits[start:start+n].argmax(dim=1).cpu().numpy()
+                recon_canid = cont_out[start:start+n, 0] if cont_out.shape[1] > 0 else np.zeros(n)
+                input_canid = input_feats[:, 0]
                 start += n
 
                 # Exclude CAN ID (column 0) for main feature comparison
                 input_payload = input_feats[:, 1:]
                 recon_payload = recon_feats[:, 1:]
 
-                # CAN ID comparison (column 0)
-                input_canid = input_feats[:, 0]
-                recon_canid = recon_feats[:, 0]
+                label = int(graph.y.flatten()[0])
+                if label == 0 and shown_normal < max_normal:
+                    graph_type = "Normal"
+                    shown_normal += 1
+                elif label == 1 and shown_attack < max_attack:
+                    graph_type = "Attack"
+                    shown_attack += 1
+                else:
+                    continue  # Skip if we've already shown enough of this type
 
                 fig, axes = plt.subplots(1, 3, figsize=(15, 4))
                 # Payload/continuous features
                 im0 = axes[0].imshow(input_payload, aspect='auto', interpolation='none')
-                axes[0].set_title(f"Input Payload/Features\n(Graph {shown+1})")
+                axes[0].set_title(f"Input Payload/Features\n({graph_type} Graph {shown_normal if label==0 else shown_attack})")
                 plt.colorbar(im0, ax=axes[0])
                 im1 = axes[1].imshow(recon_payload, aspect='auto', interpolation='none')
-                axes[1].set_title(f"Reconstructed Payload/Features\n(Graph {shown+1})")
+                axes[1].set_title(f"Reconstructed Payload/Features\n({graph_type} Graph {shown_normal if label==0 else shown_attack})")
                 plt.colorbar(im1, ax=axes[1])
                 # CAN ID comparison
                 axes[2].plot(input_canid, label="Input CAN ID", marker='o')
                 axes[2].plot(recon_canid, label="Recon CAN ID", marker='x')
-                axes[2].set_title("CAN ID (Input vs Recon)")
+                axes[2].plot(canid_pred, label="Pred CAN ID", marker='*')
+                axes[2].set_title("CAN ID (Input vs Recon vs Pred)")
                 axes[2].set_xlabel("Node Index")
                 axes[2].set_ylabel("CAN ID Value")
                 axes[2].legend()
-                plt.suptitle(f"Graph {shown+1} (Label: {int(graph.y.flatten()[0])})")
+                plt.suptitle(f"{graph_type} Graph {shown_normal if label==0 else shown_attack} (Label: {label})")
                 plt.tight_layout(rect=[0, 0, 1, 0.95])
-                plt.savefig(f"{save_path.rstrip('.png')}_{shown+1}.png")
+                plt.savefig(f"{save_path.rstrip('.png')}_{graph_type.lower()}_{shown_normal if label==0 else shown_attack}.png")
                 plt.close()
-                shown += 1
-                if shown >= num_graphs:
+
+                # Stop if we've shown enough
+                if shown_normal >= max_normal and shown_attack >= max_attack:
                     return
 
 def plot_feature_histograms(graphs, feature_names=None, save_path="feature_histograms.png"):
@@ -151,7 +199,26 @@ def plot_feature_histograms(graphs, feature_names=None, save_path="feature_histo
     plt.savefig(save_path)
     plt.close()
     print(f"Saved feature histograms as '{save_path}'")
-         
+
+def plot_recon_error_hist(errors_normal, errors_attack, threshold, save_path='recon_error_hist.png'):
+    """
+    Plots the histogram of reconstruction errors for normal and attack graphs.
+    """
+    if errors_normal and errors_attack:
+        plt.figure(figsize=(8, 5))
+        plt.hist(errors_normal, bins=50, alpha=0.6, label='Normal', color='blue', density=True)
+        plt.hist(errors_attack, bins=50, alpha=0.6, label='Attack', color='red', density=True)
+        plt.axvline(threshold, color='black', linestyle='--', label='Threshold')
+        plt.xlabel('Mean Graph Reconstruction Error')
+        plt.ylabel('Density')
+        plt.title('Reconstruction Error Distribution')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
+        print(f"Saved reconstruction error histogram as '{save_path}'")
+    else:
+        print("Not enough data to plot error distributions.")         
 def print_graph_stats(graphs, label):
     import torch
     all_x = torch.cat([g.x for g in graphs], dim=0)
