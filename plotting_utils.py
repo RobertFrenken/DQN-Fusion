@@ -12,7 +12,57 @@ import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
 
-def plot_canid_recon_hist(id_errors_normal, id_errors_attack, save_path="canid_recon_hist.png"):
+def plot_structural_error_hist(structural_errors_normal, structural_errors_attack, save_path="images/structural_error_hist.png"):
+    """Plot histogram of structural feature scores for normal and attack graphs.
+
+    Args:
+        structural_errors_normal: List of scores for normal graphs.
+        structural_errors_attack: List of scores for attack graphs.
+        save_path: Path to save the figure.
+    """
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(10, 6))
+    plt.hist(structural_errors_normal, bins=50, alpha=0.7, label=f'Normal (n={len(structural_errors_normal)})', color='blue')
+    plt.hist(structural_errors_attack, bins=50, alpha=0.7, label=f'Attack (n={len(structural_errors_attack)})', color='red')
+    structural_threshold = np.percentile(structural_errors_normal, 95) if structural_errors_normal else 0
+    plt.axvline(structural_threshold, color='green', linestyle='--', label=f'Threshold: {structural_threshold:.4f}')
+    plt.xlabel('Structural Feature Score')
+    plt.ylabel('Frequency')
+    plt.title('Structural Feature Distribution: Normal vs Attack Graphs')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Structural error histogram saved as '{save_path}'")
+
+def plot_connectivity_error_hist(connectivity_errors_normal, connectivity_errors_attack, save_path="images/connectivity_error_hist.png"):
+    """Plot histogram of connectivity anomaly scores for normal and attack graphs.
+
+    Args:
+        connectivity_errors_normal: List of scores for normal graphs.
+        connectivity_errors_attack: List of scores for attack graphs.
+        save_path: Path to save the figure.
+    """
+    import matplotlib.pyplot as plt
+    plt.figure(figsize=(10, 6))
+    plt.hist(connectivity_errors_normal, bins=50, alpha=0.7, label=f'Normal (n={len(connectivity_errors_normal)})', color='blue')
+    plt.hist(connectivity_errors_attack, bins=50, alpha=0.7, label=f'Attack (n={len(connectivity_errors_attack)})', color='red')
+    connectivity_threshold = np.percentile(connectivity_errors_normal, 95) if connectivity_errors_normal else 0
+    plt.axvline(connectivity_threshold, color='green', linestyle='--', label=f'Threshold: {connectivity_threshold:.4f}')
+    plt.xlabel('Connectivity Anomaly Score')
+    plt.ylabel('Frequency')
+    plt.title('Connectivity Anomaly Distribution: Normal vs Attack Graphs')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Connectivity error histogram saved as '{save_path}'")
+
+def plot_canid_recon_hist(id_errors_normal, id_errors_attack, save_path="images/canid_recon_hist.png"):
     # Plot
     if id_errors_normal and id_errors_attack:
         plt.figure(figsize=(8, 5))
@@ -32,7 +82,7 @@ def plot_canid_recon_hist(id_errors_normal, id_errors_attack, save_path="canid_r
 def plot_composite_error_hist(node_errors_normal, node_errors_attack,
                              edge_errors_normal, edge_errors_attack,
                              canid_errors_normal, canid_errors_attack,
-                             save_path="composite_error_hist.png"):
+                             save_path="images/composite_error_hist.png"):
     # Normalize each error type to [0, 1] for fair combination
     def normalize(arr):
         arr = np.array(arr)
@@ -59,7 +109,7 @@ def plot_composite_error_hist(node_errors_normal, node_errors_attack,
     plt.close()
     print(f"Saved composite error histogram as '{save_path}'")
 
-def plot_latent_space(zs, labels, save_path="latent_space.png"):
+def plot_latent_space(zs, labels, save_path="images/latent_space.png"):
     tsne = TSNE(n_components=2, random_state=42)
     zs_2d = tsne.fit_transform(zs)
     plt.figure(figsize=(8,6))
@@ -75,7 +125,7 @@ def plot_latent_space(zs, labels, save_path="latent_space.png"):
     plt.close()
     print(f"Saved latent space plot as '{save_path}'")
 
-def plot_edge_error_hist(errors_normal, errors_attack, threshold, save_path='edge_error_hist.png'):
+def plot_edge_error_hist(errors_normal, errors_attack, threshold, save_path='images/edge_error_hist.png'):
     import matplotlib.pyplot as plt
     if errors_normal and errors_attack:
         plt.figure(figsize=(8, 5))
@@ -94,7 +144,7 @@ def plot_edge_error_hist(errors_normal, errors_attack, threshold, save_path='edg
         print("Not enough data to plot edge error distributions.")
 
 
-def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon_subplot.png"):
+def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="images/node_recon_subplot.png"):
     """Plot node-level reconstruction errors for a mix of normal and attack graphs."""
     pipeline.autoencoder.eval()
     normal_graphs = []
@@ -161,7 +211,7 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="node_recon
     plt.close()
     print(f"Saved node-level reconstruction error subplot as '{save_path}'")
 
-def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="graph_recon_examples.png"):
+def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="images/graph_recon_examples.png"):
     """
     Plots input vs. reconstructed node features for a few graphs.
     Plots 2 normal and 2 attack graphs (if available).
@@ -225,7 +275,7 @@ def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="graph_r
                 if shown_normal >= max_normal and shown_attack >= max_attack:
                     return
 
-def plot_feature_histograms(graphs, feature_names=None, save_path="feature_histograms.png"):
+def plot_feature_histograms(graphs, feature_names=None, save_path="images/feature_histograms.png"):
     all_x = torch.cat([g.x for g in graphs], dim=0).cpu().numpy()
     num_features = all_x.shape[1]
     # Extend feature_names if too short
@@ -249,7 +299,7 @@ def plot_feature_histograms(graphs, feature_names=None, save_path="feature_histo
     plt.close()
     print(f"Saved feature histograms as '{save_path}'")
 
-def plot_recon_error_hist(errors_normal, errors_attack, threshold, save_path='recon_error_hist.png'):
+def plot_recon_error_hist(errors_normal, errors_attack, threshold, save_path='images/recon_error_hist.png'):
     """
     Plots the histogram of reconstruction errors for normal and attack graphs.
     """

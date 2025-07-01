@@ -29,9 +29,20 @@ from plotting_utils import (
     plot_recon_error_hist,
     plot_edge_error_hist,
     plot_canid_recon_hist, 
-    plot_composite_error_hist
+    plot_composite_error_hist,
+    plot_structural_error_hist,      # <-- add
+    plot_connectivity_error_hist     # <-- add
 )
 def extract_latent_vectors(pipeline, loader):
+    """Extract latent vectors (graph embeddings) and labels from a data loader.
+
+    Args:
+        pipeline: The GATPipeline object containing the autoencoder.
+        loader: DataLoader yielding batches of graphs.
+
+    Returns:
+        Tuple of (latent_vectors, labels) as numpy arrays.
+    """
     pipeline.autoencoder.eval()
     zs = []
     labels = []
@@ -52,6 +63,15 @@ def extract_latent_vectors(pipeline, loader):
     return np.array(zs), np.array(labels)
 
 def compute_edge_recon_error(autoencoder, batch):
+    """Compute edge reconstruction error for each graph in a batch.
+
+    Args:
+        autoencoder: The trained autoencoder model.
+        batch: A batch of graphs.
+
+    Returns:
+        List of edge reconstruction errors, one per graph.
+    """
     with torch.no_grad():
         _, _, z, _ = autoencoder(batch.x, batch.edge_index, batch.batch)
         graphs = Batch.to_data_list(batch)
@@ -108,8 +128,16 @@ def compute_edge_recon_error(autoencoder, batch):
             edge_errors.append(edge_loss.item())
             start += num_nodes
     return edge_errors
+
 def compute_graph_structural_features(graphs):
-    """Compute structural features that should differ between normal and attack graphs"""
+    """Compute structural features for each graph to distinguish normal and attack graphs.
+
+    Args:
+        graphs: List of graph objects.
+
+    Returns:
+        List of structural feature scores, one per graph.
+    """
     structural_errors = []
     
     for graph in graphs:
@@ -141,7 +169,15 @@ def compute_graph_structural_features(graphs):
     return structural_errors
 
 def compute_edge_prediction_accuracy(autoencoder, batch):
-    """Compute edge prediction accuracy instead of reconstruction loss"""
+    """Compute edge prediction accuracy (as error) for each graph in a batch.
+
+    Args:
+        autoencoder: The trained autoencoder model.
+        batch: A batch of graphs.
+
+    Returns:
+        List of edge prediction errors (1 - accuracy), one per graph.
+    """
     with torch.no_grad():
         _, _, z, _ = autoencoder(batch.x, batch.edge_index, batch.batch)
         graphs = Batch.to_data_list(batch)
@@ -200,7 +236,14 @@ def compute_edge_prediction_accuracy(autoencoder, batch):
     return edge_accuracies
 
 def compute_graph_connectivity_anomalies(graphs):
-    """Detect anomalies based on graph connectivity patterns"""
+    """Detect anomalies in graph connectivity patterns.
+
+    Args:
+        graphs: List of graph objects.
+
+    Returns:
+        List of connectivity anomaly scores, one per graph.
+    """
     connectivity_scores = []
     
     for graph in graphs:
@@ -237,14 +280,30 @@ def compute_graph_connectivity_anomalies(graphs):
     return connectivity_scores
 
 class GATPipeline:
+    """Pipeline for training and evaluating GAT-based autoencoder and classifier."""
     def __init__(self, num_ids, embedding_dim=8, device='cpu'):
+        """Initialize the GATPipeline.
+
+        Args:
+            num_ids: Number of unique CAN IDs.
+            embedding_dim: Dimension of latent embeddings.
+            device: Device to use ('cpu' or 'cuda').
+        """
         self.device = device
         self.autoencoder = GraphAutoencoder(num_ids=num_ids, in_channels=11, embedding_dim=embedding_dim).to(device)
         self.classifier = GATWithJK(num_ids=num_ids, in_channels=11, hidden_channels=32, out_channels=1, num_layers=3, heads=8, embedding_dim=embedding_dim).to(device)
         self.threshold = 0.0000
 
     def _compute_edge_loss(self, z, edge_index):
-        """Helper method to compute edge reconstruction loss"""
+        """Compute edge reconstruction loss for a graph.
+
+        Args:
+            z: Latent node embeddings.
+            edge_index: Edge indices.
+
+        Returns:
+            Edge reconstruction loss (torch.Tensor).
+        """
         # Skip if no edges
         if edge_index.size(1) == 0:
             return torch.tensor(0.0, device=self.device, requires_grad=True)
@@ -288,7 +347,15 @@ class GATPipeline:
         return nn.BCELoss()(edge_preds, edge_labels)
 
     def _compute_reconstruction_errors(self, loader, use_max=True):
-        """Compute reconstruction errors for normal vs attack graphs"""
+        """Compute various reconstruction errors for normal and attack graphs.
+
+        Args:
+            loader: DataLoader yielding batches of graphs.
+            use_max: If True, use max node error per graph; else use mean.
+
+        Returns:
+            Tuple of lists containing errors for normal and attack graphs.
+        """
         errors_normal, errors_attack = [], []
         edge_errors_normal, edge_errors_attack = [], []
         id_errors_normal, id_errors_attack = [], []
@@ -348,7 +415,12 @@ class GATPipeline:
                 connectivity_errors_normal, connectivity_errors_attack)
 
     def _set_threshold(self, train_loader, percentile=50):
-        """Set reconstruction threshold based on training data"""
+        """Set the anomaly detection threshold based on training data.
+
+        Args:
+            train_loader: DataLoader for training data.
+            percentile: Percentile to use for threshold.
+        """
         errors = []
         with torch.no_grad():
             for batch in train_loader:
@@ -358,7 +430,14 @@ class GATPipeline:
         self.threshold = torch.cat(errors).quantile(percentile / 100.0).item()
 
     def _create_balanced_dataset(self, filtered_graphs):
-        """Create balanced dataset by downsampling majority class"""
+        """Create a balanced dataset by downsampling the majority class.
+
+        Args:
+            filtered_graphs: List of filtered graphs.
+
+        Returns:
+            List of balanced graphs.
+        """
         attack_graphs = [g.cpu() for g in filtered_graphs if g.y.item() == 1]
         normal_graphs = [g.cpu() for g in filtered_graphs if g.y.item() == 0]
         
@@ -380,7 +459,20 @@ class GATPipeline:
                                edge_errors_attack, id_errors_normal, id_errors_attack,
                                structural_errors_normal=None, structural_errors_attack=None,
                                connectivity_errors_normal=None, connectivity_errors_attack=None):
-        """Print comprehensive error statistics and create plots"""
+        """Print error statistics and generate plots for various error types.
+
+        Args:
+            errors_normal: Node errors for normal graphs.
+            errors_attack: Node errors for attack graphs.
+            edge_errors_normal: Edge errors for normal graphs.
+            edge_errors_attack: Edge errors for attack graphs.
+            id_errors_normal: CAN ID errors for normal graphs.
+            id_errors_attack: CAN ID errors for attack graphs.
+            structural_errors_normal: Structural feature scores for normal graphs.
+            structural_errors_attack: Structural feature scores for attack graphs.
+            connectivity_errors_normal: Connectivity anomaly scores for normal graphs.
+            connectivity_errors_attack: Connectivity anomaly scores for attack graphs.
+        """
         print(f"Processed {len(errors_normal)} normal graphs, {len(errors_attack)} attack graphs")
         print(f"Mean reconstruction error (normal): {np.mean(errors_normal) if errors_normal else 'N/A'}")
         print(f"Mean reconstruction error (attack): {np.mean(errors_attack) if errors_attack else 'N/A'}")
@@ -406,53 +498,32 @@ class GATPipeline:
         edge_threshold = np.percentile(edge_errors_normal, 95) if edge_errors_normal else 0
         print(f"Edge error threshold: {edge_threshold}")
         print(f"Node reconstruction threshold: {self.threshold}")
-        
-        plot_recon_error_hist(errors_normal, errors_attack, self.threshold)
-        plot_edge_error_hist(edge_errors_normal, edge_errors_attack, edge_threshold)
-        plot_canid_recon_hist(id_errors_normal, id_errors_attack, save_path="canid_recon_hist.png")
-        
-        # Plot structural differences if available - use standard edge error plot function
+
+        plot_recon_error_hist(errors_normal, errors_attack, self.threshold, save_path="images/recon_error_hist.png")
+        plot_edge_error_hist(edge_errors_normal, edge_errors_attack, edge_threshold, save_path="images/edge_error_hist.png")
+        plot_canid_recon_hist(id_errors_normal, id_errors_attack, save_path="images/canid_recon_hist.png")
+
+        # Plot structural differences if available
         if structural_errors_normal and structural_errors_attack:
-            # Create structural error plot using matplotlib directly since plot_edge_error_hist doesn't support title
-            import matplotlib.pyplot as plt
-            plt.figure(figsize=(10, 6))
-            plt.hist(structural_errors_normal, bins=50, alpha=0.7, label=f'Normal (n={len(structural_errors_normal)})', color='blue')
-            plt.hist(structural_errors_attack, bins=50, alpha=0.7, label=f'Attack (n={len(structural_errors_attack)})', color='red')
-            
-            structural_threshold = np.percentile(structural_errors_normal, 95) if structural_errors_normal else 0
-            plt.axvline(structural_threshold, color='green', linestyle='--', label=f'Threshold: {structural_threshold:.4f}')
-            
-            plt.xlabel('Structural Feature Score')
-            plt.ylabel('Frequency')
-            plt.title('Structural Feature Distribution: Normal vs Attack Graphs')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.tight_layout()
-            plt.savefig('structural_error_hist.png', dpi=300, bbox_inches='tight')
-            plt.close()
-            print("Structural error histogram saved as 'structural_error_hist.png'")
-        
+            plot_structural_error_hist(
+                structural_errors_normal, structural_errors_attack,
+                save_path="images/structural_error_hist.png"
+            )
+
         # Plot connectivity anomalies if available
         if connectivity_errors_normal and connectivity_errors_attack:
-            import matplotlib.pyplot as plt
-            plt.figure(figsize=(10, 6))
-            plt.hist(connectivity_errors_normal, bins=50, alpha=0.7, label=f'Normal (n={len(connectivity_errors_normal)})', color='blue')
-            plt.hist(connectivity_errors_attack, bins=50, alpha=0.7, label=f'Attack (n={len(connectivity_errors_attack)})', color='red')
-            
-            connectivity_threshold = np.percentile(connectivity_errors_normal, 95) if connectivity_errors_normal else 0
-            plt.axvline(connectivity_threshold, color='green', linestyle='--', label=f'Threshold: {connectivity_threshold:.4f}')
-            
-            plt.xlabel('Connectivity Anomaly Score')
-            plt.ylabel('Frequency')
-            plt.title('Connectivity Anomaly Distribution: Normal vs Attack Graphs')
-            plt.legend()
-            plt.grid(True, alpha=0.3)
-            plt.tight_layout()
-            plt.savefig('connectivity_error_hist.png', dpi=300, bbox_inches='tight')
-            plt.close()
-            print("Connectivity error histogram saved as 'connectivity_error_hist.png'")
+            plot_connectivity_error_hist(
+                connectivity_errors_normal, connectivity_errors_attack,
+                save_path="images/connectivity_error_hist.png"
+            )
 
     def train_stage1(self, train_loader, epochs=100):
+        """Train the autoencoder for anomaly detection (Stage 1).
+
+        Args:
+            train_loader: DataLoader for normal graphs.
+            epochs: Number of training epochs.
+        """
         self.autoencoder.train()
         opt = torch.optim.Adam(self.autoencoder.parameters(), lr=1e-2, weight_decay=1e-4)
         
@@ -478,7 +549,12 @@ class GATPipeline:
         self._set_threshold(train_loader, percentile=50)
 
     def train_stage2(self, full_loader, epochs=50):
-        """Train classifier on filtered graphs"""
+        """Train the classifier on filtered graphs (Stage 2).
+
+        Args:
+            full_loader: DataLoader for all graphs (normal + attack).
+            epochs: Number of training epochs.
+        """
         # Print label distribution
         all_labels = [batch.y.cpu().numpy() for batch in full_loader]
         all_labels = np.concatenate(all_labels)
@@ -527,7 +603,14 @@ class GATPipeline:
         self._train_classifier(filtered, epochs)
 
     def _filter_anomalous_graphs(self, loader):
-        """Filter graphs that exceed the anomaly threshold"""
+        """Filter graphs that exceed the anomaly threshold.
+
+        Args:
+            loader: DataLoader yielding batches of graphs.
+
+        Returns:
+            List of graphs exceeding the anomaly threshold.
+        """
         filtered = []
         with torch.no_grad():
             for batch in loader:
@@ -549,7 +632,12 @@ class GATPipeline:
         return filtered
 
     def _train_classifier(self, filtered_graphs, epochs):
-        """Train the classifier on filtered graphs"""
+        """Train the classifier on filtered graphs.
+
+        Args:
+            filtered_graphs: List of graphs for classifier training.
+            epochs: Number of training epochs.
+        """
         labels = [int(graph.y.flatten()[0]) for graph in filtered_graphs]
         num_pos = sum(labels)
         num_neg = len(labels) - num_pos
@@ -591,7 +679,14 @@ class GATPipeline:
                 print(f"Classifier accuracy at epoch {epoch+1}: {acc:.4f}")
 
     def _evaluate_classifier(self, graphs):
-        """Evaluate classifier accuracy on given graphs"""
+        """Evaluate classifier accuracy on a set of graphs.
+
+        Args:
+            graphs: List of graphs to evaluate.
+
+        Returns:
+            Classification accuracy (float).
+        """
         self.classifier.eval()
         all_preds, all_labels = [], []
         
@@ -611,7 +706,14 @@ class GATPipeline:
         return accuracy
 
     def predict(self, data):
-        """Full two-stage prediction"""
+        """Predict anomalies and classify graphs using the two-stage pipeline.
+
+        Args:
+            data: Batch of graphs.
+
+        Returns:
+            Tensor of predicted labels (0 for normal, 1 for attack).
+        """
         data = data.to(self.device)
         
         # Stage 1: Anomaly detection
@@ -636,6 +738,11 @@ class GATPipeline:
 
 @hydra.main(config_path="conf", config_name="base", version_base=None)
 def main(config: DictConfig):
+    """Main function for training and evaluating the anomaly detection pipeline.
+
+    Args:
+        config: Hydra configuration object.
+    """
     config_dict = OmegaConf.to_container(config, resolve=True)
     print(config_dict)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -676,7 +783,7 @@ def main(config: DictConfig):
 
     # plot the features in a histogram
     feature_names = ["CAN ID", "data1", "data2", "data3", "data4", "data5", "data6", "data7", "data8", "count", "position"]
-    plot_feature_histograms([data for data in dataset], feature_names=feature_names)
+    plot_feature_histograms([data for data in dataset], feature_names=feature_names, save_path="images/feature_histograms.png")
 
     train_size = int(TRAIN_RATIO * len(dataset))
     test_size = len(dataset) - train_size
@@ -713,7 +820,7 @@ def main(config: DictConfig):
     # Visualize input vs. reconstructed features for a few graphs
     # For classifier, use all graphs (normal + attack)
     full_train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
-    plot_graph_reconstruction(pipeline, full_train_loader, num_graphs=4, save_path="graph_recon_examples.png")
+    plot_graph_reconstruction(pipeline, full_train_loader, num_graphs=4, save_path="images/graph_recon_examples.png")
 
     N = 10000  # or any number you like
     indices = np.random.choice(len(train_dataset), size=N, replace=False)
@@ -721,10 +828,10 @@ def main(config: DictConfig):
     subsample_loader = DataLoader(subsample, batch_size=BATCH_SIZE, shuffle=False)
 
     zs, labels = extract_latent_vectors(pipeline, subsample_loader)
-    plot_latent_space(zs, labels, save_path="latent_space.png")
+    plot_latent_space(zs, labels, save_path="images/latent_space.png")
 
     # Visualize node-level reconstruction errors
-    plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="node_recon_subplot.png")
+    plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="images/node_recon_subplot.png")
     
     print("Stage 2: Training classifier on filtered graphs...")
     pipeline.train_stage2(full_train_loader, epochs=3)
