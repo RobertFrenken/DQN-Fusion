@@ -166,41 +166,14 @@ class GATMoEJK(nn.Module):
         for layer in self.fc_layers:
             x = layer(x)
         return x
-class Autoencoder(torch.nn.Module):
-    """Autoencoder with CAN ID embedding for static graphs"""
-    def __init__(self, num_ids, in_channels, hidden_dim=32, heads=4, embedding_dim=8, dropout=0.5):
-        super().__init__()
-        self.id_embedding = nn.Embedding(num_ids, embedding_dim)
-        self.dropout = nn.Dropout(p=dropout)
-        gat_in_dim = embedding_dim + (in_channels - 1)
-        
-        # Encoder
-        self.enc1 = GATConv(gat_in_dim, hidden_dim, heads=heads)
-        self.enc2 = GATConv(hidden_dim * heads, hidden_dim, heads=1)
-        # Decoder
-        self.dec1 = GATConv(hidden_dim, hidden_dim, heads=heads)
-        self.dec2 = GATConv(hidden_dim * heads, in_channels, heads=1)
-        self.gat_in_dim = gat_in_dim  # Save for output slicing
 
-    def forward(self, x, edge_index, batch):
-        id_emb = self.id_embedding(x[:, 0].long())
-        other_feats = x[:, 1:]
-        x = torch.cat([id_emb, other_feats], dim=1)
-        x = self.enc1(x, edge_index).relu()
-        
-        x = self.dropout(x)
-        x = self.enc2(x, edge_index).relu()
-        x = self.dropout(x)
-        x = self.dec1(x, edge_index).relu()
-        x = self.dropout(x)
-        x = self.dec2(x, edge_index).sigmoid()
-        return x  # shape: [num_nodes, in_channels]
 class GraphAutoencoder(nn.Module):
     """Graph Autoencoder: reconstructs node features and edge list."""
     def __init__(self, num_ids, in_channels, hidden_dim=32, latent_dim=32,
                   heads=4, embedding_dim=8, dropout=0.35):
         super().__init__()
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
+        self.latent_dim = latent_dim
         gat_in_dim = embedding_dim + (in_channels - 1)
 
         # Encoder: 3 GAT layers with batch norm and residuals
@@ -216,6 +189,10 @@ class GraphAutoencoder(nn.Module):
         self.z_mean = nn.Linear(hidden_dim, latent_dim)
         self.z_logvar = nn.Linear(hidden_dim, latent_dim)
 
+        # Create edge decoder dynamically - will be initialized on first forward pass
+        self.edge_decoder = None
+        self.dropout_rate = dropout
+
         # Decoder for node features: 3 GAT layers
         self.dec1 = GATConv(hidden_dim, hidden_dim, heads=heads)
         self.dbn1 = nn.BatchNorm1d(hidden_dim * heads)
@@ -226,6 +203,65 @@ class GraphAutoencoder(nn.Module):
         # CAN ID classifier head
         self.canid_classifier = nn.Linear(hidden_dim, num_ids)
         self.gat_in_dim = gat_in_dim
+
+    def _build_edge_decoder(self, latent_dim, num_layers=3, dropout=0.35):
+        """Build a more sophisticated edge decoder with configurable depth"""
+        layers = nn.ModuleList()
+        
+        # Input dimension: concatenated node embeddings + interaction features
+        input_dim = 3 * latent_dim  # concat + hadamard + l1_distance
+        hidden_dims = [128, 64, 32][:num_layers-1] + [1]
+        
+        prev_dim = input_dim
+        for i, hidden_dim in enumerate(hidden_dims):
+            if i < len(hidden_dims) - 1:  # Hidden layers
+                layers.extend([
+                    nn.Linear(prev_dim, hidden_dim),
+                    nn.BatchNorm1d(hidden_dim),
+                    nn.ReLU(),
+                    nn.Dropout(dropout)
+                ])
+                # Add residual connection if dimensions match
+                if prev_dim == hidden_dim:
+                    layers.append(nn.Identity())  # Placeholder for residual
+            else:  # Output layer
+                layers.append(nn.Linear(prev_dim, hidden_dim))
+            prev_dim = hidden_dim
+        
+        return nn.Sequential(*layers)
+
+    def _compute_edge_features(self, z, edge_index):
+        """Compute rich edge features from node embeddings"""
+        z_src = z[edge_index[0]]  # [num_edges, latent_dim]
+        z_dst = z[edge_index[1]]  # [num_edges, latent_dim]
+        
+        # Multiple ways to combine node embeddings
+        concat_feat = torch.cat([z_src, z_dst], dim=1)  # [num_edges, 2*latent_dim]
+        hadamard_feat = z_src * z_dst  # Element-wise product [num_edges, latent_dim]
+        l1_distance = torch.abs(z_src - z_dst)  # L1 distance [num_edges, latent_dim]
+        
+        # Combine all features
+        edge_feat = torch.cat([concat_feat, hadamard_feat, l1_distance], dim=1)
+        return edge_feat
+
+    def _forward_edge_decoder_with_residual(self, edge_feat):
+        """Forward pass through edge decoder with residual connections"""
+        x = edge_feat
+        residual = None
+        
+        for i, layer in enumerate(self.edge_decoder):
+            if isinstance(layer, nn.Linear):
+                if residual is not None and x.size(-1) == residual.size(-1):
+                    x = x + residual  # Add residual connection
+                x = layer(x)
+                if i < len(self.edge_decoder) - 1:  # Not the last layer
+                    residual = x.clone()
+            elif isinstance(layer, nn.Identity):
+                continue  # Skip identity layers
+            else:
+                x = layer(x)
+        
+        return x
 
     def encode(self, x, edge_index):
         id_emb = self.id_embedding(x[:, 0].long())
@@ -254,10 +290,44 @@ class GraphAutoencoder(nn.Module):
         canid_logits = self.canid_classifier(x2)  # shape: [num_nodes, num_ids]
         return cont_out, canid_logits
 
+    def _create_edge_decoder(self, edge_feat_dim):
+        """Create edge decoder with correct input dimensions"""
+        return nn.Sequential(
+            nn.Linear(edge_feat_dim, 128),
+            nn.BatchNorm1d(128),
+            nn.ReLU(),
+            nn.Dropout(self.dropout_rate),
+            nn.Linear(128, 64),
+            nn.BatchNorm1d(64),
+            nn.ReLU(),
+            nn.Dropout(self.dropout_rate),
+            nn.Linear(64, 32),
+            nn.BatchNorm1d(32),
+            nn.ReLU(),
+            nn.Dropout(self.dropout_rate),
+            nn.Linear(32, 1)
+        ).to(next(self.parameters()).device)
+
     def decode_edge(self, z, edge_index):
-        z_src = z[edge_index[0]]
-        z_dst = z[edge_index[1]]
-        edge_logits = (z_src * z_dst).sum(dim=1)
+        """Enhanced edge decoder with richer features"""
+        z_src = z[edge_index[0]]  # [num_edges, latent_dim]
+        z_dst = z[edge_index[1]]  # [num_edges, latent_dim]
+        
+        # Multiple ways to combine node embeddings
+        concat_feat = torch.cat([z_src, z_dst], dim=1)  # [num_edges, 2*latent_dim]
+        hadamard_feat = z_src * z_dst  # Element-wise product [num_edges, latent_dim]
+        l1_distance = torch.abs(z_src - z_dst)  # L1 distance [num_edges, latent_dim]
+        
+        # Combine all features: [num_edges, ?*latent_dim]
+        edge_feat = torch.cat([concat_feat, hadamard_feat, l1_distance], dim=1)
+        
+        # Create edge decoder on first use with correct dimensions
+        if self.edge_decoder is None:
+            print(f"Creating edge decoder with input dimension: {edge_feat.size(1)}")
+            self.edge_decoder = self._create_edge_decoder(edge_feat.size(1))
+        
+        # Forward through decoder
+        edge_logits = self.edge_decoder(edge_feat).squeeze(-1)
         edge_probs = torch.sigmoid(edge_logits)
         return edge_probs
 

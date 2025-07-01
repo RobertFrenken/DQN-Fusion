@@ -10,6 +10,55 @@ from torch_geometric.data import Batch
 import random
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
+
+
+def plot_canid_recon_hist(id_errors_normal, id_errors_attack, save_path="canid_recon_hist.png"):
+    # Plot
+    if id_errors_normal and id_errors_attack:
+        plt.figure(figsize=(8, 5))
+        plt.hist(id_errors_normal, bins=50, alpha=0.6, label='Normal', color='blue', density=True)
+        plt.hist(id_errors_attack, bins=50, alpha=0.6, label='Attack', color='red', density=True)
+        plt.xlabel('Fraction of Incorrect CAN IDs per Graph')
+        plt.ylabel('Density')
+        plt.title('CAN ID Reconstruction Error Distribution')
+        plt.legend()
+        plt.tight_layout()
+        plt.savefig(save_path)
+        plt.close()
+        print(f"Saved CAN ID reconstruction error histogram as '{save_path}'")
+    else:
+        print("Not enough data to plot CAN ID error distributions.")
+
+def plot_composite_error_hist(node_errors_normal, node_errors_attack,
+                             edge_errors_normal, edge_errors_attack,
+                             canid_errors_normal, canid_errors_attack,
+                             save_path="composite_error_hist.png"):
+    # Normalize each error type to [0, 1] for fair combination
+    def normalize(arr):
+        arr = np.array(arr)
+        return (arr - arr.min()) / (arr.max() - arr.min() + 1e-8)
+    node_n = normalize(node_errors_normal)
+    node_a = normalize(node_errors_attack)
+    edge_n = normalize(edge_errors_normal)
+    edge_a = normalize(edge_errors_attack)
+    canid_n = normalize(canid_errors_normal)
+    canid_a = normalize(canid_errors_attack)
+    # Composite error (mean of normalized errors)
+    comp_n = (node_n + edge_n + canid_n) / 3
+    comp_a = (node_a + edge_a + canid_a) / 3
+    # Plot
+    plt.figure(figsize=(8, 5))
+    plt.hist(comp_n, bins=50, alpha=0.6, label='Normal', color='blue', density=True)
+    plt.hist(comp_a, bins=50, alpha=0.6, label='Attack', color='red', density=True)
+    plt.xlabel('Composite Error (normalized)')
+    plt.ylabel('Density')
+    plt.title('Composite Error Distribution')
+    plt.legend()
+    plt.tight_layout()
+    plt.savefig(save_path)
+    plt.close()
+    print(f"Saved composite error histogram as '{save_path}'")
+
 def plot_latent_space(zs, labels, save_path="latent_space.png"):
     tsne = TSNE(n_components=2, random_state=42)
     zs_2d = tsne.fit_transform(zs)
