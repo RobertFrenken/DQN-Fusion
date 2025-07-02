@@ -8,7 +8,14 @@ import unittest
 from torch_geometric.transforms import VirtualNode
 
 def build_id_mapping(df):
-    """Builds a mapping from CAN IDs to indices for embedding, with OOV index."""
+    """Build a mapping from CAN IDs to indices for embedding, with OOV index.
+    
+    Args:
+        df (pandas.DataFrame): DataFrame containing CAN ID columns.
+        
+    Returns:
+        dict: Mapping from CAN IDs to integer indices, with 'OOV' key for out-of-vocabulary.
+    """
     # Convert all IDs to integer (from hex string)
     def to_int(x):
         try:
@@ -23,7 +30,15 @@ def build_id_mapping(df):
     return id_mapping
 
 def build_id_mapping_from_normal(root_folder, folder_type='train_'):
-    """Builds CAN ID mapping using only normal (attack==0) rows from all CSVs."""
+    """Build CAN ID mapping using only normal (attack==0) rows from all CSVs.
+    
+    Args:
+        root_folder (str): Path to the root folder containing CSV files.
+        folder_type (str, optional): Type of folder to process. Defaults to 'train_'.
+        
+    Returns:
+        dict: Mapping from CAN IDs to integer indices, with 'OOV' key for out-of-vocabulary.
+    """
     train_csv_files = []
     for dirpath, dirnames, filenames in os.walk(root_folder):
         if folder_type in dirpath.lower():
@@ -58,6 +73,20 @@ def build_id_mapping_from_normal(root_folder, folder_type='train_'):
         return {'OOV': 0}
 
 def graph_creation(root_folder, folder_type='train_', window_size=50, stride=50, verbose=False, return_id_mapping=False, id_mapping=None):
+    """Create graphs from CAN bus data in the specified folder.
+    
+    Args:
+        root_folder (str): Path to the root folder containing CSV files.
+        folder_type (str, optional): Type of folder to process. Defaults to 'train_'.
+        window_size (int, optional): Size of sliding window. Defaults to 50.
+        stride (int, optional): Stride for sliding window. Defaults to 50.
+        verbose (bool, optional): Whether to print verbose output. Defaults to False.
+        return_id_mapping (bool, optional): Whether to return ID mapping. Defaults to False.
+        id_mapping (dict, optional): Pre-built ID mapping. Defaults to None.
+        
+    Returns:
+        GraphDataset or tuple: Dataset of graphs, optionally with ID mapping if return_id_mapping=True.
+    """
     train_csv_files = []
     for dirpath, dirnames, filenames in os.walk(root_folder):
         if folder_type in dirpath.lower():
@@ -100,18 +129,16 @@ def graph_creation(root_folder, folder_type='train_', window_size=50, stride=50,
     return dataset
 
 def create_graphs_numpy(data, window_size, stride):
-    """
-    Transforms a pandas dataframe into a list of PyTorch Geometric Data object.
+    """Transform a pandas dataframe into a list of PyTorch Geometric Data objects.
     
     Args:
-        data (pd.dataframe): A NumPy array representing a window of data.
-                              Assumes the following column structure:
-                              [Source, Target, Data1, Data2, ..., DataN, label]
+        data (pandas.DataFrame): DataFrame representing a window of data.
+                                 Assumes column structure: [Source, Target, Data1, Data2, ..., DataN, label]
         window_size (int): The size of the sliding window.
         stride (int): The stride for the sliding window.
     
     Returns:
-        graphs: A list of PyTorch Geometric Data objects.
+        list: A list of PyTorch Geometric Data objects.
     """
     # Calculate the number of windows
     data = data.to_numpy()  # Convert DataFrame to NumPy array if necessary
@@ -125,23 +152,19 @@ def create_graphs_numpy(data, window_size, stride):
 
 
 def window_data_transform_numpy(data):
-    """
-    Transforms a NumPy array window into a PyTorch Geometric Data object.
+    """Transform a NumPy array window into a PyTorch Geometric Data object with rich edge features.
     
     Args:
         data (numpy.ndarray): A NumPy array representing a window of data.
-                              Assumes the following column structure:
-                              [Source, Target, Data1, Data2, ..., DataN, label]
+                              Assumes column structure: [Source, Target, Data1, Data2, ..., DataN, label]
     
     Returns:
-        Data: A PyTorch Geometric Data object.
+        torch_geometric.data.Data: A PyTorch Geometric Data object with enhanced edge features.
     """
     # Extract Source, Target, and label columns
-    source = data[:, 0]  # Assuming Source is the first column
-    target = data[:, -2]  # Assuming Target is the second to last column
-    labels = data[:, -1]  # Assuming label is the last column
-    # print("Raw CAN IDs in window (source):", np.unique(source))
-    # print("Raw CAN IDs in window (target):", np.unique(target))
+    source = data[:, 0]
+    target = data[:, -2]
+    labels = data[:, -1]
 
     # Calculate edge counts for each unique (Source, Target) pair
     unique_edges, edge_counts = np.unique(np.stack((source, target), axis=1), axis=0, return_counts=True)
@@ -154,47 +177,118 @@ def window_data_transform_numpy(data):
     edge_index = np.vectorize(node_to_idx.get)(unique_edges).T
     edge_index = torch.tensor(edge_index, dtype=torch.long)
 
-    # Create edge features tensor (counts)
-    edge_attr = torch.tensor(edge_counts, dtype=torch.float).view(-1, 1)
+    # CREATE RICH EDGE FEATURES
+    edge_features = []
+    
+    for i, (src, tgt) in enumerate(unique_edges):
+        # Get all occurrences of this edge
+        edge_mask = (source == src) & (target == tgt)
+        edge_data = data[edge_mask]
+        
+        # 1. FREQUENCY FEATURES
+        frequency = edge_counts[i]
+        relative_frequency = frequency / len(data)
+        
+        # 2. TEMPORAL FEATURES
+        edge_positions = np.where(edge_mask)[0]
+        if len(edge_positions) > 1:
+            # Time intervals between consecutive occurrences
+            intervals = np.diff(edge_positions)
+            avg_interval = np.mean(intervals)
+            std_interval = np.std(intervals)
+            regularity = 1.0 / (1.0 + std_interval) if std_interval > 0 else 1.0
+        else:
+            avg_interval = 0.0
+            std_interval = 0.0
+            regularity = 0.0
+        
+        # First and last occurrence (normalized)
+        first_occurrence = edge_positions[0] / len(data) if len(edge_positions) > 0 else 0.0
+        last_occurrence = edge_positions[-1] / len(data) if len(edge_positions) > 0 else 0.0
+        temporal_spread = last_occurrence - first_occurrence
+        
+        # 3. PAYLOAD FEATURES
+        payload_data = edge_data[:, 1:9]  # Data1 to Data8
+        if len(payload_data) > 0:
+            # Statistical measures of payload
+            payload_mean = np.mean(payload_data, axis=0)
+            payload_std = np.std(payload_data, axis=0)
+            payload_entropy = -np.sum(payload_mean * np.log(payload_mean + 1e-8))  # Simple entropy
+            
+            # Payload change patterns
+            if len(payload_data) > 1:
+                payload_changes = np.sum(np.diff(payload_data, axis=0) != 0, axis=1)
+                avg_payload_change = np.mean(payload_changes)
+                payload_volatility = np.std(payload_changes)
+            else:
+                avg_payload_change = 0.0
+                payload_volatility = 0.0
+        else:
+            payload_mean = np.zeros(8)
+            payload_std = np.zeros(8)
+            payload_entropy = 0.0
+            avg_payload_change = 0.0
+            payload_volatility = 0.0
+        
+        # 4. COMMUNICATION PATTERN FEATURES
+        # Bidirectional communication check
+        reverse_edge_exists = np.any((source == tgt) & (target == src))
+        
+        # Node degree influence (how connected are source and target)
+        src_degree = np.sum((source == src) | (target == src))
+        tgt_degree = np.sum((source == tgt) | (target == tgt))
+        degree_product = src_degree * tgt_degree
+        degree_ratio = src_degree / (tgt_degree + 1e-8)
+        
+        # 5. ATTACK CORRELATION FEATURES
+        edge_attack_ratio = np.mean(edge_data[:, -1]) if len(edge_data) > 0 else 0.0
+        
+        # Combine all features into a single vector
+        edge_feature_vector = np.concatenate([
+            [frequency, relative_frequency],                    # Frequency features (2)
+            [avg_interval, std_interval, regularity],           # Temporal regularity (3)
+            [first_occurrence, last_occurrence, temporal_spread], # Temporal position (3)
+            payload_mean[:4],                                   # First 4 payload means (4)
+            payload_std[:4],                                    # First 4 payload stds (4)
+            [payload_entropy, avg_payload_change, payload_volatility], # Payload dynamics (3)
+            [float(reverse_edge_exists), degree_product, degree_ratio], # Network structure (3)
+            [edge_attack_ratio]                                 # Attack correlation (1)
+        ])
+        edge_features.append(edge_feature_vector)
+    
+    # Convert to tensor
+    edge_attr = torch.tensor(np.array(edge_features), dtype=torch.float)
 
-    # Calculate node features (mean of data columns for each node)
+    # ...existing node feature computation...
     node_features = np.zeros((len(nodes), 11))  # 10 features + 1 for position
     node_counts = np.zeros(len(nodes))
-    node_positions = np.zeros(len(nodes))  # New: position feature
+    node_positions = np.zeros(len(nodes))
 
     for i, node in enumerate(nodes):
         mask = (source == node)
         node_data = data[mask, 0:9]
         if len(node_data) > 0:
             node_data_norm = node_data.copy()
-            # node_data_norm[:, 1:9] = node_data_norm[:, 1:9] / 255.0 ALREADY NORMALIZED
             node_features[i, :-2] = node_data_norm.mean(axis=0)
         node_counts[i] = mask.sum()
-        # Position: last occurrence of this node as source, normalized
         indices = np.where(source == node)[0]
         if len(indices) > 0:
             node_positions[i] = indices[-1] / (len(source) - 1) if len(source) > 1 else 0.0
 
-    # Normalize occurrence count (second to last feature)
+    # Normalize occurrence count
     occ = node_counts
     if occ.max() > occ.min():
         node_features[:, -2] = (occ - occ.min()) / (occ.max() - occ.min())
     else:
         node_features[:, -2] = 0.0
 
-    # Set last feature as position
     node_features[:, -1] = node_positions
 
     x = torch.tensor(node_features, dtype=torch.float)
     label_value = 1 if (labels == 1).any() else 0
     y = torch.tensor(label_value, dtype=torch.long)
-    # y = torch.tensor([1 if 1 in labels else 0], dtype=torch.long)
 
-    # Final step- add virtual node
-    data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
-    virtual_node_transform = 1
-    # data = VirtualNode()(data)
-    return data
+    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
 
 def pad_row_vectorized(df):
     """
@@ -220,6 +314,7 @@ def pad_row_vectorized(df):
     df.fillna('00', inplace=True)
 
     return df
+
 def dataset_creation_vectorized(path, id_mapping=None):
     """
     Takes a csv file containing CAN data. Creates a pandas dataframe,
@@ -319,6 +414,14 @@ class TestPreprocessing(unittest.TestCase):
             # self.assertTrue(((id >= 0).all() and (id <= 1).all()), "ID features not normalized!")
             self.assertTrue(((payload >= 0).all() and (payload <= 1).all()), "Payload features not normalized!")
             self.assertTrue(((count >= 0).all() and (count <= 1).all()), "Count node features not normalized!")
+            
+            # Check that edge attributes exist and have correct dimensions
+            if hasattr(data, 'edge_attr') and data.edge_attr is not None:
+                self.assertEqual(data.edge_attr.size(0), data.edge_index.size(1), "Edge attributes size mismatch!")
+                self.assertEqual(data.edge_attr.size(1), 23, "Edge attributes should have 23 features!")
+                self.assertFalse(torch.isnan(data.edge_attr).any(), "Edge attributes contain NaN values!")
+                self.assertFalse(torch.isinf(data.edge_attr).any(), "Edge attributes contain Inf values!")
+        
         print("Graph creation test passed.")
 
 if __name__ == "__main__":

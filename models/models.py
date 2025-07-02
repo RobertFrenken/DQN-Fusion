@@ -3,63 +3,25 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import global_mean_pool
 from torch_geometric.nn import GATConv, JumpingKnowledge
-# class GATWithJK(torch.nn.Module):
-#     def __init__(self, num_ids, in_channels, hidden_channels, out_channels, 
-#                  num_layers=3, heads=4, dropout=0.2, num_fc_layers=3, embedding_dim=8):
-#         super().__init__()
-#         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
-#         self.convs = torch.nn.ModuleList()
-#         self.dropout = dropout
-        
-#         # GAT layers
-#         for i in range(num_layers):
-#             in_dim = in_channels if i == 0 else hidden_channels * heads
-#             self.convs.append(
-#                 GATConv(in_dim, hidden_channels, heads=heads, concat=True)
-#             )
-        
-#         # JK aggregation (LSTM mode)
-#         self.jk = JumpingKnowledge(
-#             # will try cat for speed and lower memory usage
-#             mode="cat", # "cat" | "max" | "mean" | "lstm"
-#             channels=hidden_channels * heads,
-#             num_layers=num_layers
-#         )
-        
-#         # Fully connected layers
-#         self.fc_layers = torch.nn.ModuleList()
-#         fc_input_dim = hidden_channels * heads
-#         for _ in range(num_fc_layers - 1):
-#             self.fc_layers.append(torch.nn.Linear(fc_input_dim, fc_input_dim))
-#             self.fc_layers.append(torch.nn.ReLU())
-#             self.fc_layers.append(torch.nn.Dropout(p=dropout))
-#         self.fc_layers.append(torch.nn.Linear(fc_input_dim, out_channels))
-        
-        
-
-#     def forward(self, data, return_intermediate=False):
-#         x, edge_index, batch = data.x, data.edge_index, data.batch
-#         xs = []
-#         for conv in self.convs:
-#             x = conv(x, edge_index).relu()
-#             x = F.dropout(x, p=self.dropout, training=self.training)  # Add dropout
-#             xs.append(x)
-        
-#         if return_intermediate:
-#             return xs
-        
-#         # Aggregate layer outputs
-#         x = self.jk(xs)
-#         x = global_mean_pool(x, batch)  # Readout layer
-#         # Pass through fully connected layers + final output layer
-#         for layer in self.fc_layers:
-#             x = layer(x)
-        
-#         return x
 
 class GATWithJK(nn.Module):
+    """Graph Attention Network with Jumping Knowledge connections."""
+    
     def __init__(self, num_ids, in_channels, hidden_channels, out_channels, 
                  num_layers=3, heads=4, dropout=0.2, num_fc_layers=3, embedding_dim=8):
+        """Initialize GATWithJK model.
+        
+        Args:
+            num_ids (int): Number of unique CAN IDs for embedding.
+            in_channels (int): Number of input channels.
+            hidden_channels (int): Number of hidden channels.
+            out_channels (int): Number of output channels.
+            num_layers (int, optional): Number of GAT layers. Defaults to 3.
+            heads (int, optional): Number of attention heads. Defaults to 4.
+            dropout (float, optional): Dropout rate. Defaults to 0.2.
+            num_fc_layers (int, optional): Number of fully connected layers. Defaults to 3.
+            embedding_dim (int, optional): Dimension of ID embeddings. Defaults to 8.
+        """
         super().__init__()
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
         self.dropout = dropout
@@ -92,6 +54,15 @@ class GATWithJK(nn.Module):
         self.fc_layers.append(nn.Linear(fc_input_dim, out_channels))
 
     def forward(self, data, return_intermediate=False):
+        """Forward pass through the GATWithJK model.
+        
+        Args:
+            data (torch_geometric.data.Data): Input graph data.
+            return_intermediate (bool, optional): Whether to return intermediate representations. Defaults to False.
+            
+        Returns:
+            torch.Tensor: Output predictions or list of intermediate representations if return_intermediate=True.
+        """
         x, edge_index, batch = data.x, data.edge_index, data.batch
         # x shape: [num_nodes, in_channels], where x[:,0] is CAN ID index
         id_emb = self.id_embedding(x[:, 0].long())  # [num_nodes, embedding_dim]
@@ -112,8 +83,23 @@ class GATWithJK(nn.Module):
             x = layer(x)
         return x
 class GATMoEJK(nn.Module):
+    """Graph Attention Network with Mixture of Experts and Jumping Knowledge connections."""
+    
     def __init__(self, num_ids, in_channels, hidden_channels, out_channels, 
                  num_layers=3, heads=4, dropout=0.2, num_fc_layers=3, embedding_dim=8):
+        """Initialize GATMoEJK model.
+        
+        Args:
+            num_ids (int): Number of unique CAN IDs for embedding.
+            in_channels (int): Number of input channels.
+            hidden_channels (int): Number of hidden channels.
+            out_channels (int): Number of output channels.
+            num_layers (int, optional): Number of GAT layers. Defaults to 3.
+            heads (int, optional): Number of attention heads. Defaults to 4.
+            dropout (float, optional): Dropout rate. Defaults to 0.2.
+            num_fc_layers (int, optional): Number of fully connected layers. Defaults to 3.
+            embedding_dim (int, optional): Dimension of ID embeddings. Defaults to 8.
+        """
         super().__init__()
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
         self.dropout = dropout
@@ -147,6 +133,15 @@ class GATMoEJK(nn.Module):
         self.fc_layers.append(nn.Linear(fc_input_dim, out_channels))
 
     def forward(self, data, return_intermediate=False):
+        """Forward pass through the GATMoEJK model.
+        
+        Args:
+            data (torch_geometric.data.Data): Input graph data.
+            return_intermediate (bool, optional): Whether to return intermediate representations. Defaults to False.
+            
+        Returns:
+            torch.Tensor: Output predictions or list of intermediate representations if return_intermediate=True.
+        """
         x, edge_index, batch = data.x, data.edge_index, data.batch
         # x shape: [num_nodes, in_channels], where x[:,0] is CAN ID index
         id_emb = self.id_embedding(x[:, 0].long())  # [num_nodes, embedding_dim]
@@ -168,9 +163,21 @@ class GATMoEJK(nn.Module):
         return x
 
 class GraphAutoencoder(nn.Module):
-    """Graph Autoencoder: reconstructs node features and edge list."""
+    """Graph Autoencoder that reconstructs node features and edge list."""
+    
     def __init__(self, num_ids, in_channels, hidden_dim=32, latent_dim=32,
                   heads=4, embedding_dim=8, dropout=0.35):
+        """Initialize GraphAutoencoder.
+        
+        Args:
+            num_ids (int): Number of unique CAN IDs for embedding.
+            in_channels (int): Number of input channels.
+            hidden_dim (int, optional): Hidden dimension size. Defaults to 32.
+            latent_dim (int, optional): Latent dimension size. Defaults to 32.
+            heads (int, optional): Number of attention heads. Defaults to 4.
+            embedding_dim (int, optional): Dimension of ID embeddings. Defaults to 8.
+            dropout (float, optional): Dropout rate. Defaults to 0.35.
+        """
         super().__init__()
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
         self.latent_dim = latent_dim
@@ -205,7 +212,16 @@ class GraphAutoencoder(nn.Module):
         self.gat_in_dim = gat_in_dim
 
     def _build_edge_decoder(self, latent_dim, num_layers=3, dropout=0.35):
-        """Build a more sophisticated edge decoder with configurable depth"""
+        """Build a sophisticated edge decoder with configurable depth.
+        
+        Args:
+            latent_dim (int): Latent dimension size.
+            num_layers (int, optional): Number of decoder layers. Defaults to 3.
+            dropout (float, optional): Dropout rate. Defaults to 0.35.
+            
+        Returns:
+            torch.nn.Sequential: Edge decoder network.
+        """
         layers = nn.ModuleList()
         
         # Input dimension: concatenated node embeddings + interaction features
@@ -231,7 +247,15 @@ class GraphAutoencoder(nn.Module):
         return nn.Sequential(*layers)
 
     def _compute_edge_features(self, z, edge_index):
-        """Compute rich edge features from node embeddings"""
+        """Compute rich edge features from node embeddings.
+        
+        Args:
+            z (torch.Tensor): Node embeddings with shape [num_nodes, latent_dim].
+            edge_index (torch.Tensor): Edge indices with shape [2, num_edges].
+            
+        Returns:
+            torch.Tensor: Edge features with shape [num_edges, feature_dim].
+        """
         z_src = z[edge_index[0]]  # [num_edges, latent_dim]
         z_dst = z[edge_index[1]]  # [num_edges, latent_dim]
         
@@ -245,7 +269,14 @@ class GraphAutoencoder(nn.Module):
         return edge_feat
 
     def _forward_edge_decoder_with_residual(self, edge_feat):
-        """Forward pass through edge decoder with residual connections"""
+        """Forward pass through edge decoder with residual connections.
+        
+        Args:
+            edge_feat (torch.Tensor): Edge features.
+            
+        Returns:
+            torch.Tensor: Edge decoder output.
+        """
         x = edge_feat
         residual = None
         
@@ -264,6 +295,15 @@ class GraphAutoencoder(nn.Module):
         return x
 
     def encode(self, x, edge_index):
+        """Encode input graph into latent representation.
+        
+        Args:
+            x (torch.Tensor): Node features with shape [num_nodes, in_channels].
+            edge_index (torch.Tensor): Edge indices with shape [2, num_edges].
+            
+        Returns:
+            tuple: (latent_embeddings, kl_loss) where latent_embeddings has shape [num_nodes, latent_dim].
+        """
         id_emb = self.id_embedding(x[:, 0].long())
         other_feats = x[:, 1:]
         x = torch.cat([id_emb, other_feats], dim=1)
@@ -284,6 +324,15 @@ class GraphAutoencoder(nn.Module):
         return z, kl_loss
 
     def decode_node(self, z, edge_index):
+        """Decode latent representation back to node features.
+        
+        Args:
+            z (torch.Tensor): Latent node embeddings with shape [num_nodes, latent_dim].
+            edge_index (torch.Tensor): Edge indices with shape [2, num_edges].
+            
+        Returns:
+            tuple: (continuous_output, canid_logits) for node feature reconstruction and CAN ID classification.
+        """
         x1 = self.dropout(F.relu(self.dbn1(self.dec1(z, edge_index))))
         x2 = self.dropout(F.relu(self.dbn2(self.dec2(x1, edge_index))))
         cont_out = torch.sigmoid(self.dec3(x2, edge_index))  # shape: [num_nodes, in_channels-1]
@@ -291,7 +340,14 @@ class GraphAutoencoder(nn.Module):
         return cont_out, canid_logits
 
     def _create_edge_decoder(self, edge_feat_dim):
-        """Create edge decoder with correct input dimensions"""
+        """Create edge decoder with correct input dimensions.
+        
+        Args:
+            edge_feat_dim (int): Input feature dimension for edge decoder.
+            
+        Returns:
+            torch.nn.Sequential: Edge decoder network.
+        """
         return nn.Sequential(
             nn.Linear(edge_feat_dim, 128),
             nn.BatchNorm1d(128),
@@ -308,22 +364,39 @@ class GraphAutoencoder(nn.Module):
             nn.Linear(32, 1)
         ).to(next(self.parameters()).device)
 
-    def decode_edge(self, z, edge_index):
-        """Enhanced edge decoder with richer features"""
+    def decode_edge(self, z, edge_index, edge_attr=None):
+        """Enhanced edge decoder that uses both latent embeddings and edge features.
+        
+        Args:
+            z (torch.Tensor): Latent node embeddings with shape [num_nodes, latent_dim].
+            edge_index (torch.Tensor): Edge indices with shape [2, num_edges].
+            edge_attr (torch.Tensor, optional): Edge attributes. Defaults to None.
+            
+        Returns:
+            torch.Tensor: Edge existence probabilities with shape [num_edges].
+        """
         z_src = z[edge_index[0]]  # [num_edges, latent_dim]
         z_dst = z[edge_index[1]]  # [num_edges, latent_dim]
         
-        # Multiple ways to combine node embeddings
+        # Node embedding features
         concat_feat = torch.cat([z_src, z_dst], dim=1)  # [num_edges, 2*latent_dim]
         hadamard_feat = z_src * z_dst  # Element-wise product [num_edges, latent_dim]
         l1_distance = torch.abs(z_src - z_dst)  # L1 distance [num_edges, latent_dim]
         
-        # Combine all features: [num_edges, ?*latent_dim]
-        edge_feat = torch.cat([concat_feat, hadamard_feat, l1_distance], dim=1)
+        # Combine node embedding features
+        node_edge_feat = torch.cat([concat_feat, hadamard_feat, l1_distance], dim=1)
         
-        # Create edge decoder on first use with correct dimensions
-        if self.edge_decoder is None:
-            print(f"Creating edge decoder with input dimension: {edge_feat.size(1)}")
+        # If edge attributes are available, concatenate them
+        if edge_attr is not None:
+            edge_feat = torch.cat([node_edge_feat, edge_attr], dim=1)
+        else:
+            edge_feat = node_edge_feat
+        
+        # Create edge decoder on first use with correct dimensions OR if dimensions mismatch
+        if self.edge_decoder is None or (len(self.edge_decoder) > 0 and 
+                                        isinstance(self.edge_decoder[0], nn.Linear) and 
+                                        self.edge_decoder[0].in_features != edge_feat.size(1)):
+            print(f"Creating/Recreating edge decoder with input dimension: {edge_feat.size(1)}")
             self.edge_decoder = self._create_edge_decoder(edge_feat.size(1))
         
         # Forward through decoder
@@ -332,25 +405,21 @@ class GraphAutoencoder(nn.Module):
         return edge_probs
 
     def forward(self, x, edge_index, batch):
+        """Forward pass through the GraphAutoencoder.
+        
+        Args:
+            x (torch.Tensor): Node features with shape [num_nodes, in_channels].
+            edge_index (torch.Tensor): Edge indices with shape [2, num_edges].
+            batch (torch.Tensor): Batch assignment vector.
+            
+        Returns:
+            tuple: (continuous_output, canid_logits, latent_embeddings, kl_loss).
+        """
         z, kl_loss = self.encode(x, edge_index)
         cont_out, canid_logits = self.decode_node(z, edge_index)
         return cont_out, canid_logits, z, kl_loss
 
 
-'''
-Variational Graph Autoencoder (VGAE) Latent Regularization
-# Add mean and logvar heads for z, sample z ~ N(mu, sigma)
-self.z_mean = nn.Linear(hidden_dim, latent_dim)
-self.z_logvar = nn.Linear(hidden_dim, latent_dim)
-# In encode():
-mu = self.z_mean(x)
-logvar = self.z_logvar(x)
-std = torch.exp(0.5 * logvar)
-eps = torch.randn_like(std)
-z = mu + eps * std
-# Add KL loss to your total loss
-kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
-'''
 if __name__ == '__main__':
     # Knowledge Distillation Scenario
     # teacher_model = GATWithJK(in_channels=10, hidden_channels=32, out_channels=1, num_layers=5, heads=8)
@@ -359,6 +428,11 @@ if __name__ == '__main__':
     # net = GATWithJK(10, 8, 1)
 
     def model_characteristics(model):
+        """Print model characteristics including parameter count and size.
+        
+        Args:
+            model (torch.nn.Module): PyTorch model to analyze.
+        """
         num_params = sum(p.numel() for p in model.parameters())
         param_size = 0
         for param in model.parameters():

@@ -30,8 +30,8 @@ from plotting_utils import (
     plot_edge_error_hist,
     plot_canid_recon_hist, 
     plot_composite_error_hist,
-    plot_structural_error_hist,      # <-- add
-    plot_connectivity_error_hist     # <-- add
+    plot_structural_error_hist,
+    plot_connectivity_error_hist 
 )
 def extract_latent_vectors(pipeline, loader):
     """Extract latent vectors (graph embeddings) and labels from a data loader.
@@ -63,38 +63,38 @@ def extract_latent_vectors(pipeline, loader):
     return np.array(zs), np.array(labels)
 
 def compute_edge_recon_error(autoencoder, batch):
-    """Compute edge reconstruction error for each graph in a batch.
-
+    """Compute edge reconstruction error using enhanced edge features.
+    
     Args:
-        autoencoder: The trained autoencoder model.
-        batch: A batch of graphs.
+        autoencoder (torch.nn.Module): The trained autoencoder model.
+        batch (torch_geometric.data.Batch): A batch of graphs.
 
     Returns:
-        List of edge reconstruction errors, one per graph.
+        list: List of edge reconstruction errors, one per graph.
     """
     with torch.no_grad():
         _, _, z, _ = autoencoder(batch.x, batch.edge_index, batch.batch)
         graphs = Batch.to_data_list(batch)
         start = 0
         edge_errors = []
+        
         for graph in graphs:
             num_nodes = graph.x.size(0)
             pos_edge_index = graph.edge_index
+            pos_edge_attr = graph.edge_attr if hasattr(graph, 'edge_attr') else None
             
-            # Skip graphs with no edges or very few nodes
             if pos_edge_index.size(1) == 0 or num_nodes < 2:
                 edge_errors.append(0.0)
                 start += num_nodes
                 continue
             
-            # Get latent representations for this graph
             z_graph = z[start:start+num_nodes]
             
-            # Positive edge predictions
-            pos_edge_preds = autoencoder.decode_edge(z_graph, pos_edge_index)
+            # Positive edge predictions with edge attributes
+            pos_edge_preds = autoencoder.decode_edge(z_graph, pos_edge_index, pos_edge_attr)
             pos_edge_labels = torch.ones(pos_edge_preds.size(0), device=pos_edge_preds.device)
             
-            # Generate better negative edges - ensure they don't exist in positive set
+            # Generate negative edges with simulated edge attributes
             pos_edge_set = set()
             for i in range(pos_edge_index.size(1)):
                 src, dst = pos_edge_index[0, i].item(), pos_edge_index[1, i].item()
@@ -114,11 +114,17 @@ def compute_edge_recon_error(autoencoder, batch):
                 attempts += 1
             
             if len(neg_edges) == 0:
-                # Fallback: just use positive edge loss
                 edge_loss = nn.BCELoss(reduction='mean')(pos_edge_preds, pos_edge_labels)
             else:
                 neg_edge_index = torch.tensor(neg_edges, device=pos_edge_index.device).T
-                neg_edge_preds = autoencoder.decode_edge(z_graph, neg_edge_index)
+                
+                # Create dummy edge attributes for negative edges (zeros or random)
+                if pos_edge_attr is not None:
+                    neg_edge_attr = torch.zeros_like(pos_edge_attr[:len(neg_edges)])
+                else:
+                    neg_edge_attr = None
+                
+                neg_edge_preds = autoencoder.decode_edge(z_graph, neg_edge_index, neg_edge_attr)
                 neg_edge_labels = torch.zeros(neg_edge_preds.size(0), device=neg_edge_preds.device)
                 
                 edge_preds = torch.cat([pos_edge_preds, neg_edge_preds])
@@ -133,10 +139,10 @@ def compute_graph_structural_features(graphs):
     """Compute structural features for each graph to distinguish normal and attack graphs.
 
     Args:
-        graphs: List of graph objects.
+        graphs (list): List of graph objects.
 
     Returns:
-        List of structural feature scores, one per graph.
+        list: List of structural feature scores, one per graph.
     """
     structural_errors = []
     
@@ -172,11 +178,11 @@ def compute_edge_prediction_accuracy(autoencoder, batch):
     """Compute edge prediction accuracy (as error) for each graph in a batch.
 
     Args:
-        autoencoder: The trained autoencoder model.
-        batch: A batch of graphs.
+        autoencoder (torch.nn.Module): The trained autoencoder model.
+        batch (torch_geometric.data.Batch): A batch of graphs.
 
     Returns:
-        List of edge prediction errors (1 - accuracy), one per graph.
+        list: List of edge prediction errors (1 - accuracy), one per graph.
     """
     with torch.no_grad():
         _, _, z, _ = autoencoder(batch.x, batch.edge_index, batch.batch)
@@ -187,6 +193,7 @@ def compute_edge_prediction_accuracy(autoencoder, batch):
         for graph in graphs:
             num_nodes = graph.x.size(0)
             pos_edge_index = graph.edge_index
+            pos_edge_attr = graph.edge_attr if hasattr(graph, 'edge_attr') else None
             
             if pos_edge_index.size(1) == 0 or num_nodes < 2:
                 edge_accuracies.append(1.0)  # Perfect "accuracy" for trivial cases
@@ -195,8 +202,8 @@ def compute_edge_prediction_accuracy(autoencoder, batch):
             
             z_graph = z[start:start+num_nodes]
             
-            # Positive edges
-            pos_edge_preds = autoencoder.decode_edge(z_graph, pos_edge_index)
+            # Positive edges with proper edge attributes
+            pos_edge_preds = autoencoder.decode_edge(z_graph, pos_edge_index, pos_edge_attr)
             pos_predictions = (pos_edge_preds > 0.5).float()
             pos_accuracy = pos_predictions.mean().item()
             
@@ -219,7 +226,14 @@ def compute_edge_prediction_accuracy(autoencoder, batch):
             
             if neg_edges:
                 neg_edge_index = torch.tensor(neg_edges, device=pos_edge_index.device).T
-                neg_edge_preds = autoencoder.decode_edge(z_graph, neg_edge_index)
+                
+                # Create appropriate negative edge attributes
+                if pos_edge_attr is not None:
+                    neg_edge_attr = torch.zeros_like(pos_edge_attr[:len(neg_edges)])
+                else:
+                    neg_edge_attr = None
+                
+                neg_edge_preds = autoencoder.decode_edge(z_graph, neg_edge_index, neg_edge_attr)
                 neg_predictions = (neg_edge_preds < 0.5).float()  # Should predict 0
                 neg_accuracy = neg_predictions.mean().item()
                 
@@ -238,11 +252,17 @@ def compute_edge_prediction_accuracy(autoencoder, batch):
 def compute_graph_connectivity_anomalies(graphs):
     """Detect anomalies in graph connectivity patterns.
 
+    This function computes connectivity anomaly scores based on:
+    1. Edge density deviation from expected normal patterns
+    2. Presence of isolated nodes (nodes with no connections)
+    3. Overall connectivity structure
+
     Args:
-        graphs: List of graph objects.
+        graphs (list): List of graph objects.
 
     Returns:
-        List of connectivity anomaly scores, one per graph.
+        list: List of connectivity anomaly scores, one per graph.
+              Higher scores indicate more anomalous connectivity patterns.
     """
     connectivity_scores = []
     
@@ -258,57 +278,80 @@ def compute_graph_connectivity_anomalies(graphs):
         adj = torch.zeros(num_nodes, num_nodes, device=edge_index.device)
         if edge_index.size(1) > 0:
             adj[edge_index[0], edge_index[1]] = 1
-            adj[edge_index[1], edge_index[0]] = 1  # Make symmetric
+            adj[edge_index[1], edge_index[0]] = 1  # Make symmetric (undirected)
         
-        # Compute connectivity metrics
+        # 1. EDGE DENSITY ANALYSIS
         num_edges = edge_index.size(1)
-        expected_edges = num_nodes * (num_nodes - 1) / 2  # Complete graph
+        max_possible_edges = num_nodes * (num_nodes - 1) / 2  # Complete graph
+        edge_density = num_edges / max_possible_edges if max_possible_edges > 0 else 0
         
-        # Measure deviation from expected patterns
-        # For CAN networks, we might expect certain connectivity patterns
-        connectivity_ratio = num_edges / expected_edges if expected_edges > 0 else 0
+        # Assumption: Normal CAN graphs have ~10% edge density
+        # This should be tuned based on your actual data analysis
+        expected_density = 0.1
+        density_deviation = abs(edge_density - expected_density)
         
-        # Check for isolated nodes
-        degrees = adj.sum(dim=1)
-        isolated_nodes = (degrees == 0).sum().item()
-        isolation_penalty = isolated_nodes / num_nodes
+        # 2. ISOLATED NODES ANALYSIS
+        degrees = adj.sum(dim=1)  # Degree of each node
+        isolated_nodes = (degrees == 0).sum().item()  # Count nodes with degree 0
+        isolation_ratio = isolated_nodes / num_nodes
         
-        # Unusual connectivity score
-        connectivity_anomaly = abs(connectivity_ratio - 0.1) + isolation_penalty  # Assume normal graphs have ~10% connectivity
+        # 3. DEGREE DISTRIBUTION ANALYSIS
+        if num_edges > 0:
+            # Check for unusual degree distributions
+            mean_degree = degrees.float().mean().item()
+            degree_std = degrees.float().std().item()
+            
+            # Penalize graphs with very uneven degree distribution
+            degree_uniformity_penalty = degree_std / (mean_degree + 1e-6)  # Avoid division by zero
+        else:
+            degree_uniformity_penalty = 0.0
+        
+        # 4. CONNECTIVITY COMPONENTS (optional - more complex)
+        # Could add analysis of connected components, clustering coefficient, etc.
+        
+        # COMBINE ALL FACTORS
+        # Weight different factors based on importance
+        connectivity_anomaly = (
+            density_deviation * 2.0 +           # Edge density deviation (weight: 2.0)
+            isolation_ratio * 3.0 +             # Isolated nodes penalty (weight: 3.0)
+            degree_uniformity_penalty * 0.5     # Degree distribution penalty (weight: 0.5)
+        )
+        
         connectivity_scores.append(connectivity_anomaly)
     
     return connectivity_scores
 
 class GATPipeline:
     """Pipeline for training and evaluating GAT-based autoencoder and classifier."""
+    
     def __init__(self, num_ids, embedding_dim=8, device='cpu'):
         """Initialize the GATPipeline.
 
         Args:
-            num_ids: Number of unique CAN IDs.
-            embedding_dim: Dimension of latent embeddings.
-            device: Device to use ('cpu' or 'cuda').
+            num_ids (int): Number of unique CAN IDs.
+            embedding_dim (int, optional): Dimension of latent embeddings. Defaults to 8.
+            device (str, optional): Device to use ('cpu' or 'cuda'). Defaults to 'cpu'.
         """
         self.device = device
         self.autoencoder = GraphAutoencoder(num_ids=num_ids, in_channels=11, embedding_dim=embedding_dim).to(device)
         self.classifier = GATWithJK(num_ids=num_ids, in_channels=11, hidden_channels=32, out_channels=1, num_layers=3, heads=8, embedding_dim=embedding_dim).to(device)
         self.threshold = 0.0000
 
-    def _compute_edge_loss(self, z, edge_index):
-        """Compute edge reconstruction loss for a graph.
-
+    def _compute_edge_loss(self, z, edge_index, edge_attr=None):
+        """Compute edge reconstruction loss with edge features.
+        
         Args:
-            z: Latent node embeddings.
-            edge_index: Edge indices.
+            z (torch.Tensor): Latent node embeddings.
+            edge_index (torch.Tensor): Edge indices.
+            edge_attr (torch.Tensor, optional): Edge attributes. Defaults to None.
 
         Returns:
-            Edge reconstruction loss (torch.Tensor).
+            torch.Tensor: Edge reconstruction loss.
         """
-        # Skip if no edges
         if edge_index.size(1) == 0:
             return torch.tensor(0.0, device=self.device, requires_grad=True)
         
-        pos_edge_preds = self.autoencoder.decode_edge(z, edge_index)
+        pos_edge_preds = self.autoencoder.decode_edge(z, edge_index, edge_attr)
         pos_edge_labels = torch.ones(pos_edge_preds.size(0), device=pos_edge_preds.device)
         
         num_nodes = z.size(0)
@@ -338,7 +381,14 @@ class GATPipeline:
             return nn.BCELoss()(pos_edge_preds, pos_edge_labels)
         
         neg_edge_index = torch.tensor(neg_edges, device=edge_index.device).T
-        neg_edge_preds = self.autoencoder.decode_edge(z, neg_edge_index)
+        
+        # Create appropriate negative edge attributes
+        if edge_attr is not None:
+            neg_edge_attr = torch.zeros_like(edge_attr[:len(neg_edges)])
+        else:
+            neg_edge_attr = None
+            
+        neg_edge_preds = self.autoencoder.decode_edge(z, neg_edge_index, neg_edge_attr)
         neg_edge_labels = torch.zeros(neg_edge_preds.size(0), device=neg_edge_preds.device)
         
         edge_preds = torch.cat([pos_edge_preds, neg_edge_preds])
@@ -350,11 +400,11 @@ class GATPipeline:
         """Compute various reconstruction errors for normal and attack graphs.
 
         Args:
-            loader: DataLoader yielding batches of graphs.
-            use_max: If True, use max node error per graph; else use mean.
+            loader (torch_geometric.loader.DataLoader): DataLoader yielding batches of graphs.
+            use_max (bool, optional): If True, use max node error per graph; else use mean. Defaults to True.
 
         Returns:
-            Tuple of lists containing errors for normal and attack graphs.
+            tuple: Tuple of lists containing errors for normal and attack graphs.
         """
         errors_normal, errors_attack = [], []
         edge_errors_normal, edge_errors_attack = [], []
@@ -418,8 +468,8 @@ class GATPipeline:
         """Set the anomaly detection threshold based on training data.
 
         Args:
-            train_loader: DataLoader for training data.
-            percentile: Percentile to use for threshold.
+            train_loader (torch_geometric.loader.DataLoader): DataLoader for training data.
+            percentile (int, optional): Percentile to use for threshold. Defaults to 50.
         """
         errors = []
         with torch.no_grad():
@@ -433,10 +483,10 @@ class GATPipeline:
         """Create a balanced dataset by downsampling the majority class.
 
         Args:
-            filtered_graphs: List of filtered graphs.
+            filtered_graphs (list): List of filtered graphs.
 
         Returns:
-            List of balanced graphs.
+            list: List of balanced graphs.
         """
         attack_graphs = [g.cpu() for g in filtered_graphs if g.y.item() == 1]
         normal_graphs = [g.cpu() for g in filtered_graphs if g.y.item() == 0]
@@ -462,16 +512,16 @@ class GATPipeline:
         """Print error statistics and generate plots for various error types.
 
         Args:
-            errors_normal: Node errors for normal graphs.
-            errors_attack: Node errors for attack graphs.
-            edge_errors_normal: Edge errors for normal graphs.
-            edge_errors_attack: Edge errors for attack graphs.
-            id_errors_normal: CAN ID errors for normal graphs.
-            id_errors_attack: CAN ID errors for attack graphs.
-            structural_errors_normal: Structural feature scores for normal graphs.
-            structural_errors_attack: Structural feature scores for attack graphs.
-            connectivity_errors_normal: Connectivity anomaly scores for normal graphs.
-            connectivity_errors_attack: Connectivity anomaly scores for attack graphs.
+            errors_normal (list): Node errors for normal graphs.
+            errors_attack (list): Node errors for attack graphs.
+            edge_errors_normal (list): Edge errors for normal graphs.
+            edge_errors_attack (list): Edge errors for attack graphs.
+            id_errors_normal (list): CAN ID errors for normal graphs.
+            id_errors_attack (list): CAN ID errors for attack graphs.
+            structural_errors_normal (list, optional): Structural feature scores for normal graphs. Defaults to None.
+            structural_errors_attack (list, optional): Structural feature scores for attack graphs. Defaults to None.
+            connectivity_errors_normal (list, optional): Connectivity anomaly scores for normal graphs. Defaults to None.
+            connectivity_errors_attack (list, optional): Connectivity anomaly scores for attack graphs. Defaults to None.
         """
         print(f"Processed {len(errors_normal)} normal graphs, {len(errors_attack)} attack graphs")
         print(f"Mean reconstruction error (normal): {np.mean(errors_normal) if errors_normal else 'N/A'}")
@@ -521,8 +571,8 @@ class GATPipeline:
         """Train the autoencoder for anomaly detection (Stage 1).
 
         Args:
-            train_loader: DataLoader for normal graphs.
-            epochs: Number of training epochs.
+            train_loader (torch_geometric.loader.DataLoader): DataLoader for normal graphs.
+            epochs (int, optional): Number of training epochs. Defaults to 100.
         """
         self.autoencoder.train()
         opt = torch.optim.Adam(self.autoencoder.parameters(), lr=1e-2, weight_decay=1e-4)
@@ -532,12 +582,14 @@ class GATPipeline:
                 batch = batch.to(self.device)
                 cont_out, canid_logits, z, kl_loss = self.autoencoder(batch.x, batch.edge_index, batch.batch)
                 
-                # Compute losses
+                # Compute losses with edge attributes
                 cont_loss = (cont_out - batch.x[:, 1:]).pow(2).mean()
                 canid_loss = nn.CrossEntropyLoss()(canid_logits, batch.x[:, 0].long())
-                edge_loss = self._compute_edge_loss(z, batch.edge_index)
                 
-                # Combine losses
+                # Use edge attributes if available
+                edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
+                edge_loss = self._compute_edge_loss(z, batch.edge_index, edge_attr)
+                
                 beta = 0.1
                 loss = cont_loss + canid_loss + edge_loss + beta * kl_loss
                 
@@ -545,15 +597,14 @@ class GATPipeline:
                 loss.backward()
                 opt.step()
         
-        # Set threshold
         self._set_threshold(train_loader, percentile=50)
 
     def train_stage2(self, full_loader, epochs=50):
         """Train the classifier on filtered graphs (Stage 2).
 
         Args:
-            full_loader: DataLoader for all graphs (normal + attack).
-            epochs: Number of training epochs.
+            full_loader (torch_geometric.loader.DataLoader): DataLoader for all graphs (normal + attack).
+            epochs (int, optional): Number of training epochs. Defaults to 50.
         """
         # Print label distribution
         all_labels = [batch.y.cpu().numpy() for batch in full_loader]
@@ -606,10 +657,10 @@ class GATPipeline:
         """Filter graphs that exceed the anomaly threshold.
 
         Args:
-            loader: DataLoader yielding batches of graphs.
+            loader (torch_geometric.loader.DataLoader): DataLoader yielding batches of graphs.
 
         Returns:
-            List of graphs exceeding the anomaly threshold.
+            list: List of graphs exceeding the anomaly threshold.
         """
         filtered = []
         with torch.no_grad():
@@ -635,8 +686,8 @@ class GATPipeline:
         """Train the classifier on filtered graphs.
 
         Args:
-            filtered_graphs: List of graphs for classifier training.
-            epochs: Number of training epochs.
+            filtered_graphs (list): List of graphs for classifier training.
+            epochs (int): Number of training epochs.
         """
         labels = [int(graph.y.flatten()[0]) for graph in filtered_graphs]
         num_pos = sum(labels)
@@ -682,10 +733,10 @@ class GATPipeline:
         """Evaluate classifier accuracy on a set of graphs.
 
         Args:
-            graphs: List of graphs to evaluate.
+            graphs (list): List of graphs to evaluate.
 
         Returns:
-            Classification accuracy (float).
+            float: Classification accuracy.
         """
         self.classifier.eval()
         all_preds, all_labels = [], []
@@ -709,10 +760,10 @@ class GATPipeline:
         """Predict anomalies and classify graphs using the two-stage pipeline.
 
         Args:
-            data: Batch of graphs.
+            data (torch_geometric.data.Batch): Batch of graphs.
 
         Returns:
-            Tensor of predicted labels (0 for normal, 1 for attack).
+            torch.Tensor: Tensor of predicted labels (0 for normal, 1 for attack).
         """
         data = data.to(self.device)
         
@@ -741,7 +792,7 @@ def main(config: DictConfig):
     """Main function for training and evaluating the anomaly detection pipeline.
 
     Args:
-        config: Hydra configuration object.
+        config (omegaconf.DictConfig): Hydra configuration object.
     """
     config_dict = OmegaConf.to_container(config, resolve=True)
     print(config_dict)
