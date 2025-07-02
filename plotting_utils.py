@@ -13,7 +13,13 @@ from sklearn.manifold import TSNE
 
 
 def plot_structural_error_hist(structural_errors_normal, structural_errors_attack, save_path="images/structural_error_hist.png"):
-    """Plot histogram of structural feature scores for normal and attack graphs.
+    """
+    Plot histogram of structural feature scores for normal and attack graphs.
+
+    This function visualizes the distribution of a graph-level structural score
+    (computed from features like edge density, average degree, and degree std)
+    for both normal and attack graphs. The histogram helps you see if there is
+    a significant difference in structural properties between normal and attack graphs.
 
     Args:
         structural_errors_normal: List of scores for normal graphs.
@@ -38,7 +44,13 @@ def plot_structural_error_hist(structural_errors_normal, structural_errors_attac
     print(f"Structural error histogram saved as '{save_path}'")
 
 def plot_connectivity_error_hist(connectivity_errors_normal, connectivity_errors_attack, save_path="images/connectivity_error_hist.png"):
-    """Plot histogram of connectivity anomaly scores for normal and attack graphs.
+    """
+    Plot histogram of connectivity anomaly scores for normal and attack graphs.
+
+    This function visualizes the distribution of a graph-level connectivity anomaly score,
+    which measures how much a graph's connectivity deviates from expected patterns
+    (e.g., edge density, isolated nodes, degree uniformity). The histogram helps you
+    see if attack graphs have more anomalous connectivity than normal graphs.
 
     Args:
         connectivity_errors_normal: List of scores for normal graphs.
@@ -260,9 +272,8 @@ def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="images/
                 plt.colorbar(im1, ax=axes[1])
                 # CAN ID comparison
                 axes[2].plot(input_canid, label="Input CAN ID", marker='o')
-                axes[2].plot(recon_canid, label="Recon CAN ID", marker='x')
                 axes[2].plot(canid_pred, label="Pred CAN ID", marker='*')
-                axes[2].set_title("CAN ID (Input vs Recon vs Pred)")
+                axes[2].set_title("CAN ID (Input vs Pred)")
                 axes[2].set_xlabel("Node Index")
                 axes[2].set_ylabel("CAN ID Value")
                 axes[2].legend()

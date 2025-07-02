@@ -553,6 +553,16 @@ class GATPipeline:
         plot_edge_error_hist(edge_errors_normal, edge_errors_attack, edge_threshold, save_path="images/edge_error_hist.png")
         plot_canid_recon_hist(id_errors_normal, id_errors_attack, save_path="images/canid_recon_hist.png")
 
+        # Plot composite error if all components are available
+        if (errors_normal and errors_attack and edge_errors_normal and edge_errors_attack and
+            id_errors_normal and id_errors_attack):
+            plot_composite_error_hist(
+                errors_normal, errors_attack,
+                edge_errors_normal, edge_errors_attack,
+                id_errors_normal, id_errors_attack,
+                save_path="images/composite_error_hist.png"
+            )
+
         # Plot structural differences if available
         if structural_errors_normal and structural_errors_attack:
             plot_structural_error_hist(
