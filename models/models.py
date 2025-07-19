@@ -163,8 +163,25 @@ class GATMoEJK(nn.Module):
         return x
 
 class GraphAutoencoder(nn.Module):
-    """Graph Autoencoder that reconstructs node features and edge list."""
-    
+    """
+    Graph Autoencoder that reconstructs node features and edge list.
+
+    Components:
+    - Node Encoder: Uses GATConv layers (with batch norm and dropout) to encode node features and CAN ID embeddings into latent node representations.
+    - Latent Space: Outputs mean and logvar for each node, enabling sampling (VGAE style) and KL regularization.
+    - Node Decoder: Uses GATConv layers to reconstruct node features from latent embeddings.
+    - CAN ID Classifier: Linear layer to predict CAN ID for each node from latent features.
+    - Edge Decoder: MLP that predicts edge existence probability between node pairs, using both node embeddings and (optionally) edge attributes.
+
+    Forward Flow:
+    1. **Encoding:** Node features (including CAN ID embedding) are passed through several GATConv layers to produce hidden node representations. These are then mapped to mean and logvar vectors, and sampled to produce latent node embeddings (`z`). KL divergence is computed for regularization.
+    2. **Node Decoding:** Latent node embeddings are passed through GATConv layers to reconstruct the original node features (except CAN ID, which is handled separately).
+    3. **CAN ID Classification:** Latent node embeddings are also used to predict CAN ID for each node.
+    4. **Edge Decoding:** For each edge (or candidate edge), the latent embeddings of the source and target nodes are combined (concat, hadamard, L1 distance), optionally concatenated with edge attributes, and passed through an MLP to predict the probability that the edge exists.
+    5. **Losses:** Node reconstruction loss, CAN ID classification loss, edge reconstruction loss, and KL loss are combined during training.
+
+    The model is trained to reconstruct both node features and the graph structure (edges), and can use rich edge attributes to improve edge prediction.
+    """
     def __init__(self, num_ids, in_channels, hidden_dim=32, latent_dim=32,
                   heads=4, embedding_dim=8, dropout=0.35):
         """Initialize GraphAutoencoder.
