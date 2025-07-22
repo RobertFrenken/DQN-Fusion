@@ -29,6 +29,25 @@ def build_id_mapping(df):
     id_mapping['OOV'] = oov_index
     return id_mapping
 
+def build_all_id_mapping(root_folder):
+    """Build ID mapping including ALL CAN IDs (normal + attack)."""
+    import glob
+    all_can_ids = set()
+    
+    for file_path in glob.glob(os.path.join(root_folder, "*.csv")):
+        try:
+            df = pd.read_csv(file_path)
+            if 'can_id' in df.columns:
+                all_can_ids.update(df['can_id'].unique())
+        except Exception as e:
+            print(f"Warning: Could not read {file_path}: {e}")
+    
+    id_mapping = {can_id: idx for idx, can_id in enumerate(sorted(all_can_ids))}
+    id_mapping['UNK'] = len(id_mapping)
+    print(f"Created comprehensive ID mapping with {len(id_mapping)} CAN IDs (including UNK)")
+    
+    return id_mapping
+
 def build_id_mapping_from_normal(root_folder, folder_type='train_'):
     """Build CAN ID mapping using only normal (attack==0) rows from all CSVs.
     

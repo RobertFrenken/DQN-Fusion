@@ -13,7 +13,7 @@ from sklearn.metrics import confusion_matrix
 import random
 
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
-from preprocessing import graph_creation, build_id_mapping_from_normal
+from preprocessing import graph_creation, build_id_mapping_from_normal, build_all_id_mapping
 from torch_geometric.data import Batch
 
 from plotting_utils import (
@@ -350,7 +350,9 @@ def main(config: DictConfig):
     # Load and prepare data
     KEY = config_dict['root_folder']
     root_folder = root_folders[KEY]
-    id_mapping = build_id_mapping_from_normal(root_folder)
+    # id_mapping = build_id_mapping_from_normal(root_folder)
+    # attempting to use all known IDs for better handling
+    id_mapping = build_all_id_mapping(root_folder)
     dataset = graph_creation(root_folder, id_mapping=id_mapping, window_size=100)
     
     print(f"Dataset: {len(dataset)} graphs, {len(id_mapping)} unique CAN IDs")
