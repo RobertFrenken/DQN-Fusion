@@ -10,47 +10,42 @@ import sys
 import time
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from models.models import GATWithJK, GraphAutoencoder
+from models.models import GATWithJK, GraphAutoencoder, GraphAutoencoderNeighborhood
 from preprocessing import graph_creation, build_id_mapping_from_normal
 from training_utils import PyTorchTrainer, PyTorchDistillationTrainer, DistillationTrainer
 from torch_geometric.data import Batch
 from sklearn.metrics import confusion_matrix
 import random
 import matplotlib.pyplot as plt
-
+import numpy as np
 
 from plotting_utils import (
     plot_feature_histograms,
-    print_graph_stats,
-    print_graph_structure,
     plot_node_recon_errors,
     plot_graph_reconstruction,
     plot_latent_space,
     plot_recon_error_hist,
     plot_edge_error_hist,
     plot_canid_recon_hist, 
+    plot_neighborhood_error_hist,
+    plot_neighborhood_composite_error_hist,
+    plot_error_components_analysis,
     plot_composite_error_hist,
     plot_structural_error_hist,
-    plot_connectivity_error_hist 
+    plot_connectivity_error_hist,
+    plot_raw_weighted_composite_error_hist
+    
 )
 def extract_latent_vectors(pipeline, loader):
-    """Extract latent vectors (graph embeddings) and labels from a data loader.
-
-    Args:
-        pipeline: The GATPipeline object containing the autoencoder.
-        loader: DataLoader yielding batches of graphs.
-
-    Returns:
-        Tuple of (latent_vectors, labels) as numpy arrays.
-    """
+    """Extract latent vectors (graph embeddings) and labels from a data loader."""
     pipeline.autoencoder.eval()
     zs = []
     labels = []
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(pipeline.device)
-            # Only need z (latent), ignore other outputs
-            _, _, z, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
+            # FIX: Use correct 5-output format
+            _, _, _, z, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
             graphs = Batch.to_data_list(batch)
             start = 0
             for graph in graphs:
@@ -62,265 +57,25 @@ def extract_latent_vectors(pipeline, loader):
                 start += n
     return np.array(zs), np.array(labels)
 
-def compute_edge_recon_error(autoencoder, batch):
-    """Compute edge reconstruction error using enhanced edge features.
+def find_optimal_weights(errors_normal, errors_attack, 
+                        neighbor_errors_normal, neighbor_errors_attack,
+                        canid_errors_normal, canid_errors_attack):
+    """Find weights that maximize separation between normal and attack."""
+    from scipy.optimize import minimize
     
-    Args:
-        autoencoder (torch.nn.Module): The trained autoencoder model.
-        batch (torch_geometric.data.Batch): A batch of graphs.
-
-    Returns:
-        list: List of edge reconstruction errors, one per graph.
-    """
-    with torch.no_grad():
-        _, _, z, _ = autoencoder(batch.x, batch.edge_index, batch.batch)
-        graphs = Batch.to_data_list(batch)
-        start = 0
-        edge_errors = []
+    def separation_metric(weights):
+        w1, w2, w3 = weights
+        comp_n = w1*np.array(errors_normal) + w2*np.array(neighbor_errors_normal) + w3*np.array(canid_errors_normal)
+        comp_a = w1*np.array(errors_attack) + w2*np.array(neighbor_errors_attack) + w3*np.array(canid_errors_attack)
         
-        for graph in graphs:
-            num_nodes = graph.x.size(0)
-            pos_edge_index = graph.edge_index
-            pos_edge_attr = graph.edge_attr if hasattr(graph, 'edge_attr') else None
-            
-            if pos_edge_index.size(1) == 0 or num_nodes < 2:
-                edge_errors.append(0.0)
-                start += num_nodes
-                continue
-            
-            z_graph = z[start:start+num_nodes]
-            
-            # Positive edge predictions with edge attributes
-            pos_edge_preds = autoencoder.decode_edge(z_graph, pos_edge_index, pos_edge_attr)
-            pos_edge_labels = torch.ones(pos_edge_preds.size(0), device=pos_edge_preds.device)
-            
-            # Generate negative edges with simulated edge attributes
-            pos_edge_set = set()
-            for i in range(pos_edge_index.size(1)):
-                src, dst = pos_edge_index[0, i].item(), pos_edge_index[1, i].item()
-                pos_edge_set.add((src, dst))
-                pos_edge_set.add((dst, src))  # undirected
-            
-            # Sample negative edges more carefully
-            neg_edges = []
-            max_attempts = min(pos_edge_index.size(1) * 2, 100)  # Limit attempts
-            attempts = 0
-            
-            while len(neg_edges) < pos_edge_index.size(1) and attempts < max_attempts:
-                src = torch.randint(0, num_nodes, (1,)).item()
-                dst = torch.randint(0, num_nodes, (1,)).item()
-                if src != dst and (src, dst) not in pos_edge_set:
-                    neg_edges.append([src, dst])
-                attempts += 1
-            
-            if len(neg_edges) == 0:
-                edge_loss = nn.BCELoss(reduction='mean')(pos_edge_preds, pos_edge_labels)
-            else:
-                neg_edge_index = torch.tensor(neg_edges, device=pos_edge_index.device).T
-                
-                # Create dummy edge attributes for negative edges (zeros or random)
-                if pos_edge_attr is not None:
-                    neg_edge_attr = torch.zeros_like(pos_edge_attr[:len(neg_edges)])
-                else:
-                    neg_edge_attr = None
-                
-                neg_edge_preds = autoencoder.decode_edge(z_graph, neg_edge_index, neg_edge_attr)
-                neg_edge_labels = torch.zeros(neg_edge_preds.size(0), device=neg_edge_preds.device)
-                
-                edge_preds = torch.cat([pos_edge_preds, neg_edge_preds])
-                edge_labels = torch.cat([pos_edge_labels, neg_edge_labels])
-                edge_loss = nn.BCELoss(reduction='mean')(edge_preds, edge_labels)
-            
-            edge_errors.append(edge_loss.item())
-            start += num_nodes
-    return edge_errors
-
-def compute_graph_structural_features(graphs):
-    """Compute structural features for each graph to distinguish normal and attack graphs.
-
-    Args:
-        graphs (list): List of graph objects.
-
-    Returns:
-        list: List of structural feature scores, one per graph.
-    """
-    structural_errors = []
+        # Maximize difference in means, minimize overlap
+        mean_diff = np.mean(comp_a) - np.mean(comp_n)
+        std_sum = np.std(comp_n) + np.std(comp_a)
+        return -(mean_diff / (std_sum + 1e-8))  # Negative for minimization
     
-    for graph in graphs:
-        num_nodes = graph.x.size(0)
-        num_edges = graph.edge_index.size(1)
-        
-        if num_nodes == 0:
-            structural_errors.append(0.0)
-            continue
-        
-        # Basic structural metrics
-        edge_density = num_edges / (num_nodes * (num_nodes - 1) / 2) if num_nodes > 1 else 0
-        avg_degree = (2 * num_edges) / num_nodes if num_nodes > 0 else 0
-        
-        # Node degree distribution
-        if num_edges > 0:
-            edge_index = graph.edge_index
-            degrees = torch.zeros(num_nodes, device=edge_index.device)
-            degrees = degrees.index_add_(0, edge_index[0], torch.ones(edge_index.size(1), device=edge_index.device))
-            degrees = degrees.index_add_(0, edge_index[1], torch.ones(edge_index.size(1), device=edge_index.device))
-            degree_std = degrees.std().item()
-        else:
-            degree_std = 0.0
-        
-        # Combine structural features
-        structural_score = edge_density * 10 + avg_degree * 0.1 + degree_std * 0.01
-        structural_errors.append(structural_score)
-    
-    return structural_errors
-
-def compute_edge_prediction_accuracy(autoencoder, batch):
-    """Compute edge prediction accuracy (as error) for each graph in a batch.
-
-    Args:
-        autoencoder (torch.nn.Module): The trained autoencoder model.
-        batch (torch_geometric.data.Batch): A batch of graphs.
-
-    Returns:
-        list: List of edge prediction errors (1 - accuracy), one per graph.
-    """
-    with torch.no_grad():
-        _, _, z, _ = autoencoder(batch.x, batch.edge_index, batch.batch)
-        graphs = Batch.to_data_list(batch)
-        start = 0
-        edge_accuracies = []
-        
-        for graph in graphs:
-            num_nodes = graph.x.size(0)
-            pos_edge_index = graph.edge_index
-            pos_edge_attr = graph.edge_attr if hasattr(graph, 'edge_attr') else None
-            
-            if pos_edge_index.size(1) == 0 or num_nodes < 2:
-                edge_accuracies.append(1.0)  # Perfect "accuracy" for trivial cases
-                start += num_nodes
-                continue
-            
-            z_graph = z[start:start+num_nodes]
-            
-            # Positive edges with proper edge attributes
-            pos_edge_preds = autoencoder.decode_edge(z_graph, pos_edge_index, pos_edge_attr)
-            pos_predictions = (pos_edge_preds > 0.5).float()
-            pos_accuracy = pos_predictions.mean().item()
-            
-            # Negative edges (sample systematically)
-            neg_edges = []
-            pos_edge_set = set()
-            for i in range(pos_edge_index.size(1)):
-                src, dst = pos_edge_index[0, i].item(), pos_edge_index[1, i].item()
-                pos_edge_set.add((min(src, dst), max(src, dst)))
-            
-            # Sample negative edges more systematically
-            for src in range(num_nodes):
-                for dst in range(src + 1, num_nodes):
-                    if (src, dst) not in pos_edge_set:
-                        neg_edges.append([src, dst])
-                        if len(neg_edges) >= pos_edge_index.size(1):
-                            break
-                if len(neg_edges) >= pos_edge_index.size(1):
-                    break
-            
-            if neg_edges:
-                neg_edge_index = torch.tensor(neg_edges, device=pos_edge_index.device).T
-                
-                # Create appropriate negative edge attributes
-                if pos_edge_attr is not None:
-                    neg_edge_attr = torch.zeros_like(pos_edge_attr[:len(neg_edges)])
-                else:
-                    neg_edge_attr = None
-                
-                neg_edge_preds = autoencoder.decode_edge(z_graph, neg_edge_index, neg_edge_attr)
-                neg_predictions = (neg_edge_preds < 0.5).float()  # Should predict 0
-                neg_accuracy = neg_predictions.mean().item()
-                
-                # Combined accuracy
-                total_accuracy = (pos_accuracy + neg_accuracy) / 2
-            else:
-                total_accuracy = pos_accuracy
-            
-            # Convert accuracy to error (1 - accuracy gives higher values for worse performance)
-            edge_error = 1.0 - total_accuracy
-            edge_accuracies.append(edge_error)
-            start += num_nodes
-    
-    return edge_accuracies
-
-def compute_graph_connectivity_anomalies(graphs):
-    """Detect anomalies in graph connectivity patterns.
-
-    This function computes connectivity anomaly scores based on:
-    1. Edge density deviation from expected normal patterns
-    2. Presence of isolated nodes (nodes with no connections)
-    3. Overall connectivity structure
-
-    Args:
-        graphs (list): List of graph objects.
-
-    Returns:
-        list: List of connectivity anomaly scores, one per graph.
-              Higher scores indicate more anomalous connectivity patterns.
-    """
-    connectivity_scores = []
-    
-    for graph in graphs:
-        num_nodes = graph.x.size(0)
-        edge_index = graph.edge_index
-        
-        if num_nodes < 2:
-            connectivity_scores.append(0.0)
-            continue
-        
-        # Create adjacency matrix
-        adj = torch.zeros(num_nodes, num_nodes, device=edge_index.device)
-        if edge_index.size(1) > 0:
-            adj[edge_index[0], edge_index[1]] = 1
-            adj[edge_index[1], edge_index[0]] = 1  # Make symmetric (undirected)
-        
-        # 1. EDGE DENSITY ANALYSIS
-        num_edges = edge_index.size(1)
-        max_possible_edges = num_nodes * (num_nodes - 1) / 2  # Complete graph
-        edge_density = num_edges / max_possible_edges if max_possible_edges > 0 else 0
-        
-        # Assumption: Normal CAN graphs have ~10% edge density
-        # This should be tuned based on your actual data analysis
-        expected_density = 0.1
-        density_deviation = abs(edge_density - expected_density)
-        
-        # 2. ISOLATED NODES ANALYSIS
-        degrees = adj.sum(dim=1)  # Degree of each node
-        isolated_nodes = (degrees == 0).sum().item()  # Count nodes with degree 0
-        isolation_ratio = isolated_nodes / num_nodes
-        
-        # 3. DEGREE DISTRIBUTION ANALYSIS
-        if num_edges > 0:
-            # Check for unusual degree distributions
-            mean_degree = degrees.float().mean().item()
-            degree_std = degrees.float().std().item()
-            
-            # Penalize graphs with very uneven degree distribution
-            degree_uniformity_penalty = degree_std / (mean_degree + 1e-6)  # Avoid division by zero
-        else:
-            degree_uniformity_penalty = 0.0
-        
-        # 4. CONNECTIVITY COMPONENTS (optional - more complex)
-        # Could add analysis of connected components, clustering coefficient, etc.
-        
-        # COMBINE ALL FACTORS
-        # Weight different factors based on importance
-        connectivity_anomaly = (
-            density_deviation * 2.0 +           # Edge density deviation (weight: 2.0)
-            isolation_ratio * 3.0 +             # Isolated nodes penalty (weight: 3.0)
-            degree_uniformity_penalty * 0.5     # Degree distribution penalty (weight: 0.5)
-        )
-        
-        connectivity_scores.append(connectivity_anomaly)
-    
-    return connectivity_scores
-
+    result = minimize(separation_metric, [1.0, 1.0, 1.0], 
+                     bounds=[(0.1, 10), (0.1, 10), (0.1, 10)])
+    return result.x
 class GATPipeline:
     """Pipeline for training and evaluating GAT-based autoencoder and classifier."""
     
@@ -333,123 +88,56 @@ class GATPipeline:
             device (str, optional): Device to use ('cpu' or 'cuda'). Defaults to 'cpu'.
         """
         self.device = device
-        self.autoencoder = GraphAutoencoder(num_ids=num_ids, in_channels=11, embedding_dim=embedding_dim).to(device)
+        self.autoencoder = GraphAutoencoderNeighborhood(num_ids=num_ids, in_channels=11, embedding_dim=embedding_dim).to(device)
         self.classifier = GATWithJK(num_ids=num_ids, in_channels=11, hidden_channels=32, out_channels=1, num_layers=3, heads=8, embedding_dim=embedding_dim).to(device)
         self.threshold = 0.0000
 
-    def _compute_edge_loss(self, z, edge_index, edge_attr=None):
-        """Compute edge reconstruction loss with edge features.
-        
-        Args:
-            z (torch.Tensor): Latent node embeddings.
-            edge_index (torch.Tensor): Edge indices.
-            edge_attr (torch.Tensor, optional): Edge attributes. Defaults to None.
+    def _compute_neighborhood_loss(self, neighbor_logits, x, edge_index):
+        """Compute neighborhood reconstruction loss."""
+        neighbor_targets = self.autoencoder.create_neighborhood_targets(x, edge_index, None)
+        return nn.BCEWithLogitsLoss()(neighbor_logits, neighbor_targets)
 
-        Returns:
-            torch.Tensor: Edge reconstruction loss.
-        """
-        if edge_index.size(1) == 0:
-            return torch.tensor(0.0, device=self.device, requires_grad=True)
-        
-        pos_edge_preds = self.autoencoder.decode_edge(z, edge_index, edge_attr)
-        pos_edge_labels = torch.ones(pos_edge_preds.size(0), device=pos_edge_preds.device)
-        
-        num_nodes = z.size(0)
-        if num_nodes < 2:
-            return nn.BCELoss()(pos_edge_preds, pos_edge_labels)
-        
-        # Better negative edge sampling
-        pos_edge_set = set()
-        for i in range(edge_index.size(1)):
-            src, dst = edge_index[0, i].item(), edge_index[1, i].item()
-            pos_edge_set.add((src, dst))
-            pos_edge_set.add((dst, src))
-        
-        # Generate negative edges more systematically
-        neg_edges = []
-        for _ in range(min(edge_index.size(1), num_nodes * (num_nodes - 1) // 4)):
-            attempts = 0
-            while attempts < 10:  # Limit attempts per negative edge
-                src = torch.randint(0, num_nodes, (1,), device=edge_index.device).item()
-                dst = torch.randint(0, num_nodes, (1,), device=edge_index.device).item()
-                if src != dst and (src, dst) not in pos_edge_set:
-                    neg_edges.append([src, dst])
-                    break
-                attempts += 1
-        
-        if not neg_edges:
-            return nn.BCELoss()(pos_edge_preds, pos_edge_labels)
-        
-        neg_edge_index = torch.tensor(neg_edges, device=edge_index.device).T
-        
-        # Create appropriate negative edge attributes
-        if edge_attr is not None:
-            neg_edge_attr = torch.zeros_like(edge_attr[:len(neg_edges)])
-        else:
-            neg_edge_attr = None
-            
-        neg_edge_preds = self.autoencoder.decode_edge(z, neg_edge_index, neg_edge_attr)
-        neg_edge_labels = torch.zeros(neg_edge_preds.size(0), device=neg_edge_preds.device)
-        
-        edge_preds = torch.cat([pos_edge_preds, neg_edge_preds])
-        edge_labels = torch.cat([pos_edge_labels, neg_edge_labels])
-        
-        return nn.BCELoss()(edge_preds, edge_labels)
-
-    def _compute_reconstruction_errors(self, loader, use_max=True):
-        """Compute various reconstruction errors for normal and attack graphs.
-
-        Args:
-            loader (torch_geometric.loader.DataLoader): DataLoader yielding batches of graphs.
-            use_max (bool, optional): If True, use max node error per graph; else use mean. Defaults to True.
-
-        Returns:
-            tuple: Tuple of lists containing errors for normal and attack graphs.
-        """
+    def _compute_neighborhood_reconstruction_errors(self, loader):
+        """Compute neighborhood reconstruction errors for graphs."""
         errors_normal, errors_attack = [], []
-        edge_errors_normal, edge_errors_attack = [], []
+        neighbor_errors_normal, neighbor_errors_attack = [], []
         id_errors_normal, id_errors_attack = [], []
-        structural_errors_normal, structural_errors_attack = [], []
-        connectivity_errors_normal, connectivity_errors_attack = [], []
         
         with torch.no_grad():
             for batch in loader:
                 batch = batch.to(self.device)
-                cont_out, canid_logits, z, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                cont_out, canid_logits, neighbor_logits, z, _ = self.autoencoder(
+                    batch.x, batch.edge_index, batch.batch)
                 
                 # Node reconstruction errors
                 node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
                 
-                # Multiple edge-based approaches
-                graphs = Batch.to_data_list(batch)
-                
-                # Traditional edge reconstruction errors
-                edge_errors = compute_edge_prediction_accuracy(self.autoencoder, batch)
-                
-                # Structural feature errors
-                structural_errors = compute_graph_structural_features(graphs)
-                
-                # Connectivity anomaly scores
-                connectivity_errors = compute_graph_connectivity_anomalies(graphs)
+                # Neighborhood reconstruction errors
+                neighbor_targets = self.autoencoder.create_neighborhood_targets(
+                    batch.x, batch.edge_index, batch.batch)
+                neighbor_recon_errors = nn.BCEWithLogitsLoss(reduction='none')(
+                    neighbor_logits, neighbor_targets).mean(dim=1)
                 
                 # CAN ID errors
                 canid_pred = canid_logits.argmax(dim=1)
                 
+                graphs = Batch.to_data_list(batch)
                 start = 0
-                for i, graph in enumerate(graphs):
+                for graph in graphs:
                     num_nodes = graph.x.size(0)
                     is_attack = int(graph.y.flatten()[0]) == 1
                     
-                    # Node error (max or mean)
+                    # Node error
                     graph_node_errors = node_errors[start:start+num_nodes]
                     if graph_node_errors.numel() > 0:
-                        node_error = graph_node_errors.max().item() if use_max else graph_node_errors.mean().item()
+                        node_error = graph_node_errors.max().item()
                         (errors_attack if is_attack else errors_normal).append(node_error)
                     
-                    # Various edge-based errors
-                    (edge_errors_attack if is_attack else edge_errors_normal).append(edge_errors[i])
-                    (structural_errors_attack if is_attack else structural_errors_normal).append(structural_errors[i])
-                    (connectivity_errors_attack if is_attack else connectivity_errors_normal).append(connectivity_errors[i])
+                    # Neighborhood error
+                    graph_neighbor_errors = neighbor_recon_errors[start:start+num_nodes]
+                    if graph_neighbor_errors.numel() > 0:
+                        neighbor_error = graph_neighbor_errors.max().item()
+                        (neighbor_errors_attack if is_attack else neighbor_errors_normal).append(neighbor_error)
                     
                     # CAN ID error
                     true_canids = graph.x[:, 0].long().cpu()
@@ -459,23 +147,17 @@ class GATPipeline:
                     
                     start += num_nodes
         
-        return (errors_normal, errors_attack, edge_errors_normal, 
-                edge_errors_attack, id_errors_normal, id_errors_attack,
-                structural_errors_normal, structural_errors_attack,
-                connectivity_errors_normal, connectivity_errors_attack)
-
+        return (errors_normal, errors_attack, neighbor_errors_normal, 
+                neighbor_errors_attack, id_errors_normal, id_errors_attack)
+    
     def _set_threshold(self, train_loader, percentile=50):
-        """Set the anomaly detection threshold based on training data.
-
-        Args:
-            train_loader (torch_geometric.loader.DataLoader): DataLoader for training data.
-            percentile (int, optional): Percentile to use for threshold. Defaults to 50.
-        """
+        """Set the anomaly detection threshold based on training data."""
         errors = []
         with torch.no_grad():
             for batch in train_loader:
                 batch = batch.to(self.device)
-                cont_out, _, _, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                # FIX: Use correct 5-output format
+                cont_out, _, _, _, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
                 errors.append((cont_out - batch.x[:, 1:]).pow(2).mean(dim=1))
         self.threshold = torch.cat(errors).quantile(percentile / 100.0).item()
 
@@ -504,6 +186,52 @@ class GATPipeline:
         balanced_graphs = attack_graphs + normal_graphs
         np.random.shuffle(balanced_graphs)
         return balanced_graphs
+    
+    def _print_neighborhood_statistics(self, errors_normal, errors_attack, 
+                             neighbor_errors_normal, neighbor_errors_attack,
+                             id_errors_normal, id_errors_attack):
+        """Print neighborhood reconstruction statistics."""
+        print(f"Processed {len(errors_normal)} normal graphs, {len(errors_attack)} attack graphs")
+        print(f"Mean node reconstruction error (normal): {np.mean(errors_normal) if errors_normal else 'N/A'}")
+        print(f"Mean node reconstruction error (attack): {np.mean(errors_attack) if errors_attack else 'N/A'}")
+        print(f"Mean neighborhood error (normal): {np.mean(neighbor_errors_normal) if neighbor_errors_normal else 'N/A'}")
+        print(f"Mean neighborhood error (attack): {np.mean(neighbor_errors_attack) if neighbor_errors_attack else 'N/A'}")
+        
+        if errors_normal and errors_attack:
+            print(f"Node reconstruction - Normal: {np.mean(errors_normal):.4f}±{np.std(errors_normal):.4f}")
+            print(f"Node reconstruction - Attack: {np.mean(errors_attack):.4f}±{np.std(errors_attack):.4f}")
+            print(f"Neighborhood reconstruction - Normal: {np.mean(neighbor_errors_normal):.4f}±{np.std(neighbor_errors_normal):.4f}")
+            print(f"Neighborhood reconstruction - Attack: {np.mean(neighbor_errors_attack):.4f}±{np.std(neighbor_errors_attack):.4f}")
+            print(f"CAN ID reconstruction - Normal: {np.mean(id_errors_normal):.4f}±{np.std(id_errors_normal):.4f}")
+            print(f"CAN ID reconstruction - Attack: {np.mean(id_errors_attack):.4f}±{np.std(id_errors_attack):.4f}")
+
+        # Create plots
+        neighbor_threshold = np.percentile(neighbor_errors_normal, 95) if neighbor_errors_normal else 0
+        print(f"Neighborhood error threshold: {neighbor_threshold}")
+        print(f"Node reconstruction threshold: {self.threshold}")
+
+        plot_recon_error_hist(errors_normal, errors_attack, self.threshold, save_path="images/recon_error_hist.png")
+        # FIX: Use correct function for neighborhood errors
+        plot_neighborhood_error_hist(neighbor_errors_normal, neighbor_errors_attack, neighbor_threshold, save_path="images/neighborhood_error_hist.png")
+        plot_canid_recon_hist(id_errors_normal, id_errors_attack, save_path="images/canid_recon_hist.png")
+
+        # ADD: Plot composite error combining all three error types
+        if (errors_normal and errors_attack and neighbor_errors_normal and neighbor_errors_attack and
+            id_errors_normal and id_errors_attack):
+            plot_neighborhood_composite_error_hist(
+                errors_normal, errors_attack,
+                neighbor_errors_normal, neighbor_errors_attack,
+                id_errors_normal, id_errors_attack,
+                save_path="images/neighborhood_composite_error_hist.png"
+            )
+
+        # Add this to _print_neighborhood_statistics method
+        plot_error_components_analysis(
+            errors_normal, errors_attack,
+            neighbor_errors_normal, neighbor_errors_attack,
+            id_errors_normal, id_errors_attack,
+            save_path="images/error_components_analysis.png"
+        )
 
     def _print_error_statistics(self, errors_normal, errors_attack, edge_errors_normal, 
                                edge_errors_attack, id_errors_normal, id_errors_attack,
@@ -562,6 +290,13 @@ class GATPipeline:
                 id_errors_normal, id_errors_attack,
                 save_path="images/composite_error_hist.png"
             )
+        # plot raw weighted composite error histogram
+        if (errors_normal and errors_attack and edge_errors_normal and edge_errors_attack and
+            id_errors_normal and id_errors_attack):
+            plot_raw_weighted_composite_error_hist(errors_normal, errors_attack,
+                                          edge_errors_normal, edge_errors_attack,
+                                          id_errors_normal, id_errors_attack,
+                                          save_path="images/raw_weighted_composite_error_hist.png")
 
         # Plot structural differences if available
         if structural_errors_normal and structural_errors_attack:
@@ -576,6 +311,7 @@ class GATPipeline:
                 connectivity_errors_normal, connectivity_errors_attack,
                 save_path="images/connectivity_error_hist.png"
             )
+        
 
     def train_stage1(self, train_loader, epochs=100):
         """Train the autoencoder for anomaly detection (Stage 1).
@@ -590,18 +326,21 @@ class GATPipeline:
         for _ in range(epochs):
             for batch in train_loader:
                 batch = batch.to(self.device)
-                cont_out, canid_logits, z, kl_loss = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                
+                cont_out, canid_logits, neighbor_logits, z, kl_loss = self.autoencoder(
+                    batch.x, batch.edge_index, batch.batch)
                 
                 # Compute losses with edge attributes
                 cont_loss = (cont_out - batch.x[:, 1:]).pow(2).mean()
                 canid_loss = nn.CrossEntropyLoss()(canid_logits, batch.x[:, 0].long())
-                
+                neighbor_loss = self._compute_neighborhood_loss(neighbor_logits, batch.x, batch.edge_index)
+
                 # Use edge attributes if available
-                edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
-                edge_loss = self._compute_edge_loss(z, batch.edge_index, edge_attr)
+                # edge_attr = batch.edge_attr if hasattr(batch, 'edge_attr') else None
+                # edge_loss = self._compute_edge_loss(z, batch.edge_index, edge_attr)
                 
                 beta = 0.1
-                loss = cont_loss + canid_loss + edge_loss + beta * kl_loss
+                loss = cont_loss + canid_loss + neighbor_loss + beta * kl_loss
                 
                 opt.zero_grad()
                 loss.backward()
@@ -610,12 +349,7 @@ class GATPipeline:
         self._set_threshold(train_loader, percentile=50)
 
     def train_stage2(self, full_loader, epochs=50):
-        """Train the classifier on filtered graphs (Stage 2).
-
-        Args:
-            full_loader (torch_geometric.loader.DataLoader): DataLoader for all graphs (normal + attack).
-            epochs (int, optional): Number of training epochs. Defaults to 50.
-        """
+        """Train the classifier on filtered graphs (Stage 2)."""
         # Print label distribution
         all_labels = [batch.y.cpu().numpy() for batch in full_loader]
         all_labels = np.concatenate(all_labels)
@@ -624,43 +358,23 @@ class GATPipeline:
         for u, c in zip(unique, counts):
             print(f"Label {u}: {c} samples")
 
-        # Compute and analyze reconstruction errors with new metrics
-        result = self._compute_reconstruction_errors(full_loader)
-        if len(result) == 10:  # New version with structural metrics
-            (errors_normal, errors_attack, edge_errors_normal, 
-             edge_errors_attack, id_errors_normal, id_errors_attack,
-             structural_errors_normal, structural_errors_attack,
-             connectivity_errors_normal, connectivity_errors_attack) = result
-            
-            self._print_error_statistics(errors_normal, errors_attack, edge_errors_normal,
-                                       edge_errors_attack, id_errors_normal, id_errors_attack,
-                                       structural_errors_normal, structural_errors_attack,
-                                       connectivity_errors_normal, connectivity_errors_attack)
-        else:  # Fallback to old version
-            (errors_normal, errors_attack, edge_errors_normal, 
-             edge_errors_attack, id_errors_normal, id_errors_attack) = result
-            
-            self._print_error_statistics(errors_normal, errors_attack, edge_errors_normal,
-                                       edge_errors_attack, id_errors_normal, id_errors_attack)
-
-        # Filter graphs based on threshold
-        filtered = self._filter_anomalous_graphs(full_loader)
+        # Use neighborhood reconstruction instead of edge reconstruction
+        result = self._compute_neighborhood_reconstruction_errors(full_loader)
+        (errors_normal, errors_attack, neighbor_errors_normal, 
+        neighbor_errors_attack, id_errors_normal, id_errors_attack) = result
         
+        # Print statistics
+        self._print_neighborhood_statistics(errors_normal, errors_attack, 
+                                        neighbor_errors_normal, neighbor_errors_attack,
+                                        id_errors_normal, id_errors_attack)
+
+        # Filter and train classifier (rest remains the same)
+        filtered = self._filter_anomalous_graphs(full_loader)
         if not filtered:
             print("No graphs exceeded the anomaly threshold. Skipping classifier training.")
             return
-
-        # Create balanced dataset
-        filtered = self._create_balanced_dataset(filtered)
         
-        # Print filtered dataset statistics
-        labels = [int(graph.y.flatten()[0]) for graph in filtered]
-        unique, counts = np.unique(labels, return_counts=True)
-        print("Label distribution in filtered graphs (for classifier):")
-        for u, c in zip(unique, counts):
-            print(f"Label {u}: {c} samples")
-
-        # Train classifier
+        filtered = self._create_balanced_dataset(filtered)
         self._train_classifier(filtered, epochs)
 
     def _filter_anomalous_graphs(self, loader):
@@ -676,7 +390,8 @@ class GATPipeline:
         with torch.no_grad():
             for batch in loader:
                 batch = batch.to(self.device)
-                cont_out, _, _, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
+                # FIX: Use correct 5-output format
+                cont_out, _, _, _, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
                 error = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
                 
                 graphs = Batch.to_data_list(batch)
@@ -779,20 +494,26 @@ class GATPipeline:
         
         # Stage 1: Anomaly detection
         with torch.no_grad():
-            cont_out, canid_logits, z, kl_loss = self.autoencoder(data.x, data.edge_index, data.batch)
+            # FIX: Use new 5-output format
+            cont_out, canid_logits, neighbor_logits, z, kl_loss = self.autoencoder(
+                data.x, data.edge_index, data.batch)
             error = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
             
             # Process each graph in Batch
             preds = []
-            for graph in Batch.to_data_list(data):
-                node_mask = (data.batch == graph.batch)
-                if (error[node_mask] > self.threshold).any():
+            graphs = Batch.to_data_list(data)  # FIX: Get graphs from data, not undefined variable
+            start = 0
+            for graph in graphs:
+                num_nodes = graph.x.size(0)
+                node_errors = error[start:start+num_nodes]
+                if node_errors.numel() > 0 and (node_errors > self.threshold).any():
                     # Stage 2: Classification
-                    prob = self.classifier(graph.x, graph.edge_index, 
-                                         graph.batch).item()
+                    graph_batch = graph.to(self.device)
+                    prob = self.classifier(graph_batch).item()
                     preds.append(1 if prob > 0.5 else 0)
                 else:
                     preds.append(0)
+                start += num_nodes
             
             return torch.tensor(preds, device=self.device)
 
@@ -876,7 +597,7 @@ def main(config: DictConfig):
     pipeline = GATPipeline(num_ids=num_ids, embedding_dim=embedding_dim, device=device)
 
     print("Stage 1: Training autoencoder for anomaly detection...")
-    pipeline.train_stage1(train_loader, epochs=50)
+    pipeline.train_stage1(train_loader, epochs=25)
 
     # Visualize input vs. reconstructed features for a few graphs
     # For classifier, use all graphs (normal + attack)

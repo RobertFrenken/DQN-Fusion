@@ -11,8 +11,210 @@ import random
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
+def plot_error_components_analysis(node_errors_normal, node_errors_attack,
+                                 neighbor_errors_normal, neighbor_errors_attack,
+                                 canid_errors_normal, canid_errors_attack,
+                                 save_path="images/error_components_analysis.png"):
+    """
+    Create a multi-panel plot showing individual error components and their combination.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    def normalize(arr):
+        arr = np.array(arr)
+        if arr.max() - arr.min() == 0:
+            return np.zeros_like(arr)
+        return (arr - arr.min()) / (arr.max() - arr.min())
+    
+    # Normalize errors
+    node_n, node_a = normalize(node_errors_normal), normalize(node_errors_attack)
+    neighbor_n, neighbor_a = normalize(neighbor_errors_normal), normalize(neighbor_errors_attack)
+    canid_n, canid_a = normalize(canid_errors_normal), normalize(canid_errors_attack)
+    
+    # FIXED: Equal 1/3 composite weights
+    comp_n = (1/3 * node_n + 1/3 * neighbor_n + 1/3 * canid_n)
+    comp_a = (1/3 * node_a + 1/3 * neighbor_a + 1/3 * canid_a)
+    
+    # Create 2x2 subplot
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    
+    # Node errors
+    axes[0,0].hist(node_n, bins=30, alpha=0.7, label='Normal', color='blue', density=True)
+    axes[0,0].hist(node_a, bins=30, alpha=0.7, label='Attack', color='red', density=True)
+    axes[0,0].set_title('Node Reconstruction Errors (Normalized)')
+    axes[0,0].legend()
+    
+    # Neighborhood errors
+    axes[0,1].hist(neighbor_n, bins=30, alpha=0.7, label='Normal', color='blue', density=True)
+    axes[0,1].hist(neighbor_a, bins=30, alpha=0.7, label='Attack', color='red', density=True)
+    axes[0,1].set_title('Neighborhood Reconstruction Errors (Normalized)')
+    axes[0,1].legend()
+    
+    # CAN ID errors
+    axes[1,0].hist(canid_n, bins=30, alpha=0.7, label='Normal', color='blue', density=True)
+    axes[1,0].hist(canid_a, bins=30, alpha=0.7, label='Attack', color='red', density=True)
+    axes[1,0].set_title('CAN ID Errors (Normalized)')
+    axes[1,0].legend()
+    
+    # Composite
+    axes[1,1].hist(comp_n, bins=30, alpha=0.7, label='Normal', color='blue', density=True)
+    axes[1,1].hist(comp_a, bins=30, alpha=0.7, label='Attack', color='red', density=True)
+    axes[1,1].set_title('Composite Error (Weighted Combination)')
+    axes[1,1].legend()
+    
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    print(f"Saved error components analysis as '{save_path}'")
 
-def plot_structural_error_hist(structural_errors_normal, structural_errors_attack, save_path="images/structural_error_hist.png"):
+def plot_raw_weighted_composite_error_hist(node_errors_normal, node_errors_attack,
+                                          neighbor_errors_normal, neighbor_errors_attack,
+                                          canid_errors_normal, canid_errors_attack,
+                                          save_path="images/raw_weighted_composite_error_hist.png"):
+    """Plot composite error using weighted raw values (no normalization)."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Scale weights to bring all error types to similar magnitude
+    weight_node = 1.0      # Base scale
+    weight_neighbor = 20.0  # Scale up small neighborhood errors  
+    weight_canid = 0.3     # Scale down CAN ID errors
+    
+    comp_n = (weight_node * np.array(node_errors_normal) + 
+              weight_neighbor * np.array(neighbor_errors_normal) + 
+              weight_canid * np.array(canid_errors_normal))
+    
+    comp_a = (weight_node * np.array(node_errors_attack) + 
+              weight_neighbor * np.array(neighbor_errors_attack) + 
+              weight_canid * np.array(canid_errors_attack))
+    
+    comp_threshold = np.percentile(comp_n, 95) if len(comp_n) > 0 else 0
+    
+    plt.figure(figsize=(10, 6))
+    plt.hist(comp_n, bins=50, alpha=0.7, label=f'Normal (n={len(comp_n)})', color='blue', density=True)
+    plt.hist(comp_a, bins=50, alpha=0.7, label=f'Attack (n={len(comp_a)})', color='red', density=True)
+    plt.axvline(comp_threshold, color='green', linestyle='--', label=f'Threshold: {comp_threshold:.3f}')
+    
+    plt.xlabel('Weighted Raw Composite Error')
+    plt.ylabel('Density')
+    plt.title(f'Raw Weighted Composite Error\n(Weights: Node={weight_node}, Neighbor={weight_neighbor}, CAN_ID={weight_canid})')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Raw Weighted Composite Error Statistics:")
+    print(f"Normal - Mean: {np.mean(comp_n):.4f}, Std: {np.std(comp_n):.4f}")
+    print(f"Attack - Mean: {np.mean(comp_a):.4f}, Std: {np.std(comp_a):.4f}")
+    print(f"Separation: {np.mean(comp_a) - np.mean(comp_n):.4f}")
+    print(f"Saved raw weighted composite error histogram as '{save_path}'")
+    
+def plot_neighborhood_composite_error_hist(node_errors_normal, node_errors_attack,
+                                         neighbor_errors_normal, neighbor_errors_attack,
+                                         canid_errors_normal, canid_errors_attack,
+                                         save_path="images/neighborhood_composite_error_hist.png"):
+    """
+    Plot histogram of composite error combining node reconstruction, neighborhood reconstruction, and CAN ID errors.
+    
+    Args:
+        node_errors_normal: List of node reconstruction errors for normal graphs.
+        node_errors_attack: List of node reconstruction errors for attack graphs.
+        neighbor_errors_normal: List of neighborhood reconstruction errors for normal graphs.
+        neighbor_errors_attack: List of neighborhood reconstruction errors for attack graphs.
+        canid_errors_normal: List of CAN ID errors for normal graphs.
+        canid_errors_attack: List of CAN ID errors for attack graphs.
+        save_path: Path to save the figure.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Normalize each error type to [0, 1] for fair combination
+    def normalize(arr):
+        arr = np.array(arr)
+        if arr.max() - arr.min() == 0:
+            return np.zeros_like(arr)
+        return (arr - arr.min()) / (arr.max() - arr.min())
+    
+    # Normalize all error types
+    node_n = normalize(node_errors_normal)
+    node_a = normalize(node_errors_attack)
+    neighbor_n = normalize(neighbor_errors_normal)
+    neighbor_a = normalize(neighbor_errors_attack)
+    canid_n = normalize(canid_errors_normal)
+    canid_a = normalize(canid_errors_attack)
+    
+    # Composite error (weighted mean of normalized errors)
+    # You can adjust weights if needed
+    weight_node = 1/3      # 33.33%
+    weight_neighbor = 1/3  # 33.33%
+    weight_canid = 1/3     # 33.33%
+    
+    comp_n = (weight_node * node_n + weight_neighbor * neighbor_n + weight_canid * canid_n)
+    comp_a = (weight_node * node_a + weight_neighbor * neighbor_a + weight_canid * canid_a)
+    
+    # Calculate threshold at 95th percentile of normal graphs
+    comp_threshold = np.percentile(comp_n, 95) if len(comp_n) > 0 else 0
+    
+    # Plot
+    plt.figure(figsize=(10, 6))
+    plt.hist(comp_n, bins=50, alpha=0.7, label=f'Normal (n={len(comp_n)})', color='blue', density=True)
+    plt.hist(comp_a, bins=50, alpha=0.7, label=f'Attack (n={len(comp_a)})', color='red', density=True)
+    plt.axvline(comp_threshold, color='green', linestyle='--', label=f'Threshold: {comp_threshold:.3f}')
+    
+    plt.xlabel('Composite Error (Node + Neighborhood + CAN ID)')
+    plt.ylabel('Density')
+    plt.title(f'Composite Error Distribution\n(Weights: Node={weight_node}, Neighbor={weight_neighbor}, CAN_ID={weight_canid})')
+    plt.legend()
+    plt.grid(True, alpha=0.3)
+    plt.tight_layout()
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Print some statistics
+    print(f"Composite Error Statistics:")
+    print(f"Normal - Mean: {np.mean(comp_n):.4f}, Std: {np.std(comp_n):.4f}")
+    print(f"Attack - Mean: {np.mean(comp_a):.4f}, Std: {np.std(comp_a):.4f}")
+    print(f"Separation (Attack_mean - Normal_mean): {np.mean(comp_a) - np.mean(comp_n):.4f}")
+    print(f"Threshold: {comp_threshold:.4f}")
+    print(f"Saved neighborhood composite error histogram as '{save_path}'")
+
+def plot_neighborhood_error_hist(neighbor_errors_normal, neighbor_errors_attack, threshold, save_path='images/neighborhood_error_hist.png'):
+    """
+    Plot histogram of neighborhood reconstruction errors for normal and attack graphs.
+
+    Args:
+        neighbor_errors_normal: List of neighborhood reconstruction errors for normal graphs.
+        neighbor_errors_attack: List of neighborhood reconstruction errors for attack graphs.
+        threshold: Threshold value for anomaly detection.
+        save_path: Path to save the figure.
+    
+    """
+    import matplotlib.pyplot as plt
+    if neighbor_errors_normal and neighbor_errors_attack:
+        plt.figure(figsize=(8, 5))
+        plt.hist(neighbor_errors_normal, bins=50, alpha=0.6, label='Normal', color='blue', density=True)
+        plt.hist(neighbor_errors_attack, bins=50, alpha=0.6, label='Attack', color='red', density=True)
+        plt.axvline(threshold, color='black', linestyle='--', label='Threshold')
+        plt.xlabel('Neighborhood Reconstruction Error')
+        plt.ylabel('Density')
+        plt.title('Neighborhood Error Distribution')
+        plt.legend()
+        plt.tight_layout()
+        os.makedirs(os.path.dirname(save_path), exist_ok=True)
+        plt.savefig(save_path)
+        plt.close()
+        print(f"Saved neighborhood error histogram as '{save_path}'")
+    else:
+        print("Not enough data to plot neighborhood error distributions.")
+
+def plot_structural_error_hist(structural_errors_normal, structural_errors_attack, save_path="images/neighborhood_error_hist.png"):
     """
     Plot histogram of structural feature scores for normal and attack graphs.
 
@@ -168,7 +370,8 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="images/nod
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(pipeline.device)
-            cont_out, canid_logits, z, kl_loss = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
+            # FIX: Use correct 5-output format
+            cont_out, canid_logits, neighbor_logits, z, kl_loss = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
             node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
             graphs = Batch.to_data_list(batch)
             start = 0
@@ -187,37 +390,21 @@ def plot_node_recon_errors(pipeline, loader, num_graphs=8, save_path="images/nod
             if len(normal_graphs) >= num_graphs and len(attack_graphs) >= num_graphs:
                 break
 
-    # --- Debug: Print last node info for each plotted graph ---
-    print("Last node info for plotted graphs:")
-    for i, graph in enumerate(normal_graphs):
-        print(f"Normal Graph {i+1} last node features: {graph.x[-1]}")
-        print(f"Normal Graph {i+1} last node CAN ID: {graph.x[-1,0]}")
-        # Degree: count how many times last node index appears in edge_index
-        last_idx = graph.x.size(0) - 1
-        degree = (graph.edge_index[0] == last_idx).sum().item() + (graph.edge_index[1] == last_idx).sum().item()
-        print(f"Normal Graph {i+1} last node degree: {degree}")
-    for i, graph in enumerate(attack_graphs):
-        print(f"Attack Graph {i+1} last node features: {graph.x[-1]}")
-        print(f"Attack Graph {i+1} last node CAN ID: {graph.x[-1,0]}")
-        last_idx = graph.x.size(0) - 1
-        degree = (graph.edge_index[0] == last_idx).sum().item() + (graph.edge_index[1] == last_idx).sum().item()
-        print(f"Attack Graph {i+1} last node degree: {degree}")
-    for i, graph in enumerate(normal_graphs + attack_graphs):
-        print(f"Graph {i+1} last node features: {graph.x[-2]}")  # -2 to skip virtual node
-        n = graph.x.size(0)
-        recon_feats = pipeline.autoencoder(graph.x, graph.edge_index, torch.zeros(n, dtype=torch.long, device=graph.x.device))
-        # print(f"Graph {i+1} last node recon: {recon_feats[-2]}")
-    
+    # Create the plot
     fig, axes = plt.subplots(2, num_graphs, figsize=(4*num_graphs, 8), sharey=True)
     for i in range(num_graphs):
-        axes[0, i].bar(range(len(errors_normal[i])), errors_normal[i], color='blue')
-        axes[0, i].set_title(f"Normal Graph {i+1}")
-        axes[0, i].set_xlabel("Node Index")
-        axes[0, i].set_ylabel("Recon Error")
-        axes[1, i].bar(range(len(errors_attack[i])), errors_attack[i], color='red')
-        axes[1, i].set_title(f"Attack Graph {i+1}")
-        axes[1, i].set_xlabel("Node Index")
-        axes[1, i].set_ylabel("Recon Error")
+        if i < len(errors_normal):
+            axes[0, i].bar(range(len(errors_normal[i])), errors_normal[i], color='blue')
+            axes[0, i].set_title(f"Normal Graph {i+1}")
+            axes[0, i].set_xlabel("Node Index")
+            axes[0, i].set_ylabel("Recon Error")
+        if i < len(errors_attack):
+            axes[1, i].bar(range(len(errors_attack[i])), errors_attack[i], color='red')
+            axes[1, i].set_title(f"Attack Graph {i+1}")
+            axes[1, i].set_xlabel("Node Index")
+            axes[1, i].set_ylabel("Recon Error")
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.tight_layout()
     plt.savefig(save_path)
     plt.close()
@@ -236,7 +423,8 @@ def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="images/
     with torch.no_grad():
         for batch in loader:
             batch = batch.to(pipeline.device)
-            cont_out, canid_logits, z, kl_loss = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
+            # FIX: Use correct 5-output format
+            cont_out, canid_logits, neighbor_logits, z, kl_loss = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
             graphs = Batch.to_data_list(batch)
             start = 0
             for i, graph in enumerate(graphs):
@@ -244,13 +432,12 @@ def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="images/
                 input_feats = graph.x.cpu().numpy()
                 recon_feats = cont_out[start:start+n].cpu().numpy()
                 canid_pred = canid_logits[start:start+n].argmax(dim=1).cpu().numpy()
-                recon_canid = cont_out[start:start+n, 0] if cont_out.shape[1] > 0 else np.zeros(n)
                 input_canid = input_feats[:, 0]
                 start += n
 
                 # Exclude CAN ID (column 0) for main feature comparison
                 input_payload = input_feats[:, 1:]
-                recon_payload = recon_feats[:, 1:]
+                recon_payload = recon_feats
 
                 label = int(graph.y.flatten()[0])
                 if label == 0 and shown_normal < max_normal:
@@ -260,7 +447,7 @@ def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="images/
                     graph_type = "Attack"
                     shown_attack += 1
                 else:
-                    continue  # Skip if we've already shown enough of this type
+                    continue
 
                 fig, axes = plt.subplots(1, 3, figsize=(15, 4))
                 # Payload/continuous features
@@ -279,6 +466,9 @@ def plot_graph_reconstruction(pipeline, loader, num_graphs=4, save_path="images/
                 axes[2].legend()
                 plt.suptitle(f"{graph_type} Graph {shown_normal if label==0 else shown_attack} (Label: {label})")
                 plt.tight_layout(rect=[0, 0, 1, 0.95])
+                
+                # Create directory if it doesn't exist
+                os.makedirs(os.path.dirname(save_path), exist_ok=True)
                 plt.savefig(f"{save_path.rstrip('.png')}_{graph_type.lower()}_{shown_normal if label==0 else shown_attack}.png")
                 plt.close()
 
