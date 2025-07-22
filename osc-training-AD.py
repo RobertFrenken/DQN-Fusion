@@ -25,7 +25,8 @@ from plotting_utils import (
     plot_neighborhood_error_hist,
     plot_neighborhood_composite_error_hist,
     plot_error_components_analysis,
-    plot_raw_weighted_composite_error_hist
+    plot_raw_weighted_composite_error_hist,
+    plot_raw_error_components_with_composite 
 )
 
 def extract_latent_vectors(pipeline, loader):
@@ -189,8 +190,12 @@ class GATPipeline:
                 errors_normal, errors_attack, neighbor_errors_normal, neighbor_errors_attack,
                 id_errors_normal, id_errors_attack, save_path="images/error_components_analysis.png")
 
+            plot_raw_error_components_with_composite(
+                errors_normal, errors_attack, neighbor_errors_normal, neighbor_errors_attack,
+                id_errors_normal, id_errors_attack, save_path="images/raw_error_components_with_composite.png")
+
     def train_stage2(self, full_loader, epochs=50):
-        """Stage 2: Train classifier on filtered anomalous graphs."""
+        """Stage 2: Train classifier with all attacks + filtered normal graphs."""
         print(f"\nStage 2: Analyzing reconstruction errors and training classifier...")
         
         # Compute reconstruction errors for all graphs
@@ -201,52 +206,111 @@ class GATPipeline:
         self._print_statistics_and_plots(errors_normal, errors_attack, neighbor_errors_normal, 
                                         neighbor_errors_attack, id_errors_normal, id_errors_attack)
 
-        # Filter anomalous graphs and train classifier
-        filtered_graphs = self._filter_anomalous_graphs(full_loader)
-        if not filtered_graphs:
-            print("No graphs exceeded anomaly threshold. Skipping classifier training.")
+        # Create balanced dataset with new strategy
+        balanced_graphs = self._create_balanced_dataset_with_composite_filtering(full_loader)
+        if not balanced_graphs:
+            print("No graphs available for classifier training.")
             return
             
-        balanced_graphs = self._create_balanced_dataset(filtered_graphs)
         self._train_classifier(balanced_graphs, epochs)
 
-    def _filter_anomalous_graphs(self, loader):
-        """Filter graphs that exceed the anomaly threshold."""
-        filtered = []
+    def _compute_composite_reconstruction_errors(self, loader):
+        """Compute composite reconstruction errors for filtering normal graphs."""
+        graph_data = []  # Store (graph, composite_error, is_attack)
+        
         with torch.no_grad():
             for batch in loader:
                 batch = batch.to(self.device)
-                cont_out, _, _, _, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
-                error = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
+                cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
+                    batch.x, batch.edge_index, batch.batch)
                 
+                # Node reconstruction errors
+                node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
+                
+                # Neighborhood reconstruction errors
+                neighbor_targets = self.autoencoder.create_neighborhood_targets(
+                    batch.x, batch.edge_index, batch.batch)
+                neighbor_recon_errors = nn.BCEWithLogitsLoss(reduction='none')(
+                    neighbor_logits, neighbor_targets).mean(dim=1)
+                
+                # CAN ID prediction errors
+                canid_pred = canid_logits.argmax(dim=1)
+                
+                # Process each graph in batch
                 graphs = Batch.to_data_list(batch)
                 start = 0
                 for graph in graphs:
                     num_nodes = graph.x.size(0)
-                    node_errors = error[start:start+num_nodes]
-                    if node_errors.numel() > 0 and (node_errors > self.threshold).any():
-                        filtered.append(graph)
+                    is_attack = int(graph.y.flatten()[0]) == 1
+                    
+                    # Extract errors for this graph
+                    graph_node_error = node_errors[start:start+num_nodes].max().item()
+                    graph_neighbor_error = neighbor_recon_errors[start:start+num_nodes].max().item()
+                    
+                    true_canids = graph.x[:, 0].long().cpu()
+                    pred_canids = canid_pred[start:start+num_nodes].cpu()
+                    canid_error = 1.0 - (pred_canids == true_canids).float().mean().item()
+                    
+                    # Compute composite error (rescaled raw values)
+                    weight_node = 1.0       # Base scale
+                    weight_neighbor = 20.0  # Scale up neighborhood errors
+                    weight_canid = 0.3      # Scale down CAN ID errors
+                    
+                    composite_error = (weight_node * graph_node_error + 
+                                    weight_neighbor * graph_neighbor_error + 
+                                    weight_canid * canid_error)
+                    
+                    # Store graph with its composite error
+                    graph_data.append((graph.cpu(), composite_error, is_attack))
                     start += num_nodes
         
-        print(f"Filtered {len(filtered)} anomalous graphs (threshold: {self.threshold:.4f})")
-        return filtered
+        return graph_data
 
-    def _create_balanced_dataset(self, filtered_graphs):
-        """Create balanced dataset by downsampling majority class."""
-        attack_graphs = [g.cpu() for g in filtered_graphs if g.y.item() == 1]
-        normal_graphs = [g.cpu() for g in filtered_graphs if g.y.item() == 0]
+    def _create_balanced_dataset_with_composite_filtering(self, loader):
+        """Create balanced dataset using all attacks + filtered normal graphs."""
+        print("Computing composite errors for graph filtering...")
+        graph_data = self._compute_composite_reconstruction_errors(loader)
         
-        min_count = min(len(attack_graphs), len(normal_graphs))
-        if len(normal_graphs) > min_count:
-            random.seed(42)
-            normal_graphs = random.sample(normal_graphs, min_count)
-        if len(attack_graphs) > min_count:
-            random.seed(42)
-            attack_graphs = random.sample(attack_graphs, min_count)
+        # Separate attack and normal graphs with their composite errors
+        attack_graphs = [(graph, error) for graph, error, is_attack in graph_data if is_attack]
+        normal_graphs = [(graph, error) for graph, error, is_attack in graph_data if not is_attack]
         
-        balanced_graphs = attack_graphs + normal_graphs
-        np.random.shuffle(balanced_graphs)
-        print(f"Created balanced dataset: {len(attack_graphs)} attack, {len(normal_graphs)} normal")
+        print(f"Found {len(attack_graphs)} attack graphs and {len(normal_graphs)} normal graphs")
+        
+        # Use ALL attack graphs
+        selected_attack_graphs = [graph for graph, _ in attack_graphs]
+        num_attacks = len(selected_attack_graphs)
+        
+        if num_attacks == 0:
+            print("No attack graphs found! Cannot train classifier.")
+            return []
+        
+        # Calculate maximum normal graphs to maintain 4:1 ratio
+        max_normal_graphs = num_attacks * 4
+        
+        if len(normal_graphs) <= max_normal_graphs:
+            # Use all normal graphs if we don't exceed 4:1 ratio
+            selected_normal_graphs = [graph for graph, _ in normal_graphs]
+            print(f"Using all {len(selected_normal_graphs)} normal graphs (ratio: {len(selected_normal_graphs)}:{num_attacks})")
+        else:
+            # Filter out the "easiest" (lowest composite error) normal graphs
+            # Sort by composite error (ascending) and take the hardest examples
+            normal_graphs_sorted = sorted(normal_graphs, key=lambda x: x[1])
+            selected_normal_graphs = [graph for graph, _ in normal_graphs_sorted[-max_normal_graphs:]]  # Take highest errors
+            
+            print(f"Filtered normal graphs from {len(normal_graphs)} to {len(selected_normal_graphs)}")
+            print(f"Composite error range - Filtered out: [{normal_graphs_sorted[0][1]:.4f}, {normal_graphs_sorted[max_normal_graphs-1][1]:.4f}]")
+            print(f"Composite error range - Kept: [{normal_graphs_sorted[-max_normal_graphs][1]:.4f}, {normal_graphs_sorted[-1][1]:.4f}]")
+            print(f"Final ratio: {len(selected_normal_graphs)}:{num_attacks} (4:1 max maintained)")
+        
+        # Combine and shuffle
+        balanced_graphs = selected_attack_graphs + selected_normal_graphs
+        random.seed(42)
+        random.shuffle(balanced_graphs)
+        
+        print(f"Created dataset for GAT training: {len(selected_normal_graphs)} normal, {num_attacks} attack")
+        print(f"Final ratio: {len(selected_normal_graphs)/num_attacks:.1f}:1")
+        
         return balanced_graphs
 
     def _train_classifier(self, filtered_graphs, epochs):
@@ -350,9 +414,7 @@ def main(config: DictConfig):
     # Load and prepare data
     KEY = config_dict['root_folder']
     root_folder = root_folders[KEY]
-    # id_mapping = build_id_mapping_from_normal(root_folder)
-    # attempting to use all known IDs for better handling
-    id_mapping = build_all_id_mapping(root_folder)
+    id_mapping = build_id_mapping_from_normal(root_folder)
     dataset = graph_creation(root_folder, id_mapping=id_mapping, window_size=100)
     
     print(f"Dataset: {len(dataset)} graphs, {len(id_mapping)} unique CAN IDs")

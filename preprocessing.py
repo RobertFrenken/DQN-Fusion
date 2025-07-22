@@ -29,24 +29,6 @@ def build_id_mapping(df):
     id_mapping['OOV'] = oov_index
     return id_mapping
 
-def build_all_id_mapping(root_folder):
-    """Build ID mapping including ALL CAN IDs (normal + attack)."""
-    import glob
-    all_can_ids = set()
-    
-    for file_path in glob.glob(os.path.join(root_folder, "*.csv")):
-        try:
-            df = pd.read_csv(file_path)
-            if 'can_id' in df.columns:
-                all_can_ids.update(df['can_id'].unique())
-        except Exception as e:
-            print(f"Warning: Could not read {file_path}: {e}")
-    
-    id_mapping = {can_id: idx for idx, can_id in enumerate(sorted(all_can_ids))}
-    id_mapping['UNK'] = len(id_mapping)
-    print(f"Created comprehensive ID mapping with {len(id_mapping)} CAN IDs (including UNK)")
-    
-    return id_mapping
 
 def build_id_mapping_from_normal(root_folder, folder_type='train_'):
     """Build CAN ID mapping using only normal (attack==0) rows from all CSVs.
@@ -196,7 +178,7 @@ def window_data_transform_numpy(data):
     edge_index = np.vectorize(node_to_idx.get)(unique_edges).T
     edge_index = torch.tensor(edge_index, dtype=torch.long)
 
-    # CREATE RICH EDGE FEATURES
+    # Create additional edge features
     edge_features = []
     
     for i, (src, tgt) in enumerate(unique_edges):
@@ -226,30 +208,7 @@ def window_data_transform_numpy(data):
         last_occurrence = edge_positions[-1] / len(data) if len(edge_positions) > 0 else 0.0
         temporal_spread = last_occurrence - first_occurrence
         
-        # 3. PAYLOAD FEATURES
-        payload_data = edge_data[:, 1:9]  # Data1 to Data8
-        if len(payload_data) > 0:
-            # Statistical measures of payload
-            payload_mean = np.mean(payload_data, axis=0)
-            payload_std = np.std(payload_data, axis=0)
-            payload_entropy = -np.sum(payload_mean * np.log(payload_mean + 1e-8))  # Simple entropy
-            
-            # Payload change patterns
-            if len(payload_data) > 1:
-                payload_changes = np.sum(np.diff(payload_data, axis=0) != 0, axis=1)
-                avg_payload_change = np.mean(payload_changes)
-                payload_volatility = np.std(payload_changes)
-            else:
-                avg_payload_change = 0.0
-                payload_volatility = 0.0
-        else:
-            payload_mean = np.zeros(8)
-            payload_std = np.zeros(8)
-            payload_entropy = 0.0
-            avg_payload_change = 0.0
-            payload_volatility = 0.0
-        
-        # 4. COMMUNICATION PATTERN FEATURES
+        # 3. COMMUNICATION PATTERN FEATURES
         # Bidirectional communication check
         reverse_edge_exists = np.any((source == tgt) & (target == src))
         
@@ -258,20 +217,18 @@ def window_data_transform_numpy(data):
         tgt_degree = np.sum((source == tgt) | (target == tgt))
         degree_product = src_degree * tgt_degree
         degree_ratio = src_degree / (tgt_degree + 1e-8)
+
+        # Edge payload variance (1 feature)
+        edge_payload_variance = np.var(edge_data[:, 1:9]) if len(edge_data) > 1 else 0.0  # Payload variance
         
-        # 5. ATTACK CORRELATION FEATURES
-        edge_attack_ratio = np.mean(edge_data[:, -1]) if len(edge_data) > 0 else 0.0
         
-        # Combine all features into a single vector
-        edge_feature_vector = np.concatenate([
-            [frequency, relative_frequency],                    # Frequency features (2)
-            [avg_interval, std_interval, regularity],           # Temporal regularity (3)
-            [first_occurrence, last_occurrence, temporal_spread], # Temporal position (3)
-            payload_mean[:4],                                   # First 4 payload means (4)
-            payload_std[:4],                                    # First 4 payload stds (4)
-            [payload_entropy, avg_payload_change, payload_volatility], # Payload dynamics (3)
-            [float(reverse_edge_exists), degree_product, degree_ratio], # Network structure (3)
-            [edge_attack_ratio]                                 # Attack correlation (1)
+        # STREAMLINED EDGE FEATURES (11 features instead of 23)
+        edge_feature_vector = np.array([
+            frequency, relative_frequency,                      # Frequency features (2)
+            avg_interval, std_interval, regularity,             # Temporal regularity (3)
+            first_occurrence, last_occurrence, temporal_spread, # Temporal position (3)
+            float(reverse_edge_exists), degree_product, degree_ratio, # Network structure (3)
+            edge_payload_variance                               # Payload variance (1)
         ])
         edge_features.append(edge_feature_vector)
     
@@ -437,7 +394,7 @@ class TestPreprocessing(unittest.TestCase):
             # Check that edge attributes exist and have correct dimensions
             if hasattr(data, 'edge_attr') and data.edge_attr is not None:
                 self.assertEqual(data.edge_attr.size(0), data.edge_index.size(1), "Edge attributes size mismatch!")
-                self.assertEqual(data.edge_attr.size(1), 23, "Edge attributes should have 23 features!")
+                self.assertEqual(data.edge_attr.size(1), 11, "Edge attributes should have 11 features!")
                 self.assertFalse(torch.isnan(data.edge_attr).any(), "Edge attributes contain NaN values!")
                 self.assertFalse(torch.isinf(data.edge_attr).any(), "Edge attributes contain Inf values!")
         

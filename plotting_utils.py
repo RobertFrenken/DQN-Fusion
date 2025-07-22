@@ -11,6 +11,103 @@ import random
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
+
+def plot_raw_error_components_with_composite(node_errors_normal, node_errors_attack,
+                                           neighbor_errors_normal, neighbor_errors_attack,
+                                           canid_errors_normal, canid_errors_attack,
+                                           save_path="images/raw_error_components_with_composite.png"):
+    """
+    Create a 2x2 plot showing raw/unnormalized error components and rescaled composite.
+    
+    Args:
+        node_errors_normal: List of node reconstruction errors for normal graphs.
+        node_errors_attack: List of node reconstruction errors for attack graphs.
+        neighbor_errors_normal: List of neighborhood reconstruction errors for normal graphs.
+        neighbor_errors_attack: List of neighborhood reconstruction errors for attack graphs.
+        canid_errors_normal: List of CAN ID errors for normal graphs.
+        canid_errors_attack: List of CAN ID errors for attack graphs.
+        save_path: Path to save the figure.
+    """
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    # Convert to numpy arrays for easier manipulation
+    node_n, node_a = np.array(node_errors_normal), np.array(node_errors_attack)
+    neighbor_n, neighbor_a = np.array(neighbor_errors_normal), np.array(neighbor_errors_attack)
+    canid_n, canid_a = np.array(canid_errors_normal), np.array(canid_errors_attack)
+    
+    # Create rescaled composite (weighted raw values to bring to similar scales)
+    weight_node = 1.0       # Base scale (errors ~0.1-0.4)
+    weight_neighbor = 20.0  # Scale up (errors ~0.005-0.04)
+    weight_canid = 0.3      # Scale down (errors 0.0-1.0)
+    
+    comp_n = (weight_node * node_n + weight_neighbor * neighbor_n + weight_canid * canid_n)
+    comp_a = (weight_node * node_a + weight_neighbor * neighbor_a + weight_canid * canid_a)
+    
+    # Create 2x2 subplot
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    
+    # Common histogram settings
+    bins = 30
+    alpha = 0.7
+    
+    # Top Left: Raw Node Reconstruction Errors
+    axes[0,0].hist(node_n, bins=bins, alpha=alpha, label='Normal', color='blue', density=True)
+    axes[0,0].hist(node_a, bins=bins, alpha=alpha, label='Attack', color='red', density=True)
+    axes[0,0].set_title('Raw Node Reconstruction Errors')
+    axes[0,0].set_xlabel('Node Reconstruction Error')
+    axes[0,0].set_ylabel('Density')
+    axes[0,0].legend()
+    axes[0,0].grid(True, alpha=0.3)
+    
+    # Top Right: Raw Neighborhood Reconstruction Errors
+    axes[0,1].hist(neighbor_n, bins=bins, alpha=alpha, label='Normal', color='blue', density=True)
+    axes[0,1].hist(neighbor_a, bins=bins, alpha=alpha, label='Attack', color='red', density=True)
+    axes[0,1].set_title('Raw Neighborhood Reconstruction Errors')
+    axes[0,1].set_xlabel('Neighborhood Reconstruction Error')
+    axes[0,1].set_ylabel('Density')
+    axes[0,1].legend()
+    axes[0,1].grid(True, alpha=0.3)
+    
+    # Bottom Left: Raw CAN ID Errors
+    axes[1,0].hist(canid_n, bins=bins, alpha=alpha, label='Normal', color='blue', density=True)
+    axes[1,0].hist(canid_a, bins=bins, alpha=alpha, label='Attack', color='red', density=True)
+    axes[1,0].set_title('Raw CAN ID Errors')
+    axes[1,0].set_xlabel('CAN ID Error (Fraction Incorrect)')
+    axes[1,0].set_ylabel('Density')
+    axes[1,0].legend()
+    axes[1,0].grid(True, alpha=0.3)
+    
+    # Bottom Right: Rescaled Composite Error
+    axes[1,1].hist(comp_n, bins=bins, alpha=alpha, label='Normal', color='blue', density=True)
+    axes[1,1].hist(comp_a, bins=bins, alpha=alpha, label='Attack', color='red', density=True)
+    axes[1,1].set_title(f'Rescaled Composite Error\n(Weights: Node={weight_node}, Neighbor={weight_neighbor}, CAN_ID={weight_canid})')
+    axes[1,1].set_xlabel('Weighted Composite Error')
+    axes[1,1].set_ylabel('Density')
+    axes[1,1].legend()
+    axes[1,1].grid(True, alpha=0.3)
+    
+    # Add threshold line to composite plot
+    comp_threshold = np.percentile(comp_n, 95) if len(comp_n) > 0 else 0
+    axes[1,1].axvline(comp_threshold, color='green', linestyle='--', 
+                      label=f'95% Threshold: {comp_threshold:.3f}', linewidth=2)
+    axes[1,1].legend()
+    
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    # Print statistics
+    print(f"\n=== Raw Error Components Analysis ===")
+    print(f"Node Errors - Normal: {np.mean(node_n):.4f}±{np.std(node_n):.4f}, Attack: {np.mean(node_a):.4f}±{np.std(node_a):.4f}")
+    print(f"Neighborhood Errors - Normal: {np.mean(neighbor_n):.4f}±{np.std(neighbor_n):.4f}, Attack: {np.mean(neighbor_a):.4f}±{np.std(neighbor_a):.4f}")
+    print(f"CAN ID Errors - Normal: {np.mean(canid_n):.4f}±{np.std(canid_n):.4f}, Attack: {np.mean(canid_a):.4f}±{np.std(canid_a):.4f}")
+    print(f"Composite Errors - Normal: {np.mean(comp_n):.4f}±{np.std(comp_n):.4f}, Attack: {np.mean(comp_a):.4f}±{np.std(comp_a):.4f}")
+    print(f"Composite Separation: {np.mean(comp_a) - np.mean(comp_n):.4f}")
+    print(f"Composite Threshold (95%): {comp_threshold:.4f}")
+    print(f"Saved raw error components analysis as '{save_path}'")
+    
 def plot_error_components_analysis(node_errors_normal, node_errors_attack,
                                  neighbor_errors_normal, neighbor_errors_attack,
                                  canid_errors_normal, canid_errors_attack,
