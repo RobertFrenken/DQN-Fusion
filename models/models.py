@@ -103,43 +103,62 @@ class GraphAutoencoderNeighborhood(nn.Module):
     The model is trained to reconstruct both node features and the graph structure (edges), and can use rich edge attributes to improve edge prediction.
     """
     def __init__(self, num_ids, in_channels, hidden_dim=32, latent_dim=32,
-                  heads=4, embedding_dim=8, dropout=0.35):
-        """Initialize GraphAutoencoder.
-        
-        Args:
-            num_ids (int): Number of unique CAN IDs for embedding.
-            in_channels (int): Number of input channels.
-            hidden_dim (int, optional): Hidden dimension size. Defaults to 32.
-            latent_dim (int, optional): Latent dimension size. Defaults to 32.
-            heads (int, optional): Number of attention heads. Defaults to 4.
-            embedding_dim (int, optional): Dimension of ID embeddings. Defaults to 8.
-            dropout (float, optional): Dropout rate. Defaults to 0.35.
+                 num_encoder_layers=3, num_decoder_layers=3,
+                 encoder_heads=4, decoder_heads=4,
+                 embedding_dim=8, dropout=0.35):
+        """
+            Args:
+                num_ids (int): Number of unique CAN IDs for embedding.
+                in_channels (int): Number of input channels.
+                hidden_dim (int, optional): Hidden dimension size. Defaults to 32.
+                latent_dim (int, optional): Latent dimension size. Defaults to 32.
+                num_encoder_layers (int): Number of GAT layers in encoder.
+                num_decoder_layers (int): Number of GAT layers in decoder.
+                encoder_heads (int): Number of attention heads in encoder.
+                decoder_heads (int): Number of attention heads in decoder.
+                embedding_dim (int, optional): Dimension of ID embeddings. Defaults to 8.
+                dropout (float, optional): Dropout rate. Defaults to 0.35.
         """
         super().__init__()
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
         self.latent_dim = latent_dim
-        gat_in_dim = embedding_dim + (in_channels - 1)
-        # ADD THIS LINE - Store num_ids as instance attribute
         self.num_ids = num_ids
-
-        # Encoder: 3 GAT layers with batch norm and residuals
-        self.enc1 = GATConv(gat_in_dim, hidden_dim, heads=heads)
-        self.bn1 = nn.BatchNorm1d(hidden_dim * heads)
-        self.enc2 = GATConv(hidden_dim * heads, hidden_dim, heads=1)
-        self.bn2 = nn.BatchNorm1d(hidden_dim)
-        self.enc3 = GATConv(hidden_dim, hidden_dim, heads=1)
-        self.bn3 = nn.BatchNorm1d(hidden_dim)
-        self.dropout = nn.Dropout(p=dropout)
-
-        # Add mean and logvar heads for z, sample z ~ N(mu, sigma)
-        self.z_mean = nn.Linear(hidden_dim, latent_dim)
-        self.z_logvar = nn.Linear(hidden_dim, latent_dim)
-
-        # Create edge decoder dynamically - will be initialized on first forward pass
-        self.edge_decoder = None
         self.dropout_rate = dropout
 
-        # Add neighborhood decoder
+        gat_in_dim = embedding_dim + (in_channels - 1)
+        self.gat_in_dim = gat_in_dim
+
+        # Encoder: stack of GAT layers
+        self.encoder_layers = nn.ModuleList()
+        self.encoder_bns = nn.ModuleList()
+        in_dim = gat_in_dim
+        for i in range(num_encoder_layers):
+            heads = encoder_heads if i == 0 else 1
+            out_dim = hidden_dim
+            self.encoder_layers.append(GATConv(in_dim, out_dim, heads=heads))
+            self.encoder_bns.append(nn.BatchNorm1d(out_dim * heads))
+            in_dim = out_dim * heads
+
+        # Latent heads
+        self.z_mean = nn.Linear(in_dim, latent_dim)
+        self.z_logvar = nn.Linear(in_dim, latent_dim)
+
+        # Decoder for node features: stack of GAT layers
+        self.decoder_layers = nn.ModuleList()
+        self.decoder_bns = nn.ModuleList()
+        in_dim = latent_dim
+        for i in range(num_decoder_layers):
+            heads = decoder_heads if i < num_decoder_layers - 1 else 1
+            out_dim = hidden_dim if i < num_decoder_layers - 1 else in_channels - 1
+            self.decoder_layers.append(GATConv(in_dim, out_dim, heads=heads))
+            if i < num_decoder_layers - 1:
+                self.decoder_bns.append(nn.BatchNorm1d(out_dim * heads))
+            in_dim = out_dim * heads if i < num_decoder_layers - 1 else out_dim
+
+         # CAN ID classifier head
+        self.canid_classifier = nn.Linear(hidden_dim * decoder_heads if num_decoder_layers > 1 else latent_dim, num_ids)
+
+        # Neighborhood decoder
         self.neighborhood_decoder = nn.Sequential(
             nn.Linear(latent_dim, hidden_dim),
             nn.ReLU(),
@@ -147,64 +166,35 @@ class GraphAutoencoderNeighborhood(nn.Module):
             nn.Linear(hidden_dim, hidden_dim),
             nn.ReLU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_dim, num_ids)  # Output: [num_nodes, num_can_ids]
+            nn.Linear(hidden_dim, num_ids)
         )
 
-        # Decoder for node features: 3 GAT layers
-        self.dec1 = GATConv(hidden_dim, hidden_dim, heads=heads)
-        self.dbn1 = nn.BatchNorm1d(hidden_dim * heads)
-        self.dec2 = GATConv(hidden_dim * heads, hidden_dim, heads=1)
-        self.dbn2 = nn.BatchNorm1d(hidden_dim)
-        self.dec3 = GATConv(hidden_dim, in_channels - 1, heads=1)  # Exclude CAN ID from continuous output
-
-        # CAN ID classifier head
-        self.canid_classifier = nn.Linear(hidden_dim, num_ids)
-        self.gat_in_dim = gat_in_dim
+        self.dropout = nn.Dropout(p=dropout)
 
 
     def encode(self, x, edge_index):
-        """Encode input graph into latent representation.
-        
-        Args:
-            x (torch.Tensor): Node features with shape [num_nodes, in_channels].
-            edge_index (torch.Tensor): Edge indices with shape [2, num_edges].
-            
-        Returns:
-            tuple: (latent_embeddings, kl_loss) where latent_embeddings has shape [num_nodes, latent_dim].
-        """
         id_emb = self.id_embedding(x[:, 0].long())
         other_feats = x[:, 1:]
         x = torch.cat([id_emb, other_feats], dim=1)
-        x1 = self.dropout(F.relu(self.bn1(self.enc1(x, edge_index))))
-        x2 = self.dropout(F.relu(self.bn2(self.enc2(x1, edge_index))))
-        # Residual connection
-        x3 = self.dropout(F.relu(self.bn3(self.enc3(x2, edge_index))))
-        h = x3 + x2  # Residual
-
-        # VGAE Latent Regularization
-        mu = self.z_mean(h)
-        logvar = self.z_logvar(h)
+        for conv, bn in zip(self.encoder_layers, self.encoder_bns):
+            x = self.dropout(F.relu(bn(conv(x, edge_index))))
+        mu = self.z_mean(x)
+        logvar = self.z_logvar(x)
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
-        z = mu + eps * std  # Reparameterization trick
-        # KL divergence loss (mean over all nodes)
+        z = mu + eps * std
         kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
         return z, kl_loss
 
     def decode_node(self, z, edge_index):
-        """Decode latent representation back to node features.
-        
-        Args:
-            z (torch.Tensor): Latent node embeddings with shape [num_nodes, latent_dim].
-            edge_index (torch.Tensor): Edge indices with shape [2, num_edges].
-            
-        Returns:
-            tuple: (continuous_output, canid_logits) for node feature reconstruction and CAN ID classification.
-        """
-        x1 = self.dropout(F.relu(self.dbn1(self.dec1(z, edge_index))))
-        x2 = self.dropout(F.relu(self.dbn2(self.dec2(x1, edge_index))))
-        cont_out = torch.sigmoid(self.dec3(x2, edge_index))  # shape: [num_nodes, in_channels-1]
-        canid_logits = self.canid_classifier(x2)  # shape: [num_nodes, num_ids]
+        x = z
+        for i, conv in enumerate(self.decoder_layers):
+            if i < len(self.decoder_layers) - 1:
+                x = self.dropout(F.relu(self.decoder_bns[i](conv(x, edge_index))))
+            else:
+                x = torch.sigmoid(conv(x, edge_index))
+        cont_out = x  # shape: [num_nodes, in_channels-1]
+        canid_logits = self.canid_classifier(x if len(self.decoder_layers) == 1 else self.decoder_bns[-1](x))
         return cont_out, canid_logits
     
     def decode_neighborhood(self, z):
