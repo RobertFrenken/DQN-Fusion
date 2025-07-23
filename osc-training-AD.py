@@ -13,7 +13,7 @@ from sklearn.metrics import confusion_matrix
 import random
 
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
-from preprocessing import graph_creation, build_id_mapping_from_normal, build_all_id_mapping
+from preprocessing import graph_creation, build_id_mapping_from_normal
 from torch_geometric.data import Batch
 
 from plotting_utils import (

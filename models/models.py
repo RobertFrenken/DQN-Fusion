@@ -156,7 +156,7 @@ class GraphAutoencoderNeighborhood(nn.Module):
             in_dim = out_dim * heads if i < num_decoder_layers - 1 else out_dim
 
          # CAN ID classifier head
-        self.canid_classifier = nn.Linear(hidden_dim * decoder_heads if num_decoder_layers > 1 else latent_dim, num_ids)
+        self.canid_classifier = nn.Linear(latent_dim, num_ids)
 
         # Neighborhood decoder
         self.neighborhood_decoder = nn.Sequential(
@@ -188,13 +188,15 @@ class GraphAutoencoderNeighborhood(nn.Module):
 
     def decode_node(self, z, edge_index):
         x = z
+        hidden_rep = None
         for i, conv in enumerate(self.decoder_layers):
             if i < len(self.decoder_layers) - 1:
                 x = self.dropout(F.relu(self.decoder_bns[i](conv(x, edge_index))))
             else:
                 x = torch.sigmoid(conv(x, edge_index))
         cont_out = x  # shape: [num_nodes, in_channels-1]
-        canid_logits = self.canid_classifier(x if len(self.decoder_layers) == 1 else self.decoder_bns[-1](x))
+        canid_logits = self.canid_classifier(z)
+
         return cont_out, canid_logits
     
     def decode_neighborhood(self, z):
