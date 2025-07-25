@@ -11,6 +11,61 @@ import random
 import matplotlib.pyplot as plt
 from sklearn.manifold import TSNE
 
+def plot_fusion_score_distributions(anomaly_scores, gat_probs, labels, 
+                                   save_path="images/fusion_score_distributions.png"):
+    """Plot distributions of anomaly and GAT scores by class."""
+    import matplotlib.pyplot as plt
+    import numpy as np
+    
+    fig, axes = plt.subplots(2, 2, figsize=(12, 10))
+    
+    normal_mask = labels == 0
+    attack_mask = labels == 1
+    
+    # Anomaly scores
+    axes[0,0].hist(anomaly_scores[normal_mask], bins=30, alpha=0.7, label='Normal', color='blue', density=True)
+    axes[0,0].hist(anomaly_scores[attack_mask], bins=30, alpha=0.7, label='Attack', color='red', density=True)
+    axes[0,0].set_title('Anomaly Detection Scores')
+    axes[0,0].set_xlabel('Anomaly Score')
+    axes[0,0].set_ylabel('Density')
+    axes[0,0].legend()
+    axes[0,0].grid(True, alpha=0.3)
+    
+    # GAT probabilities
+    axes[0,1].hist(gat_probs[normal_mask], bins=30, alpha=0.7, label='Normal', color='blue', density=True)
+    axes[0,1].hist(gat_probs[attack_mask], bins=30, alpha=0.7, label='Attack', color='red', density=True)
+    axes[0,1].set_title('GAT Classification Probabilities')
+    axes[0,1].set_xlabel('GAT Probability')
+    axes[0,1].set_ylabel('Density')
+    axes[0,1].legend()
+    axes[0,1].grid(True, alpha=0.3)
+    
+    # Weighted fusion (α=0.6)
+    fused_weighted = 0.6 * anomaly_scores + 0.4 * gat_probs
+    axes[1,0].hist(fused_weighted[normal_mask], bins=30, alpha=0.7, label='Normal', color='blue', density=True)
+    axes[1,0].hist(fused_weighted[attack_mask], bins=30, alpha=0.7, label='Attack', color='red', density=True)
+    axes[1,0].set_title('Weighted Fusion (α=0.6)')
+    axes[1,0].set_xlabel('Fused Score')
+    axes[1,0].set_ylabel('Density')
+    axes[1,0].legend()
+    axes[1,0].grid(True, alpha=0.3)
+    
+    # Product fusion
+    fused_product = (anomaly_scores * gat_probs) ** 0.5
+    axes[1,1].hist(fused_product[normal_mask], bins=30, alpha=0.7, label='Normal', color='blue', density=True)
+    axes[1,1].hist(fused_product[attack_mask], bins=30, alpha=0.7, label='Attack', color='red', density=True)
+    axes[1,1].set_title('Product Fusion')
+    axes[1,1].set_xlabel('Fused Score')
+    axes[1,1].set_ylabel('Density')
+    axes[1,1].legend()
+    axes[1,1].grid(True, alpha=0.3)
+    
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches='tight')
+    plt.close()
+    
+    print(f"Saved fusion score distributions as '{save_path}'")
 
 def plot_raw_error_components_with_composite(node_errors_normal, node_errors_attack,
                                            neighbor_errors_normal, neighbor_errors_attack,

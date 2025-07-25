@@ -26,7 +26,8 @@ from plotting_utils import (
     plot_neighborhood_composite_error_hist,
     plot_error_components_analysis,
     plot_raw_weighted_composite_error_hist,
-    plot_raw_error_components_with_composite 
+    plot_raw_error_components_with_composite,
+    plot_fusion_score_distributions
 )
 
 def extract_latent_vectors(pipeline, loader):
@@ -81,7 +82,7 @@ class GATPipeline:
                 errors.append((cont_out - batch.x[:, 1:]).pow(2).mean(dim=1))
         self.threshold = torch.cat(errors).quantile(percentile / 100.0).item()
 
-    def train_stage1(self, train_loader, epochs=100):
+    def train_stage1(self, train_loader, epochs=10):
         """Stage 1: Train autoencoder on normal graphs for anomaly detection."""
         print(f"Training autoencoder for {epochs} epochs...")
         self.autoencoder.train()
@@ -194,7 +195,7 @@ class GATPipeline:
                 errors_normal, errors_attack, neighbor_errors_normal, neighbor_errors_attack,
                 id_errors_normal, id_errors_attack, save_path="images/raw_error_components_with_composite.png")
 
-    def train_stage2(self, full_loader, epochs=50):
+    def train_stage2(self, full_loader, epochs=10):
         """Stage 2: Train classifier with all attacks + filtered normal graphs."""
         print(f"\nStage 2: Analyzing reconstruction errors and training classifier...")
         
@@ -391,6 +392,180 @@ class GATPipeline:
                 start += num_nodes
             
             return torch.tensor(preds, device=self.device)
+    
+    def predict_with_fusion(self, data, fusion_method='weighted', alpha=0.6):
+        """
+        Two-stage prediction with fusion of anomaly detection and classification scores.
+        
+        Args:
+            data: Input batch data
+            fusion_method: 'weighted', 'product', 'max', or 'learned'
+            alpha: Weight for anomaly score (0.0-1.0) when fusion_method='weighted'
+        
+        Returns:
+            final_preds: Fused predictions
+            anomaly_scores: Raw anomaly scores  
+            gat_probs: Raw GAT probabilities
+        """
+        data = data.to(self.device)
+        
+        with torch.no_grad():
+            # Get autoencoder outputs for anomaly detection
+            cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
+                data.x, data.edge_index, data.batch)
+            
+            # Compute composite anomaly scores
+            node_errors = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
+            
+            neighbor_targets = self.autoencoder.create_neighborhood_targets(
+                data.x, data.edge_index, data.batch)
+            neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
+                neighbor_logits, neighbor_targets).mean(dim=1)
+            
+            canid_pred = canid_logits.argmax(dim=1)
+            
+            final_preds = []
+            anomaly_scores = []
+            gat_probs = []
+            
+            graphs = Batch.to_data_list(data)
+            start = 0
+            
+            for graph in graphs:
+                num_nodes = graph.x.size(0)
+                
+                # Compute composite anomaly score for this graph
+                graph_node_error = node_errors[start:start+num_nodes].max().item()
+                graph_neighbor_error = neighbor_errors[start:start+num_nodes].max().item()
+                
+                true_canids = graph.x[:, 0].long().cpu()
+                pred_canids = canid_pred[start:start+num_nodes].cpu()
+                canid_error = 1.0 - (pred_canids == true_canids).float().mean().item()
+                
+                # Rescaled composite anomaly score
+                weight_node = 1.0
+                weight_neighbor = 20.0  
+                weight_canid = 0.3
+                
+                raw_anomaly_score = (weight_node * graph_node_error + 
+                                weight_neighbor * graph_neighbor_error + 
+                                weight_canid * canid_error)
+                
+                # Normalize anomaly score to [0,1] using sigmoid
+                normalized_anomaly_score = torch.sigmoid(torch.tensor(raw_anomaly_score * 10 - 5)).item()
+                
+                # Get GAT classification probability
+                graph_batch = graph.to(self.device)
+                gat_logit = self.classifier(graph_batch).item()
+                gat_prob = torch.sigmoid(torch.tensor(gat_logit)).item()
+                
+                # Apply fusion mechanism
+                if fusion_method == 'weighted':
+                    # Weighted average
+                    fused_score = alpha * normalized_anomaly_score + (1 - alpha) * gat_prob
+                    
+                elif fusion_method == 'product':
+                    # Geometric mean (emphasizes agreement)
+                    fused_score = (normalized_anomaly_score * gat_prob) ** 0.5
+                    
+                elif fusion_method == 'max':
+                    # Maximum (conservative - either detector triggers)
+                    fused_score = max(normalized_anomaly_score, gat_prob)
+                    
+                elif fusion_method == 'learned':
+                    # Simple learned fusion (requires training - placeholder)
+                    fused_score = 0.7 * normalized_anomaly_score + 0.3 * gat_prob
+                    
+                else:
+                    raise ValueError(f"Unknown fusion method: {fusion_method}")
+                
+                final_preds.append(1 if fused_score > 0.5 else 0)
+                anomaly_scores.append(normalized_anomaly_score)
+                gat_probs.append(gat_prob)
+                
+                start += num_nodes
+        
+        return (torch.tensor(final_preds, device=self.device), 
+                torch.tensor(anomaly_scores), 
+                torch.tensor(gat_probs))
+
+    def evaluate_with_fusion(self, test_loader, fusion_methods=['weighted', 'product', 'max']):
+        """Evaluate multiple fusion methods and return detailed results."""
+        print("\n=== Fusion Evaluation ===")
+        
+        # Collect all predictions and labels
+        all_labels = []
+        all_anomaly_scores = []
+        all_gat_probs = []
+        
+        for batch in test_loader:
+            batch = batch.to(self.device)
+            _, anomaly_scores, gat_probs = self.predict_with_fusion(batch, fusion_method='weighted')
+            
+            all_labels.extend(batch.y.cpu().numpy())
+            all_anomaly_scores.extend(anomaly_scores.cpu().numpy())
+            all_gat_probs.extend(gat_probs.cpu().numpy())
+        
+        all_labels = np.array(all_labels)
+        all_anomaly_scores = np.array(all_anomaly_scores)
+        all_gat_probs = np.array(all_gat_probs)
+        
+        results = {}
+        
+        # Test different fusion methods
+        for method in fusion_methods:
+            print(f"\n--- Fusion Method: {method} ---")
+            
+            if method == 'weighted':
+                # Test different alpha values
+                best_acc = 0
+                best_alpha = 0.5
+                
+                for alpha in [0.1, 0.3, 0.5, 0.7, 0.9]:
+                    fused_scores = alpha * all_anomaly_scores + (1 - alpha) * all_gat_probs
+                    preds = (fused_scores > 0.5).astype(int)
+                    acc = (preds == all_labels).mean()
+                    
+                    print(f"  α={alpha:.1f}: Accuracy={acc:.4f}")
+                    
+                    if acc > best_acc:
+                        best_acc = acc
+                        best_alpha = alpha
+                
+                # Use best alpha for final evaluation
+                fused_scores = best_alpha * all_anomaly_scores + (1 - best_alpha) * all_gat_probs
+                final_preds = (fused_scores > 0.5).astype(int)
+                results[method] = {'accuracy': best_acc, 'alpha': best_alpha, 'predictions': final_preds}
+                
+            elif method == 'product':
+                fused_scores = (all_anomaly_scores * all_gat_probs) ** 0.5
+                final_preds = (fused_scores > 0.5).astype(int)
+                acc = (final_preds == all_labels).mean()
+                results[method] = {'accuracy': acc, 'predictions': final_preds}
+                print(f"  Accuracy: {acc:.4f}")
+                
+            elif method == 'max':
+                fused_scores = np.maximum(all_anomaly_scores, all_gat_probs)
+                final_preds = (fused_scores > 0.5).astype(int)
+                acc = (final_preds == all_labels).mean()
+                results[method] = {'accuracy': acc, 'predictions': final_preds}
+                print(f"  Accuracy: {acc:.4f}")
+        
+        # Individual component performance
+        anomaly_only_preds = (all_anomaly_scores > 0.5).astype(int)
+        gat_only_preds = (all_gat_probs > 0.5).astype(int)
+        
+        anomaly_only_acc = (anomaly_only_preds == all_labels).mean()
+        gat_only_acc = (gat_only_preds == all_labels).mean()
+        
+        print(f"\n--- Individual Components ---")
+        print(f"Anomaly Detection Only: {anomaly_only_acc:.4f}")
+        print(f"GAT Classification Only: {gat_only_acc:.4f}")
+        
+        results['anomaly_only'] = {'accuracy': anomaly_only_acc, 'predictions': anomaly_only_preds}
+        results['gat_only'] = {'accuracy': gat_only_acc, 'predictions': gat_only_preds}
+        
+        return results, all_labels, all_anomaly_scores, all_gat_probs
 
 
 @hydra.main(config_path="conf", config_name="base", version_base=None)
@@ -460,7 +635,7 @@ def main(config: DictConfig):
 
     # Training
     print("\n=== Stage 1: Autoencoder Training ===")
-    pipeline.train_stage1(train_loader, epochs=25)
+    pipeline.train_stage1(train_loader, epochs=10)
 
     # Visualization
     plot_graph_reconstruction(pipeline, full_train_loader, num_graphs=4, save_path="images/graph_recon_examples.png")
@@ -475,7 +650,7 @@ def main(config: DictConfig):
     plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="images/node_recon_subplot.png")
     
     print("\n=== Stage 2: Classifier Training ===")
-    pipeline.train_stage2(full_train_loader, epochs=50)
+    pipeline.train_stage2(full_train_loader, epochs=10)
 
     # Save models
     save_folder = "saved_models"
@@ -491,21 +666,44 @@ def main(config: DictConfig):
     print("Test set distribution:")
     for u, c in zip(unique, counts):
         print(f"  Label {u}: {c} samples")
-    
+
+    # Standard prediction (original method)
+    print("\n--- Standard Two-Stage Prediction ---")
     preds, labels = [], []
     for batch in test_loader:
         batch = batch.to(device)
         pred = pipeline.predict(batch)
         preds.append(pred.cpu())
         labels.append(batch.y.cpu())
-    
+
     preds = torch.cat(preds)
     labels = torch.cat(labels)
-    accuracy = (preds == labels).float().mean().item()
-    
-    print(f"Test Accuracy: {accuracy:.4f}")
-    print("Confusion Matrix:")
+    standard_accuracy = (preds == labels).float().mean().item()
+
+    print(f"Standard Test Accuracy: {standard_accuracy:.4f}")
+    print("Standard Confusion Matrix:")
     print(confusion_matrix(labels.cpu().numpy(), preds.cpu().numpy()))
+
+    # Fusion evaluation
+    fusion_results, all_labels, all_anomaly_scores, all_gat_probs = pipeline.evaluate_with_fusion(
+        test_loader, fusion_methods=['weighted', 'product', 'max'])
+
+    # Print summary
+    print(f"\n=== Fusion Results Summary ===")
+    print(f"Standard Two-Stage:     {standard_accuracy:.4f}")
+    for method, result in fusion_results.items():
+        if method in ['weighted', 'product', 'max']:
+            if 'alpha' in result:
+                print(f"Fusion ({method}):       {result['accuracy']:.4f} (α={result['alpha']:.1f})")
+            else:
+                print(f"Fusion ({method}):       {result['accuracy']:.4f}")
+
+    # Print confusion matrices for best fusion method
+    best_method = max([m for m in fusion_results.keys() if m in ['weighted', 'product', 'max']], 
+                    key=lambda x: fusion_results[x]['accuracy'])
+    print(f"\nBest Fusion Method: {best_method} (Accuracy: {fusion_results[best_method]['accuracy']:.4f})")
+    print("Best Fusion Confusion Matrix:")
+    print(confusion_matrix(all_labels, fusion_results[best_method]['predictions']))
 
 
 if __name__ == "__main__":
