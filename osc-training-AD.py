@@ -217,55 +217,59 @@ class GATPipeline:
 
     def _compute_composite_reconstruction_errors(self, loader):
         """Compute composite reconstruction errors for filtering normal graphs."""
-        graph_data = []  # Store (graph, composite_error, is_attack)
+        print("Computing composite errors...")
+    
+        all_graphs = []
+        all_composite_errors = []
+        all_is_attack = []
         
         with torch.no_grad():
             for batch in loader:
                 batch = batch.to(self.device)
+                
+                # Single forward pass for entire batch
                 cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
                     batch.x, batch.edge_index, batch.batch)
                 
-                # Node reconstruction errors
+                # Vectorized error computation
                 node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
                 
-                # Neighborhood reconstruction errors
                 neighbor_targets = self.autoencoder.create_neighborhood_targets(
                     batch.x, batch.edge_index, batch.batch)
                 neighbor_recon_errors = nn.BCEWithLogitsLoss(reduction='none')(
                     neighbor_logits, neighbor_targets).mean(dim=1)
                 
-                # CAN ID prediction errors
                 canid_pred = canid_logits.argmax(dim=1)
                 
-                # Process each graph in batch
+                # Vectorized processing of graphs in batch
                 graphs = Batch.to_data_list(batch)
                 start = 0
+                
                 for graph in graphs:
                     num_nodes = graph.x.size(0)
                     is_attack = int(graph.y.flatten()[0]) == 1
                     
-                    # Extract errors for this graph
+                    # Vectorized max operations
                     graph_node_error = node_errors[start:start+num_nodes].max().item()
                     graph_neighbor_error = neighbor_recon_errors[start:start+num_nodes].max().item()
                     
-                    true_canids = graph.x[:, 0].long().cpu()
-                    pred_canids = canid_pred[start:start+num_nodes].cpu()
+                    # Vectorized CAN ID accuracy
+                    true_canids = graph.x[:, 0].long()
+                    pred_canids = canid_pred[start:start+num_nodes]
                     canid_error = 1.0 - (pred_canids == true_canids).float().mean().item()
                     
-                    # Compute composite error (rescaled raw values)
-                    weight_node = 1.0       # Base scale
-                    weight_neighbor = 20.0  # Scale up neighborhood errors
-                    weight_canid = 0.3      # Scale down CAN ID errors
+                    # Composite error (same weights)
+                    composite_error = (1.0 * graph_node_error + 
+                                    20.0 * graph_neighbor_error + 
+                                    0.3 * canid_error)
                     
-                    composite_error = (weight_node * graph_node_error + 
-                                    weight_neighbor * graph_neighbor_error + 
-                                    weight_canid * canid_error)
-                    
-                    # Store graph with its composite error
-                    graph_data.append((graph.cpu(), composite_error, is_attack))
+                    all_graphs.append(graph.cpu())
+                    all_composite_errors.append(composite_error)
+                    all_is_attack.append(is_attack)
                     start += num_nodes
         
-        return graph_data
+        # Return as list of tuples (same format as original)
+        return list(zip(all_graphs, all_composite_errors, all_is_attack))
 
     def _create_balanced_dataset_with_composite_filtering(self, loader):
         """Create balanced dataset using all attacks + filtered normal graphs."""
