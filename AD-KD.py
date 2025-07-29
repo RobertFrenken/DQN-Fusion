@@ -535,6 +535,7 @@ def main(config: DictConfig):
     DATASIZE = config_dict['datasize']
     TRAIN_RATIO = config_dict['train_ratio']
     BATCH_SIZE = min(config_dict['batch_size'] * 2, 64)  # Increase for better GPU utilization
+    EPOCHS = config_dict['epochs']
     
     # Train/test split
     train_size = int(TRAIN_RATIO * len(dataset))
@@ -557,22 +558,22 @@ def main(config: DictConfig):
         normal_subset, 
         batch_size=BATCH_SIZE, 
         shuffle=True,
-        pin_memory=torch.cuda.is_available(),
-        num_workers=4 if torch.cuda.is_available() else 0
+        # pin_memory=torch.cuda.is_available(),
+        # num_workers=4 if torch.cuda.is_available() else 0
     )
     test_loader = DataLoader(
         test_dataset, 
         batch_size=BATCH_SIZE, 
         shuffle=False,
-        pin_memory=torch.cuda.is_available(),
-        num_workers=4 if torch.cuda.is_available() else 0
+        # pin_memory=torch.cuda.is_available(),
+        # num_workers=4 if torch.cuda.is_available() else 0
     )
     full_train_loader = DataLoader(
         train_dataset, 
         batch_size=BATCH_SIZE, 
         shuffle=True,
-        pin_memory=torch.cuda.is_available(),
-        num_workers=4 if torch.cuda.is_available() else 0
+        # pin_memory=torch.cuda.is_available(),
+        # num_workers=4 if torch.cuda.is_available() else 0
     )
     
     # Create teacher and student models
@@ -602,10 +603,10 @@ def main(config: DictConfig):
     
     # Knowledge distillation training
     print("\n=== Stage 1: Autoencoder Knowledge Distillation ===")
-    kd_pipeline.distill_autoencoder(train_loader, epochs=5, alpha=0.5, temperature=5.0)
+    kd_pipeline.distill_autoencoder(train_loader, epochs=EPOCHS, alpha=0.5, temperature=5.0)
     
     print("\n=== Stage 2: Classifier Knowledge Distillation ===")
-    kd_pipeline.distill_classifier(full_train_loader, epochs=5, alpha=0.7, temperature=5.0)
+    kd_pipeline.distill_classifier(full_train_loader, epochs=EPOCHS, alpha=0.7, temperature=5.0)
     
     # Save student models
     save_folder = "saved_models"
