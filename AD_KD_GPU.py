@@ -17,27 +17,6 @@ from preprocessing import graph_creation, build_id_mapping_from_normal
 from training_utils import DistillationTrainer, distillation_loss_fn, FocalLoss
 from torch_geometric.data import Batch, Data
 
-def extract_latent_vectors(pipeline, loader):
-    """Extract latent vectors (graph embeddings) and labels from a data loader."""
-    pipeline.autoencoder.eval()
-    zs, labels = [], []
-    
-    with torch.no_grad():
-        for batch in loader:
-            batch = batch.to(pipeline.device)
-            _, _, _, z, _ = pipeline.autoencoder(batch.x, batch.edge_index, batch.batch)
-            
-            graphs = Batch.to_data_list(batch)
-            start = 0
-            for graph in graphs:
-                n = graph.x.size(0)
-                z_graph = z[start:start+n].mean(dim=0).cpu().numpy()
-                zs.append(z_graph)
-                labels.append(int(graph.y.flatten()[0]))
-                start += n
-                
-    return np.array(zs), np.array(labels)
-
 def create_teacher_student_models(num_ids, embedding_dim, device):
     """Create teacher (large) and student (small) models."""
     
@@ -89,12 +68,82 @@ def create_teacher_student_models(num_ids, embedding_dim, device):
     
     return teacher_autoencoder, teacher_classifier, student_autoencoder, student_classifier
 
+def create_data_loaders(train_subset, test_dataset, full_train_dataset, batch_size, device):
+    """Create optimized data loaders based on device type."""
+    
+    # Adaptive batch size based on dataset size
+    dataset_size = len(train_subset) + len(test_dataset)
+    
+    if torch.cuda.is_available() and device.type == 'cuda':
+        # GPU optimizations with dataset-aware batch sizing
+        if dataset_size > 300000:  # Very large dataset (like hcrl_ch/set_03)
+            batch_size = min(batch_size, 64)   # Very small batches for huge datasets
+            pin_memory = True
+            num_workers = 1
+            persistent_workers = False
+            prefetch_factor = 1
+            print(f"Very large dataset detected: Using GPU batch_size={batch_size}, workers={num_workers}")
+        elif dataset_size > 100000:  # Large dataset
+            batch_size = min(batch_size, 128)  # Small batches for large datasets
+            pin_memory = True
+            num_workers = 1
+            persistent_workers = False
+            prefetch_factor = 2
+            print(f"Large dataset detected: Using GPU batch_size={batch_size}, workers={num_workers}")
+        else:  # Standard dataset
+            batch_size = min(batch_size, 512)  # Normal batches for smaller datasets
+            pin_memory = True
+            num_workers = 2
+            persistent_workers = True
+            prefetch_factor = 2
+            print(f"Standard dataset: Using GPU batch_size={batch_size}, workers={num_workers}")
+    else:
+        # CPU optimizations
+        pin_memory = False
+        num_workers = 0
+        persistent_workers = False
+        prefetch_factor = None
+        print("Using CPU-optimized data loaders")
+    
+    train_loader = DataLoader(
+        train_subset, 
+        batch_size=batch_size, 
+        shuffle=True,
+        pin_memory=pin_memory,
+        num_workers=num_workers,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor
+    )
+    
+    test_loader = DataLoader(
+        test_dataset, 
+        batch_size=batch_size, 
+        shuffle=False,
+        pin_memory=pin_memory,
+        num_workers=num_workers,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor
+    )
+    
+    full_train_loader = DataLoader(
+        full_train_dataset, 
+        batch_size=batch_size, 
+        shuffle=True,
+        pin_memory=pin_memory,
+        num_workers=num_workers,
+        persistent_workers=persistent_workers,
+        prefetch_factor=prefetch_factor
+    )
+    
+    return train_loader, test_loader, full_train_loader
+
 class KnowledgeDistillationPipeline:
-    """GPU-optimized knowledge distillation pipeline for CAN bus anomaly detection."""
+    """Adaptive knowledge distillation pipeline for CAN bus anomaly detection."""
     
     def __init__(self, teacher_autoencoder, teacher_classifier, 
                  student_autoencoder, student_classifier, device='cpu'):
         self.device = device
+        self.is_cuda = torch.cuda.is_available() and device.type == 'cuda'
         
         # Teacher models (pre-trained)
         self.teacher_autoencoder = teacher_autoencoder.to(device)
@@ -115,6 +164,8 @@ class KnowledgeDistillationPipeline:
             param.requires_grad = False
             
         self.threshold = 0.0
+        
+        print(f"Initialized KD Pipeline on {device} (CUDA: {self.is_cuda})")
 
     def load_teacher_models(self, autoencoder_path, classifier_path):
         """Load pre-trained teacher models with proper checkpoint handling."""
@@ -170,8 +221,8 @@ class KnowledgeDistillationPipeline:
         print("Teacher models loaded and set to evaluation mode!")
 
     def distill_autoencoder(self, train_loader, epochs=20, alpha=0.5, temperature=5.0):
-        """Memory and compute optimized autoencoder distillation."""
-        print(f"Distilling autoencoder for {epochs} epochs...")
+        """Adaptive autoencoder distillation for CPU/GPU."""
+        print(f"Distilling autoencoder for {epochs} epochs on {self.device}...")
         
         self.student_autoencoder.train()
         optimizer = torch.optim.Adam(self.student_autoencoder.parameters(), lr=1e-3, weight_decay=1e-4)
@@ -187,65 +238,40 @@ class KnowledgeDistillationPipeline:
         else:
             projection_layer = None
         
-        # Mixed precision for better GPU utilization
-        scaler = torch.cuda.amp.GradScaler() if torch.cuda.is_available() else None
+        # Mixed precision only for CUDA
+        scaler = torch.cuda.amp.GradScaler() if self.is_cuda else None
+        if scaler:
+            print("Using mixed precision training")
         
         for epoch in range(epochs):
             epoch_loss = 0.0
             num_batches = 0
             
             for batch_idx, batch in enumerate(train_loader):
-                batch = batch.to(self.device, non_blocking=True)
+                # Adaptive data transfer
+                if self.is_cuda:
+                    batch = batch.to(self.device, non_blocking=True)
+                else:
+                    batch = batch.to(self.device)
                 
-                # Use mixed precision
-                with torch.cuda.amp.autocast() if torch.cuda.is_available() else torch.no_grad():
-                    # Teacher forward pass
-                    with torch.no_grad():
-                        teacher_cont_out, teacher_canid_logits, teacher_neighbor_logits, teacher_z, _ = \
-                            self.teacher_autoencoder(batch.x, batch.edge_index, batch.batch)
-                    
-                    # Student forward pass
-                    student_cont_out, student_canid_logits, student_neighbor_logits, student_z, student_kl_loss = \
-                        self.student_autoencoder(batch.x, batch.edge_index, batch.batch)
-                    
-                    # Compute losses incrementally to save memory
-                    total_loss = torch.tensor(0.0, device=self.device, requires_grad=True)
-                    
-                    # Reconstruction losses
-                    cont_loss = nn.MSELoss()(student_cont_out, batch.x[:, 1:])
-                    total_loss = total_loss + (1 - alpha) * cont_loss
-                    
-                    canid_loss = nn.CrossEntropyLoss()(student_canid_logits, batch.x[:, 0].long())
-                    total_loss = total_loss + (1 - alpha) * canid_loss
-                    
-                    neighbor_targets = self.student_autoencoder.create_neighborhood_targets(
-                        batch.x, batch.edge_index, batch.batch)
-                    neighbor_loss = nn.BCEWithLogitsLoss()(student_neighbor_logits, neighbor_targets)
-                    total_loss = total_loss + (1 - alpha) * neighbor_loss + (1 - alpha) * 0.1 * student_kl_loss
-                    
-                    # Knowledge distillation losses
-                    if projection_layer is not None:
-                        student_z_projected = projection_layer(student_z)
-                        feature_distill_loss = nn.MSELoss()(student_z_projected, teacher_z.detach())
-                    else:
-                        feature_distill_loss = nn.MSELoss()(student_z, teacher_z.detach())
-                    total_loss = total_loss + alpha * feature_distill_loss
-                    
-                    cont_distill_loss = nn.MSELoss()(student_cont_out, teacher_cont_out.detach())
-                    total_loss = total_loss + alpha * cont_distill_loss
-                    
-                    canid_distill_loss = distillation_loss_fn(student_canid_logits, teacher_canid_logits.detach(), T=temperature)
-                    total_loss = total_loss + alpha * canid_distill_loss
-                    
-                    neighbor_distill_loss = distillation_loss_fn(student_neighbor_logits, teacher_neighbor_logits.detach(), T=temperature)
-                    total_loss = total_loss + alpha * neighbor_distill_loss
+                # Device-specific forward pass
+                if self.is_cuda:
+                    # GPU path with mixed precision
+                    with torch.cuda.amp.autocast():
+                        total_loss = self._compute_autoencoder_loss(
+                            batch, projection_layer, alpha, temperature)
+                else:
+                    # CPU path without autocast
+                    total_loss = self._compute_autoencoder_loss(
+                        batch, projection_layer, alpha, temperature)
                 
-                # Backward pass with mixed precision
+                # Device-specific backward pass
                 optimizer.zero_grad()
                 if projection_layer is not None:
                     proj_optimizer.zero_grad()
                 
                 if scaler is not None:
+                    # Mixed precision backward pass
                     scaler.scale(total_loss).backward()
                     scaler.unscale_(optimizer)
                     torch.nn.utils.clip_grad_norm_(self.student_autoencoder.parameters(), max_norm=1.0)
@@ -256,6 +282,7 @@ class KnowledgeDistillationPipeline:
                         scaler.step(proj_optimizer)
                     scaler.update()
                 else:
+                    # Standard backward pass
                     total_loss.backward()
                     torch.nn.utils.clip_grad_norm_(self.student_autoencoder.parameters(), max_norm=1.0)
                     if projection_layer is not None:
@@ -267,27 +294,64 @@ class KnowledgeDistillationPipeline:
                 epoch_loss += total_loss.item()
                 num_batches += 1
                 
-                # Aggressive memory management
-                del total_loss, cont_loss, canid_loss, neighbor_loss, feature_distill_loss
-                del cont_distill_loss, canid_distill_loss, neighbor_distill_loss
-                del teacher_cont_out, teacher_canid_logits, teacher_neighbor_logits, teacher_z
-                del student_cont_out, student_canid_logits, student_neighbor_logits, student_z
-                
-                if batch_idx % 20 == 0:
+                # Device-specific memory management
+                if self.is_cuda and batch_idx % 20 == 0:
                     torch.cuda.empty_cache()
+                elif not self.is_cuda and batch_idx % 100 == 0:
+                    # Less frequent cleanup on CPU
+                    pass
             
             if (epoch + 1) % 5 == 0:
                 avg_loss = epoch_loss / num_batches if num_batches > 0 else 0
                 print(f"Autoencoder Distillation Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
             
-            torch.cuda.empty_cache()
+            # Clear cache between epochs
+            if self.is_cuda:
+                torch.cuda.empty_cache()
         
         self._set_threshold_student(train_loader)
         print(f"Set student anomaly threshold: {self.threshold:.4f}")
 
+    def _compute_autoencoder_loss(self, batch, projection_layer, alpha, temperature):
+        """Compute autoencoder distillation loss."""
+        # Teacher forward pass
+        with torch.no_grad():
+            teacher_cont_out, teacher_canid_logits, teacher_neighbor_logits, teacher_z, _ = \
+                self.teacher_autoencoder(batch.x, batch.edge_index, batch.batch)
+        
+        # Student forward pass
+        student_cont_out, student_canid_logits, student_neighbor_logits, student_z, student_kl_loss = \
+            self.student_autoencoder(batch.x, batch.edge_index, batch.batch)
+        
+        # Reconstruction losses
+        cont_loss = nn.MSELoss()(student_cont_out, batch.x[:, 1:])
+        canid_loss = nn.CrossEntropyLoss()(student_canid_logits, batch.x[:, 0].long())
+        
+        neighbor_targets = self.student_autoencoder.create_neighborhood_targets(
+            batch.x, batch.edge_index, batch.batch)
+        neighbor_loss = nn.BCEWithLogitsLoss()(student_neighbor_logits, neighbor_targets)
+        
+        # Knowledge distillation losses
+        if projection_layer is not None:
+            student_z_projected = projection_layer(student_z)
+            feature_distill_loss = nn.MSELoss()(student_z_projected, teacher_z.detach())
+        else:
+            feature_distill_loss = nn.MSELoss()(student_z, teacher_z.detach())
+        
+        cont_distill_loss = nn.MSELoss()(student_cont_out, teacher_cont_out.detach())
+        canid_distill_loss = distillation_loss_fn(student_canid_logits, teacher_canid_logits.detach(), T=temperature)
+        neighbor_distill_loss = distillation_loss_fn(student_neighbor_logits, teacher_neighbor_logits.detach(), T=temperature)
+        
+        # Combine losses properly
+        reconstruction_loss = cont_loss + canid_loss + neighbor_loss + 0.1 * student_kl_loss
+        distillation_loss = feature_distill_loss + cont_distill_loss + canid_distill_loss + neighbor_distill_loss
+        
+        total_loss = (1 - alpha) * reconstruction_loss + alpha * distillation_loss
+        return total_loss
+
     def distill_classifier(self, full_loader, epochs=20, alpha=0.7, temperature=5.0):
-        """GPU-optimized classifier distillation using filtered graphs."""
-        print(f"Distilling classifier for {epochs} epochs...")
+        """Adaptive classifier distillation using filtered graphs."""
+        print(f"Distilling classifier for {epochs} epochs on {self.device}...")
         
         # Create balanced dataset using student autoencoder
         balanced_graphs = self._create_balanced_dataset_student(full_loader)
@@ -310,24 +374,35 @@ class KnowledgeDistillationPipeline:
             use_focal_loss=True
         )
         
-        # Create optimized data loaders
+        # Create device-specific data loaders
+        if self.is_cuda:
+            pin_memory = True
+            num_workers = 2
+            persistent_workers = True
+            prefetch_factor = 2
+        else:
+            pin_memory = False
+            num_workers = 0
+            persistent_workers = False
+            prefetch_factor = None
+        
         balanced_loader = DataLoader(
             balanced_graphs, 
             batch_size=32, 
             shuffle=True,
-            pin_memory=True,
-            num_workers=2,
-            persistent_workers=True,
-            prefetch_factor=2
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor
         )
         test_loader = DataLoader(
             balanced_graphs[:min(100, len(balanced_graphs))], 
             batch_size=32, 
             shuffle=False,
-            pin_memory=True,
-            num_workers=2,
-            persistent_workers=True,
-            prefetch_factor=2
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor
         )
         
         # Train student classifier with knowledge distillation
@@ -338,13 +413,16 @@ class KnowledgeDistillationPipeline:
         errors = []
         with torch.no_grad():
             for batch in train_loader:
-                batch = batch.to(self.device, non_blocking=True)
+                if self.is_cuda:
+                    batch = batch.to(self.device, non_blocking=True)
+                else:
+                    batch = batch.to(self.device)
                 cont_out, _, _, _, _ = self.student_autoencoder(batch.x, batch.edge_index, batch.batch)
                 errors.append((cont_out - batch.x[:, 1:]).pow(2).mean(dim=1))
         self.threshold = torch.cat(errors).quantile(percentile / 100.0).item()
 
     def _create_balanced_dataset_student(self, loader):
-        """Fully vectorized dataset creation to prevent GPU spikes."""
+        """Adaptive dataset creation to prevent memory spikes."""
         print("Computing composite errors using student model...")
         
         all_graphs = []
@@ -354,10 +432,15 @@ class KnowledgeDistillationPipeline:
         # Process in smaller chunks to prevent memory spikes
         chunk_size = 0
         total_batches = len(loader)
+        cache_frequency = 20 if self.is_cuda else 100
         
         with torch.no_grad():
             for batch_idx, batch in enumerate(loader):
-                batch = batch.to(self.device, non_blocking=True)
+                # Adaptive data transfer
+                if self.is_cuda:
+                    batch = batch.to(self.device, non_blocking=True)
+                else:
+                    batch = batch.to(self.device)
                 
                 # Print progress to monitor
                 if batch_idx % 100 == 0:
@@ -421,10 +504,11 @@ class KnowledgeDistillationPipeline:
                 all_composite_errors.extend(batch_composite_errors)
                 all_is_attack.extend(batch_is_attack)
                 
-                # MEMORY MANAGEMENT: Clear GPU cache every 50 batches
+                # Device-specific memory management
                 chunk_size += 1
-                if chunk_size % 50 == 0:
-                    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+                if chunk_size % cache_frequency == 0:
+                    if self.is_cuda:
+                        torch.cuda.empty_cache()
                     print(f"Processed {chunk_size} batches, cleared cache")
                 
                 # DELETE tensors explicitly to prevent accumulation
@@ -432,7 +516,7 @@ class KnowledgeDistillationPipeline:
                 del neighbor_targets, neighbor_recon_errors, canid_pred
                 del graph_node_errors, graph_neighbor_errors, batch
         
-        # Rest of filtering logic remains the same but add progress tracking
+        # Rest of filtering logic
         print("Filtering and balancing dataset...")
         graph_data = list(zip(all_graphs, all_composite_errors, all_is_attack))
         attack_graphs = [(graph, error) for graph, error, is_attack in graph_data if is_attack]
@@ -458,13 +542,17 @@ class KnowledgeDistillationPipeline:
         print(f"Created balanced dataset: {len(selected_normal_graphs)} normal, {num_attacks} attack")
         
         # Final cleanup
-        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+        if self.is_cuda:
+            torch.cuda.empty_cache()
         
         return balanced_graphs
 
     def predict_student(self, data):
-        """Fully vectorized prediction to maintain consistent GPU utilization."""
-        data = data.to(self.device, non_blocking=True)
+        """Adaptive prediction to maintain consistent utilization."""
+        if self.is_cuda:
+            data = data.to(self.device, non_blocking=True)
+        else:
+            data = data.to(self.device)
         
         with torch.no_grad():
             # Single forward pass for entire batch
@@ -480,7 +568,7 @@ class KnowledgeDistillationPipeline:
             anomaly_mask = graph_errors > self.threshold
             preds = torch.zeros(batch_size, device=self.device)
             
-            # OPTIMIZED: Process ALL anomalous graphs as a single batch
+            # Process anomalous graphs
             if anomaly_mask.any():
                 anomaly_indices = torch.nonzero(anomaly_mask).flatten()
                 
@@ -580,7 +668,7 @@ class GATPipeline:
 
 @hydra.main(config_path="conf", config_name="base", version_base=None)
 def main(config: DictConfig):
-    """GPU-optimized knowledge distillation pipeline for CAN bus anomaly detection."""
+    """Adaptive knowledge distillation pipeline for CAN bus anomaly detection."""
     # Setup
     config_dict = OmegaConf.to_container(config, resolve=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -609,13 +697,20 @@ def main(config: DictConfig):
     
     print(f"Dataset: {len(dataset)} graphs, {len(id_mapping)} unique CAN IDs")
     
-    # GPU-optimized configuration
+    # Adaptive configuration based on device
     DATASIZE = config_dict['datasize']
     TRAIN_RATIO = config_dict['train_ratio']
-    BATCH_SIZE = min(config_dict['batch_size'], 512)  # Cap for memory efficiency
-    EPOCHS = config_dict['epochs']
     
-    print(f"Using BATCH_SIZE: {BATCH_SIZE}, EPOCHS: {EPOCHS}")
+    # Adaptive batch size based on device and dataset size
+    if torch.cuda.is_available():
+        BATCH_SIZE = min(config_dict['batch_size'], 512)  # Cap for GPU memory efficiency
+        print(f"GPU detected: Using BATCH_SIZE: {BATCH_SIZE}")
+    else:
+        BATCH_SIZE = min(config_dict['batch_size'], 128)  # Smaller for CPU efficiency
+        print(f"CPU detected: Using BATCH_SIZE: {BATCH_SIZE}")
+    
+    EPOCHS = config_dict['epochs']
+    print(f"Using EPOCHS: {EPOCHS}")
     
     # Train/test split
     train_size = int(TRAIN_RATIO * len(dataset))
@@ -635,33 +730,9 @@ def main(config: DictConfig):
     
     print(f"Using {len(normal_subset)} training samples, {len(test_dataset)} test samples")
     
-    # GPU-optimized data loaders
-    train_loader = DataLoader(
-        normal_subset, 
-        batch_size=BATCH_SIZE, 
-        shuffle=True,
-        pin_memory=True,
-        num_workers=2,
-        persistent_workers=True,
-        prefetch_factor=2
-    )
-    test_loader = DataLoader(
-        test_dataset, 
-        batch_size=BATCH_SIZE, 
-        shuffle=False,
-        pin_memory=True,
-        num_workers=2,
-        persistent_workers=True,
-        prefetch_factor=2
-    )
-    full_train_loader = DataLoader(
-        train_dataset, 
-        batch_size=BATCH_SIZE, 
-        shuffle=True,
-        pin_memory=True,
-        num_workers=2,
-        persistent_workers=True,
-        prefetch_factor=2
+    # Create adaptive data loaders
+    train_loader, test_loader, full_train_loader = create_data_loaders(
+        normal_subset, test_dataset, train_dataset, BATCH_SIZE, device
     )
     
     # Create teacher and student models
@@ -694,7 +765,8 @@ def main(config: DictConfig):
     kd_pipeline.distill_autoencoder(train_loader, epochs=EPOCHS, alpha=0.5, temperature=5.0)
     
     # Clear memory before stage 2
-    torch.cuda.empty_cache() if torch.cuda.is_available() else None
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
     
     print("\n=== Stage 2: Classifier Knowledge Distillation ===")
     kd_pipeline.distill_classifier(full_train_loader, epochs=EPOCHS, alpha=0.7, temperature=5.0)
@@ -708,16 +780,23 @@ def main(config: DictConfig):
                os.path.join(save_folder, f'student_classifier_{KEY}.pth'))
     print(f"Student models saved to '{save_folder}'")
     
-    # Memory-optimized evaluation
+    # Adaptive evaluation
     print("\n=== Evaluation: Student Model Performance ===")
     
     all_student_preds = []
     all_labels = []
     
+    # Adaptive batch processing
+    cache_frequency = 20 if torch.cuda.is_available() else 50
+    
     # Process in optimized batches with memory clearing
     with torch.no_grad():
         for i, batch in enumerate(test_loader):
-            batch = batch.to(device, non_blocking=True)
+            # Adaptive data transfer
+            if torch.cuda.is_available():
+                batch = batch.to(device, non_blocking=True)
+            else:
+                batch = batch.to(device)
             
             # Batch prediction
             student_preds = kd_pipeline.predict_student(batch)
@@ -726,9 +805,10 @@ def main(config: DictConfig):
             all_student_preds.append(student_preds.cpu())
             all_labels.append(labels.cpu())
             
-            # Clear memory every 20 batches
-            if (i + 1) % 20 == 0:
-                torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            # Device-specific memory clearing
+            if (i + 1) % cache_frequency == 0:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
     
     # Concatenate results
     student_preds = torch.cat(all_student_preds)
@@ -749,7 +829,7 @@ def main(config: DictConfig):
     print(f"Student Parameters: {student_params:,}")
     print(f"Compression Ratio: {teacher_params/student_params:.1f}x")
 
-    print("\nKnowledge Distillation Complete!")
+    print(f"\nKnowledge Distillation Complete on {device}!")
 
 if __name__ == "__main__":
     start_time = time.time()

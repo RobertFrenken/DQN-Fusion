@@ -570,7 +570,7 @@ class GATPipeline:
         results['gat_only'] = {'accuracy': gat_only_acc, 'predictions': gat_only_preds}
         
         return results, all_labels, all_anomaly_scores, all_gat_probs
-
+    
 
 @hydra.main(config_path="conf", config_name="base", version_base=None)
 def main(config: DictConfig):
