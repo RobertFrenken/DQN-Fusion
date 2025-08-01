@@ -5,7 +5,188 @@ from torch_geometric.data import Dataset
 from torch_geometric.data import Data
 import os
 import unittest
-from torch_geometric.transforms import VirtualNode
+# Add these imports to the top of preprocessing.py
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
+
+def process_single_file(args):
+    """Process a single CSV file into graphs - for multiprocessing."""
+    csv_file, global_id_mapping, window_size, stride, verbose = args
+    
+    if verbose:
+        print(f"Processing file: {csv_file}")
+    
+    try:
+        # Process this file
+        df = dataset_creation_vectorized(csv_file, id_mapping=global_id_mapping)
+        
+        if df.isnull().values.any():
+            if verbose:
+                print(f"NaN values found in DataFrame from file: {csv_file}")
+            df.fillna(0, inplace=True)
+        
+        # Create graphs from this file
+        graphs = create_graphs_numpy(df, window_size=window_size, stride=stride)
+        
+        if verbose:
+            print(f"Completed {csv_file}: {len(graphs)} graphs")
+        
+        return graphs
+        
+    except Exception as e:
+        print(f"Error processing {csv_file}: {e}")
+        return []
+
+def graph_creation_parallel(root_folder, folder_type='train_', window_size=50, stride=50, 
+                          verbose=False, return_id_mapping=False, id_mapping=None, max_workers=None):
+    """Create graphs from CAN bus data using parallel processing."""
+    
+    # Find all CSV files
+    train_csv_files = []
+    for dirpath, dirnames, filenames in os.walk(root_folder):
+        if folder_type in dirpath.lower():
+            for filename in filenames:
+                if filename.endswith('.csv') and 'suppress' not in filename.lower() and 'masquerade' not in filename.lower():
+                    train_csv_files.append(os.path.join(dirpath, filename))
+    
+    if not train_csv_files:
+        print(f"No CSV files found in {root_folder}")
+        return GraphDataset([])
+    
+    # Build global ID mapping if not provided
+    if id_mapping is None:
+        print("Building ID mapping from all files...")
+        all_dfs = []
+        for csv_file in train_csv_files:
+            df = pd.read_csv(csv_file)
+            df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
+            df.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
+            df['Source'] = df['CAN ID']
+            df['Target'] = df['CAN ID'].shift(-1)
+            all_dfs.append(df)
+        
+        if all_dfs:
+            global_id_mapping = build_id_mapping(pd.concat(all_dfs, ignore_index=True))
+        else:
+            global_id_mapping = {'OOV': 0}
+    else:
+        global_id_mapping = id_mapping
+    
+    # Determine number of workers
+    if max_workers is None:
+        max_workers = mp.cpu_count()
+    
+    print(f"Processing {len(train_csv_files)} files using {max_workers} CPU cores...")
+    print(f"Window size: {window_size}, Stride: {stride}")
+    
+    # Prepare arguments for each file
+    file_args = [(csv_file, global_id_mapping, window_size, stride, verbose) 
+                 for csv_file in train_csv_files]
+    
+    # Process files in parallel
+    combined_list = []
+    
+    with ProcessPoolExecutor(max_workers=max_workers) as executor:
+        # Submit all jobs
+        future_to_file = {executor.submit(process_single_file, args): args[0] 
+                         for args in file_args}
+        
+        # Collect results as they complete
+        for future in as_completed(future_to_file):
+            file_path = future_to_file[future]
+            try:
+                graphs = future.result()
+                combined_list.extend(graphs)
+                if verbose:
+                    print(f"Collected {len(graphs)} graphs from {os.path.basename(file_path)}")
+            except Exception as e:
+                print(f"Error processing {file_path}: {e}")
+    
+    print(f"Total graphs created: {len(combined_list)}")
+    
+    dataset = GraphDataset(combined_list)
+    
+    if return_id_mapping:
+        return dataset, global_id_mapping
+    return dataset
+
+def graph_creation_sequential(root_folder, folder_type='train_', window_size=50, stride=50, 
+                            verbose=False, return_id_mapping=False, id_mapping=None):
+    """Original sequential graph creation."""
+    train_csv_files = []
+    for dirpath, dirnames, filenames in os.walk(root_folder):
+        if folder_type in dirpath.lower():
+            for filename in filenames:
+                if filename.endswith('.csv') and 'suppress' not in filename.lower() and 'masquerade' not in filename.lower():
+                    train_csv_files.append(os.path.join(dirpath, filename))
+    
+    # Build global mapping ONLY if not provided
+    all_dfs = []
+    for csv_file in train_csv_files:
+        df = pd.read_csv(csv_file)
+        df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
+        df.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
+        df['Source'] = df['CAN ID']
+        df['Target'] = df['CAN ID'].shift(-1)
+        all_dfs.append(df)
+    
+    if id_mapping is None:
+        if all_dfs:
+            global_id_mapping = build_id_mapping(pd.concat(all_dfs, ignore_index=True))
+        else:
+            global_id_mapping = {'OOV': 0}
+    else:
+        global_id_mapping = id_mapping
+    
+    combined_list = []
+    
+    for csv_file in train_csv_files:
+        if verbose:
+            print(f"Processing file: {csv_file}")
+        df = dataset_creation_vectorized(csv_file, id_mapping=global_id_mapping)
+        if df.isnull().values.any():
+            if verbose:
+                print(f"NaN values found in DataFrame from file: {csv_file}")
+                print(df[df.isnull().any(axis=1)])
+            df.fillna(0, inplace=True)
+        graphs = create_graphs_numpy(df, window_size=window_size, stride=stride)
+        combined_list.extend(graphs)
+    
+    dataset = GraphDataset(combined_list)
+    if return_id_mapping:
+        return dataset, global_id_mapping
+    return dataset
+
+# REPLACE the original graph_creation function with this unified version:
+def graph_creation(root_folder, folder_type='train_', window_size=50, stride=50, 
+                  verbose=False, return_id_mapping=False, id_mapping=None, parallel=True):
+    """Create graphs from CAN bus data with optional parallel processing.
+    
+    Args:
+        root_folder (str): Path to the root folder containing CSV files.
+        folder_type (str, optional): Type of folder to process. Defaults to 'train_'.
+        window_size (int, optional): Size of sliding window. Defaults to 50.
+        stride (int, optional): Stride for sliding window. Defaults to 50.
+        verbose (bool, optional): Whether to print verbose output. Defaults to False.
+        return_id_mapping (bool, optional): Whether to return ID mapping. Defaults to False.
+        id_mapping (dict, optional): Pre-built ID mapping. Defaults to None.
+        parallel (bool, optional): Whether to use parallel processing. Defaults to True.
+        
+    Returns:
+        GraphDataset or tuple: Dataset of graphs, optionally with ID mapping.
+    """
+    
+    if parallel and mp.cpu_count() > 1:
+        return graph_creation_parallel(
+            root_folder, folder_type, window_size, stride, 
+            verbose, return_id_mapping, id_mapping
+        )
+    else:
+        return graph_creation_sequential(
+            root_folder, folder_type, window_size, stride, 
+            verbose, return_id_mapping, id_mapping
+        )
 
 def build_id_mapping(df):
     """Build a mapping from CAN IDs to indices for embedding, with OOV index.

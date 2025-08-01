@@ -18,9 +18,15 @@ from training_utils import DistillationTrainer, distillation_loss_fn, FocalLoss
 from torch_geometric.data import Batch, Data
 import psutil
 import gc
+import multiprocessing as mp
+from concurrent.futures import ProcessPoolExecutor, as_completed
+from functools import partial
 
 def log_memory_usage(stage=""):
     """Log current memory usage."""
+    cpu_mem = psutil.virtual_memory()
+    print(f"CPU Memory: {cpu_mem.used/1024**3:.1f}GB / {cpu_mem.total/1024**3:.1f}GB ({cpu_mem.percent:.1f}%)")
+    
     if torch.cuda.is_available():
         gpu_memory = torch.cuda.memory_allocated() / 1024**3  # GB
         gpu_cached = torch.cuda.memory_reserved() / 1024**3  # GB
@@ -32,7 +38,7 @@ def log_memory_usage(stage=""):
 def create_teacher_student_models(num_ids, embedding_dim, device):
     """Create teacher (large) and student (small) models."""
     
-    # Teacher models (large, complex)
+    # Teacher models
     teacher_autoencoder = GraphAutoencoderNeighborhood(
         num_ids=num_ids, 
         in_channels=11, 
@@ -55,7 +61,7 @@ def create_teacher_student_models(num_ids, embedding_dim, device):
         embedding_dim=embedding_dim
     ).to(device)
     
-    # Student models (small, efficient)
+    # Student models
     student_autoencoder = GraphAutoencoderNeighborhood(
         num_ids=num_ids, 
         in_channels=11, 
@@ -81,30 +87,39 @@ def create_teacher_student_models(num_ids, embedding_dim, device):
     return teacher_autoencoder, teacher_classifier, student_autoencoder, student_classifier
 
 def create_data_loaders(train_subset, test_dataset, full_train_dataset, batch_size, device):
-    """Create memory-safe data loaders - NO MULTIPROCESSING."""
+    
     
     # Determine dataset size for batch sizing
     dataset_size = len(train_subset) + len(test_dataset)
     
     # ALWAYS use single-threaded loading to prevent OOM
-    pin_memory = False
-    num_workers = 0  # ALWAYS 0 - no multiprocessing
-    persistent_workers = False
-    prefetch_factor = None
+    pin_memory = True if torch.cuda.is_available() else False
+    num_workers = 8
+    prefetch_factor = 4 if num_workers > 0 else None
+    persistent_workers = True if num_workers > 0 else False
+
+    print(f"Creating data loaders with batch size {batch_size} for {dataset_size} total graphs on {device}")
     
-    # Adaptive batch sizing for memory safety
-    if dataset_size > 300000:  # Very large dataset (like hcrl_ch)
-        batch_size = min(batch_size, 1024)   # Very small batches
-        print(f"Very large dataset detected: Using batch_size={batch_size}")
-    elif dataset_size > 100000:  # Large dataset
-        batch_size = min(batch_size, 2048)   # Small batches
-        print(f"Large dataset detected: Using batch_size={batch_size}")
-    else:  # Standard dataset
-        batch_size = min(batch_size, 4096)  # Medium batches
-        print(f"Standard dataset: Using batch_size={batch_size}")
+    '''
+    set_01: 302k graphs    # ~15-20GB in memory
+    set_02: 407k graphs    # ~20-25GB in memory  
+    set_03: 332k graphs    # ~16-20GB in memory
+    set_04: 244k graphs    # ~12-15GB in memory
+    hcrl-ch: 290k graphs   # ~14-18GB in memory
+    hcrl-sa: 18k graphs
+    '''
     
-    print("Using SINGLE-THREADED data loaders (no multiprocessing)")
-    
+    if torch.cuda.is_available():
+        batch_size = 2048
+    else:
+        batch_size = min(batch_size, 1024)
+
+    print(f"Creating data loaders with batch size {batch_size} for "
+          f"{dataset_size} total graphs on {device}")
+    print(f"Creating data loaders with num_workers {num_workers} and "
+          f"prefetch_factor {prefetch_factor} for "
+          f"{dataset_size} total graphs on {device}")
+
     train_loader = DataLoader(
         train_subset, 
         batch_size=batch_size, 
@@ -214,7 +229,11 @@ class KnowledgeDistillationPipeline:
         print(f"Distilling autoencoder for {epochs} epochs on {self.device}...")
         
         self.student_autoencoder.train()
-        optimizer = torch.optim.Adam(self.student_autoencoder.parameters(), lr=1e-3, weight_decay=1e-4)
+        # default: lr=1e-3, weight_decay=1e-4. Doubled both for slightly more aggressive training
+        optimizer = torch.optim.Adam(self.student_autoencoder.parameters(), lr=3e-3, weight_decay=1e-5)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+        optimizer, mode='min', factor=0.7, patience=3, verbose=True
+        )
         
         # Projection layer setup
         teacher_latent_dim = self.teacher_autoencoder.latent_dim
@@ -229,7 +248,7 @@ class KnowledgeDistillationPipeline:
         
         # Mixed precision only for CUDA
         scaler = torch.cuda.amp.GradScaler() if self.is_cuda else None
-        
+
         for epoch in range(epochs):
             epoch_loss = 0.0
             num_batches = 0
@@ -237,8 +256,9 @@ class KnowledgeDistillationPipeline:
             for batch_idx, batch in enumerate(train_loader):
                 batch = batch.to(self.device)
                 
+                # Enable FP16 for all operations. Less memory overhead
                 if self.is_cuda:
-                    with torch.cuda.amp.autocast():
+                    with torch.amp.autocast('cuda', dtype=torch.float16):
                         total_loss = self._compute_autoencoder_loss(
                             batch, projection_layer, alpha, temperature)
                 else:
@@ -275,7 +295,7 @@ class KnowledgeDistillationPipeline:
                 del batch, total_loss
                 
                 # Frequent memory cleanup
-                if batch_idx % 20 == 0:
+                if batch_idx % 10 == 0:
                     gc.collect()
                     if self.is_cuda:
                         torch.cuda.empty_cache()
@@ -299,44 +319,204 @@ class KnowledgeDistillationPipeline:
         with torch.no_grad():
             teacher_cont_out, teacher_canid_logits, teacher_neighbor_logits, teacher_z, _ = \
                 self.teacher_autoencoder(batch.x, batch.edge_index, batch.batch)
+            
+            # Detach and clone to free teacher computation graph immediately
+            teacher_cont_out = teacher_cont_out.detach().clone()
+            teacher_canid_logits = teacher_canid_logits.detach().clone()
+            teacher_neighbor_logits = teacher_neighbor_logits.detach().clone()
+            teacher_z = teacher_z.detach().clone()
         
         # Student forward pass
         student_cont_out, student_canid_logits, student_neighbor_logits, student_z, student_kl_loss = \
             self.student_autoencoder(batch.x, batch.edge_index, batch.batch)
         
-        # Reconstruction losses
+        # Reconstruction losses (compute and delete immediately)
         cont_loss = nn.MSELoss()(student_cont_out, batch.x[:, 1:])
         canid_loss = nn.CrossEntropyLoss()(student_canid_logits, batch.x[:, 0].long())
         
         neighbor_targets = self.student_autoencoder.create_neighborhood_targets(
             batch.x, batch.edge_index, batch.batch)
         neighbor_loss = nn.BCEWithLogitsLoss()(student_neighbor_logits, neighbor_targets)
+        del neighbor_targets  # Immediate cleanup
         
-        # Knowledge distillation losses
+        # Knowledge distillation losses with immediate cleanup
         if projection_layer is not None:
             student_z_projected = projection_layer(student_z)
-            feature_distill_loss = nn.MSELoss()(student_z_projected, teacher_z.detach())
+            feature_distill_loss = nn.MSELoss()(student_z_projected, teacher_z)
+            del student_z_projected, teacher_z
         else:
-            feature_distill_loss = nn.MSELoss()(student_z, teacher_z.detach())
+            feature_distill_loss = nn.MSELoss()(student_z, teacher_z)
+            del teacher_z
         
-        cont_distill_loss = nn.MSELoss()(student_cont_out, teacher_cont_out.detach())
-        canid_distill_loss = distillation_loss_fn(student_canid_logits, teacher_canid_logits.detach(), T=temperature)
-        neighbor_distill_loss = distillation_loss_fn(student_neighbor_logits, teacher_neighbor_logits.detach(), T=temperature)
+        cont_distill_loss = nn.MSELoss()(student_cont_out, teacher_cont_out)
+        del student_cont_out, teacher_cont_out
+        
+        canid_distill_loss = distillation_loss_fn(student_canid_logits, teacher_canid_logits, T=temperature)
+        del student_canid_logits, teacher_canid_logits
+        
+        neighbor_distill_loss = distillation_loss_fn(student_neighbor_logits, teacher_neighbor_logits, T=temperature)
+        del student_neighbor_logits, teacher_neighbor_logits
         
         # Combine losses
         reconstruction_loss = cont_loss + canid_loss + neighbor_loss + 0.1 * student_kl_loss
         distillation_loss = feature_distill_loss + cont_distill_loss + canid_distill_loss + neighbor_distill_loss
         
         total_loss = (1 - alpha) * reconstruction_loss + alpha * distillation_loss
+        
+        # Final cleanup
+        del cont_loss, canid_loss, neighbor_loss, student_kl_loss
+        del feature_distill_loss, cont_distill_loss, canid_distill_loss, neighbor_distill_loss
+        del reconstruction_loss, distillation_loss
+        
+        return total_loss
+    
+    def distill_autoencoder_simple(self, train_loader, epochs=20, alpha=0.7, temperature=5.0):
+        """SIMPLIFIED autoencoder distillation - VGAE latent space + soft labels only."""
+        print(f"SIMPLIFIED autoencoder distillation for {epochs} epochs on {self.device}...")
+        print("Focus: VGAE latent space + reconstruction only (3-4x faster)")
+        
+        self.student_autoencoder.train()
+        # Slightly more aggressive learning rate for simplified training
+        optimizer = torch.optim.Adam(self.student_autoencoder.parameters(), lr=4e-3, weight_decay=1e-5)
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.7, patience=3, verbose=True
+        )
+        
+        # Projection layer setup (same as before)
+        teacher_latent_dim = self.teacher_autoencoder.latent_dim
+        student_latent_dim = self.student_autoencoder.latent_dim
+        
+        if teacher_latent_dim != student_latent_dim:
+            projection_layer = nn.Linear(student_latent_dim, teacher_latent_dim).to(self.device)
+            proj_optimizer = torch.optim.Adam(projection_layer.parameters(), lr=1e-3)
+            print(f"Added projection layer: {student_latent_dim} -> {teacher_latent_dim}")
+        else:
+            projection_layer = None
+        
+        # Mixed precision for CUDA
+        scaler = torch.cuda.amp.GradScaler() if self.is_cuda else None
+
+        for epoch in range(epochs):
+            epoch_loss = 0.0
+            num_batches = 0
+            
+            for batch_idx, batch in enumerate(train_loader):
+                batch = batch.to(self.device)
+                
+                # Enable FP16 for all operations
+                if self.is_cuda:
+                    with torch.amp.autocast('cuda', dtype=torch.float16):
+                        total_loss = self._compute_autoencoder_loss_simple(
+                            batch, projection_layer, alpha, temperature)
+                else:
+                    total_loss = self._compute_autoencoder_loss_simple(
+                        batch, projection_layer, alpha, temperature)
+                
+                optimizer.zero_grad()
+                if projection_layer is not None:
+                    proj_optimizer.zero_grad()
+                
+                if scaler is not None:
+                    scaler.scale(total_loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.student_autoencoder.parameters(), max_norm=1.0)
+                    if projection_layer is not None:
+                        torch.nn.utils.clip_grad_norm_(projection_layer.parameters(), max_norm=1.0)
+                    scaler.step(optimizer)
+                    if projection_layer is not None:
+                        scaler.step(proj_optimizer)
+                    scaler.update()
+                else:
+                    total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.student_autoencoder.parameters(), max_norm=1.0)
+                    if projection_layer is not None:
+                        torch.nn.utils.clip_grad_norm_(projection_layer.parameters(), max_norm=1.0)
+                    optimizer.step()
+                    if projection_layer is not None:
+                        proj_optimizer.step()
+                
+                epoch_loss += total_loss.item()
+                num_batches += 1
+                
+                # Cleanup batch
+                del batch, total_loss
+                
+                # Less frequent cleanup needed due to reduced memory usage
+                if batch_idx % 20 == 0:  # Was 10, now 20
+                    gc.collect()
+                    if self.is_cuda:
+                        torch.cuda.empty_cache()
+            
+            if (epoch + 1) % 5 == 0:
+                avg_loss = epoch_loss / num_batches if num_batches > 0 else 0
+                print(f"SIMPLE Autoencoder Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}")
+                log_memory_usage(f"Simple Epoch {epoch+1}")
+            
+            # Scheduler step
+            scheduler.step(epoch_loss / num_batches if num_batches > 0 else 0)
+            
+            # Major cleanup between epochs
+            gc.collect()
+            if self.is_cuda:
+                torch.cuda.empty_cache()
+        
+        self._set_threshold_student(train_loader)
+        print(f"Set student anomaly threshold: {self.threshold:.4f}")
+
+    def _compute_autoencoder_loss_simple(self, batch, projection_layer, alpha, temperature):
+        """SIMPLIFIED autoencoder loss - only latent space + reconstruction."""
+        
+        # Teacher forward pass - extract only latent representation
+        with torch.no_grad():
+            _, _, _, teacher_z, _ = self.teacher_autoencoder(batch.x, batch.edge_index, batch.batch)
+            teacher_z = teacher_z.detach().clone()
+        
+        # Student forward pass - extract only what we need
+        student_cont_out, _, _, student_z, student_kl_loss = \
+            self.student_autoencoder(batch.x, batch.edge_index, batch.batch)
+        
+        # ONLY 3 loss components instead of 6:
+        
+        # 1. Reconstruction loss (essential for autoencoder functionality)
+        reconstruction_loss = nn.MSELoss()(student_cont_out, batch.x[:, 1:])
+        
+        # 2. Latent space distillation (core VGAE knowledge transfer)
+        if projection_layer is not None:
+            student_z_projected = projection_layer(student_z)
+            latent_distill_loss = nn.MSELoss()(student_z_projected, teacher_z)
+            del student_z_projected
+        else:
+            latent_distill_loss = nn.MSELoss()(student_z, teacher_z)
+        
+        # 3. KL regularization (VGAE structure preservation)
+        kl_regularization = 0.1 * student_kl_loss
+        
+        # Combine losses (simplified)
+        task_loss = reconstruction_loss + kl_regularization
+        knowledge_loss = latent_distill_loss
+        
+        total_loss = (1 - alpha) * task_loss + alpha * knowledge_loss
+        
+        # Cleanup
+        del teacher_z, student_cont_out, student_z, student_kl_loss
+        del reconstruction_loss, latent_distill_loss, kl_regularization
+        del task_loss, knowledge_loss
+        
         return total_loss
 
     def distill_classifier(self, full_loader, epochs=20, alpha=0.7, temperature=5.0):
         """FAST batch-based classifier distillation - NO individual graph processing."""
         print(f"Distilling classifier for {epochs} epochs on {self.device}...")
-        
+    
         self.student_classifier.train()
-        optimizer = torch.optim.Adam(self.student_classifier.parameters(), lr=1e-3)
+        # default: lr=1e-3, weight_decay=1e-4. Doubled both for slightly more aggressive training
+        optimizer = torch.optim.Adam(self.student_classifier.parameters(), lr=2e-3, weight_decay=5e-5)
+        best_loss = float('inf')
+        patience_counter = 0
         
+        # ADD THIS: Mixed precision scaler for CUDA
+        scaler = torch.cuda.amp.GradScaler() if self.is_cuda else None
+
         for epoch in range(epochs):
             epoch_loss = 0.0
             batch_count = 0
@@ -347,32 +527,59 @@ class KnowledgeDistillationPipeline:
                 batch = batch.to(self.device, non_blocking=True)
                 
                 try:
-                    # Teacher predictions on FULL BATCH
+                    # Teacher predictions on FULL BATCH (keep in no_grad)
                     with torch.no_grad():
                         teacher_logits = self.teacher_classifier(batch)
                     
-                    # Student predictions on FULL BATCH
-                    student_logits = self.student_classifier(batch)
+                    # ADD THIS: Wrap student forward and loss computation in autocast
+                    if self.is_cuda:
+                        with torch.amp.autocast('cuda', dtype=torch.float16):
+                            # Student predictions on FULL BATCH
+                            student_logits = self.student_classifier(batch)
+                            
+                            # Distillation loss
+                            distill_loss = nn.KLDivLoss(reduction='batchmean')(
+                                nn.LogSoftmax(dim=-1)(student_logits / temperature),
+                                nn.Softmax(dim=-1)(teacher_logits / temperature)
+                            ) * (temperature ** 2)
+                            
+                            # Task loss
+                            task_loss = nn.BCEWithLogitsLoss()(
+                                student_logits.squeeze(), batch.y.float()
+                            )
+                            
+                            # Combined loss
+                            total_loss = alpha * distill_loss + (1 - alpha) * task_loss
+                    else:
+                        # Fallback for CPU (no mixed precision)
+                        student_logits = self.student_classifier(batch)
+                        
+                        distill_loss = nn.KLDivLoss(reduction='batchmean')(
+                            nn.LogSoftmax(dim=-1)(student_logits / temperature),
+                            nn.Softmax(dim=-1)(teacher_logits / temperature)
+                        ) * (temperature ** 2)
+                        
+                        task_loss = nn.BCEWithLogitsLoss()(
+                            student_logits.squeeze(), batch.y.float()
+                        )
+                        
+                        total_loss = alpha * distill_loss + (1 - alpha) * task_loss
                     
-                    # Distillation loss
-                    distill_loss = nn.KLDivLoss(reduction='batchmean')(
-                        nn.LogSoftmax(dim=-1)(student_logits / temperature),
-                        nn.Softmax(dim=-1)(teacher_logits / temperature)
-                    ) * (temperature ** 2)
-                    
-                    # Task loss
-                    task_loss = nn.BCEWithLogitsLoss()(
-                        student_logits.squeeze(), batch.y.float()
-                    )
-                    
-                    # Combined loss
-                    total_loss = alpha * distill_loss + (1 - alpha) * task_loss
-                    
-                    # Backward pass
+                    # MODIFY THIS: Backward pass with mixed precision
                     optimizer.zero_grad(set_to_none=True)
-                    total_loss.backward()
-                    torch.nn.utils.clip_grad_norm_(self.student_classifier.parameters(), max_norm=1.0)
-                    optimizer.step()
+                    
+                    if scaler is not None:
+                        # Mixed precision backward pass
+                        scaler.scale(total_loss).backward()
+                        scaler.unscale_(optimizer)
+                        torch.nn.utils.clip_grad_norm_(self.student_classifier.parameters(), max_norm=1.0)
+                        scaler.step(optimizer)
+                        scaler.update()
+                    else:
+                        # Standard backward pass
+                        total_loss.backward()
+                        torch.nn.utils.clip_grad_norm_(self.student_classifier.parameters(), max_norm=1.0)
+                        optimizer.step()
                     
                     epoch_loss += total_loss.item()
                     batch_count += 1
@@ -386,20 +593,31 @@ class KnowledgeDistillationPipeline:
                 
                 finally:
                     del batch
-                    # Less frequent cleanup for speed
-                    if batch_idx % 100 == 0:
+                    # MODIFY THIS: More frequent cleanup for FP16
+                    if batch_idx % 25 == 0:  # Changed from 50 to 25
                         gc.collect()
                         if self.is_cuda:
                             torch.cuda.empty_cache()
                 
                 # Progress update
-                if batch_idx % 100 == 0:
+                if batch_idx % 50 == 0:
                     print(f"Epoch {epoch+1}/{epochs}, Batch {batch_idx}/{len(full_loader)}, Processed: {processed_samples}")
-                    if batch_idx % 500 == 0:
+                    if batch_idx % 1000 == 0:
                         log_memory_usage(f"Classifier epoch {epoch+1}")
             
             avg_loss = epoch_loss / max(batch_count, 1)
+            # Early stopping logic
+            if avg_loss < best_loss * 0.999:  # Require 0.1% improvement
+                best_loss = avg_loss
+                patience_counter = 0
+            else:
+                patience_counter += 1
             print(f"Classifier Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}, Batches: {batch_count}, Samples: {processed_samples}")
+
+            # Stop if no meaningful improvement
+            if patience_counter >= 8:
+                print(f"Early stopping: No improvement for {patience_counter} epochs")
+                break
             
             # Major cleanup between epochs
             gc.collect()
@@ -428,96 +646,76 @@ class KnowledgeDistillationPipeline:
         self.threshold = torch.cat(errors).quantile(percentile / 100.0).item()
 
     def predict_student(self, data):
-        """Memory-efficient prediction."""
+        """Fully batch-optimized prediction - NO individual graph processing."""
         data = data.to(self.device)
         
         with torch.no_grad():
-            # Autoencoder pass
+            # Step 1: Batch autoencoder anomaly detection
             cont_out, _, _, _, _ = self.student_autoencoder(data.x, data.edge_index, data.batch)
             node_errors = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
             
-            del cont_out
-            
-            # Graph-level error computation
+            # Step 2: Graph-level error aggregation (fully vectorized)
             batch_size = data.batch.max().item() + 1
             graph_errors = torch.zeros(batch_size, device=self.device)
             graph_errors.scatter_reduce_(0, data.batch, node_errors, reduce='amax')
             
-            del node_errors
-            
-            # Find anomalous graphs
+            # Step 3: Find anomalous graphs
             anomaly_mask = graph_errors > self.threshold
             preds = torch.zeros(batch_size, device=self.device)
             
-            del graph_errors
-            
-            # Process anomalous graphs in small chunks
+            # Step 4: BATCH classify ALL anomalous graphs at once
             if anomaly_mask.any():
+                # Create anomalous subgraph batch efficiently
                 anomaly_indices = torch.nonzero(anomaly_mask).flatten()
-                chunk_size = 16  # Very small chunks
                 
-                for chunk_start in range(0, len(anomaly_indices), chunk_size):
-                    chunk_end = min(chunk_start + chunk_size, len(anomaly_indices))
-                    chunk_indices = anomaly_indices[chunk_start:chunk_end]
+                # Extract ALL anomalous nodes and edges at once
+                anomalous_node_mask = torch.isin(data.batch, anomaly_indices)
+                anomalous_edge_mask = (
+                    torch.isin(data.batch[data.edge_index[0]], anomaly_indices) & 
+                    torch.isin(data.batch[data.edge_index[1]], anomaly_indices)
+                )
+                
+                if anomalous_node_mask.any():
+                    # Create new batch for anomalous graphs only
+                    anomalous_x = data.x[anomalous_node_mask]
                     
-                    subgraph_data_list = []
-                    valid_indices = []
-                    
-                    for idx in chunk_indices:
-                        node_mask = data.batch == idx
-                        edge_mask = (data.batch[data.edge_index[0]] == idx) & (data.batch[data.edge_index[1]] == idx)
+                    if anomalous_edge_mask.any():
+                        # Remap edge indices efficiently
+                        old_to_new = torch.full((data.x.size(0),), -1, dtype=torch.long, device=self.device)
+                        old_to_new[anomalous_node_mask] = torch.arange(anomalous_node_mask.sum(), device=self.device)
                         
-                        if node_mask.sum() > 0:
-                            subgraph_x = data.x[node_mask].clone()
-                            
-                            if edge_mask.sum() > 0:
-                                subgraph_edge_index = data.edge_index[:, edge_mask].clone()
-                                node_mapping = torch.full((data.x.size(0),), -1, dtype=torch.long, device=self.device)
-                                node_mapping[node_mask] = torch.arange(node_mask.sum(), device=self.device)
-                                subgraph_edge_index = node_mapping[subgraph_edge_index]
-                            else:
-                                subgraph_edge_index = torch.empty((2, 0), dtype=torch.long, device=self.device)
-                            
-                            subgraph = Data(x=subgraph_x, edge_index=subgraph_edge_index)
-                            subgraph_data_list.append(subgraph)
-                            valid_indices.append(idx)
+                        anomalous_edge_index = data.edge_index[:, anomalous_edge_mask]
+                        anomalous_edge_index = old_to_new[anomalous_edge_index]
+                    else:
+                        anomalous_edge_index = torch.empty((2, 0), dtype=torch.long, device=self.device)
                     
-                    # Batch classify this chunk
-                    if subgraph_data_list:
-                        try:
-                            batched_anomalous = Batch.from_data_list(subgraph_data_list)
-                            classifier_probs = self.student_classifier(batched_anomalous)
-                            
-                            if classifier_probs.dim() > 1:
-                                classifier_probs = classifier_probs.flatten()
-                            
-                            for i, idx in enumerate(valid_indices):
-                                if i < classifier_probs.size(0):
-                                    preds[idx] = (classifier_probs[i] > 0.5).float()
-                            
-                            del batched_anomalous, classifier_probs
-                            
-                        except Exception as e:
-                            print(f"Chunk classification failed: {e}")
-                            for subgraph, idx in zip(subgraph_data_list, valid_indices):
-                                try:
-                                    prob = self.student_classifier(subgraph)
-                                    preds[idx] = (prob.item() > 0.5)
-                                except:
-                                    preds[idx] = 0
-                        
-                        finally:
-                            del subgraph_data_list, valid_indices
-                            gc.collect()
-                            if self.is_cuda:
-                                torch.cuda.empty_cache()
+                    # Remap batch indices
+                    anomalous_batch = data.batch[anomalous_node_mask]
+                    unique_graphs, anomalous_batch = torch.unique(anomalous_batch, return_inverse=True)
+                    
+                    # SINGLE classifier forward pass for ALL anomalous graphs
+                    anomalous_data = Data(x=anomalous_x, edge_index=anomalous_edge_index, batch=anomalous_batch)
+                    classifier_logits = self.student_classifier(anomalous_data)
+                    classifier_preds = (torch.sigmoid(classifier_logits.squeeze()) > 0.5).float()
+                    
+                    # Map predictions back to original indices
+                    for i, original_idx in enumerate(unique_graphs):
+                        original_pos = (anomaly_indices == original_idx).nonzero().item()
+                        preds[anomaly_indices[original_pos]] = classifier_preds[i]
             
-            del anomaly_mask
             return preds.long()
+
+
 
 @hydra.main(config_path="conf", config_name="base", version_base=None)
 def main(config: DictConfig):
     """Memory-optimized knowledge distillation pipeline."""
+    
+    # CRITICAL: Enable GPU memory optimization FIRST
+    if torch.cuda.is_available():
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:128'
+        torch.cuda.empty_cache()
+        print("Enabled CUDA memory optimization")
     
     # Setup
     config_dict = OmegaConf.to_container(config, resolve=True)
@@ -533,12 +731,18 @@ def main(config: DictConfig):
         'set_03': r"datasets/can-train-and-test-v1.5/set_03",
         'set_04': r"datasets/can-train-and-test-v1.5/set_04",
     }
+    # PARALLEL preprocessing using all CPU cores
+    
     
     # Load data
     KEY = config_dict['root_folder']
     root_folder = root_folders[KEY]
     id_mapping = build_id_mapping_from_normal(root_folder)
+    print(f"Starting preprocessing with {mp.cpu_count()} CPU cores...")
+    start_time = time.time()
     dataset = graph_creation(root_folder, id_mapping=id_mapping, window_size=100)
+    preprocessing_time = time.time() - start_time
+    print(f"Preprocessing completed in {preprocessing_time:.2f} seconds")
     
     # Fix random seeds
     torch.manual_seed(42)
@@ -553,6 +757,8 @@ def main(config: DictConfig):
     TRAIN_RATIO = config_dict['train_ratio']
     BATCH_SIZE = config_dict['batch_size']
     EPOCHS = config_dict['epochs']
+    # NEW: Add simple distillation option
+    USE_SIMPLE_DISTILLATION = config_dict.get('use_simple_distillation', True)  # Default to True
     
     print(f"Config - BATCH_SIZE: {BATCH_SIZE}, EPOCHS: {EPOCHS}")
     
@@ -607,7 +813,14 @@ def main(config: DictConfig):
     
     # Stage 1: Autoencoder distillation
     print("\n=== Stage 1: Autoencoder Knowledge Distillation ===")
-    kd_pipeline.distill_autoencoder(train_loader, epochs=EPOCHS, alpha=0.5, temperature=5.0)
+    if USE_SIMPLE_DISTILLATION:
+        print("\n=== Stage 1: SIMPLIFIED Autoencoder Knowledge Distillation ===")
+        print("Using VGAE latent space + reconstruction only (3-4x speedup expected)")
+        kd_pipeline.distill_autoencoder_simple(train_loader, epochs=EPOCHS, alpha=0.7, temperature=5.0)
+    else:
+        print("\n=== Stage 1: FULL Autoencoder Knowledge Distillation ===")
+        kd_pipeline.distill_autoencoder(train_loader, epochs=EPOCHS, alpha=0.5, temperature=5.0)
+    
     
     log_memory_usage("After autoencoder distillation")
     
@@ -650,7 +863,7 @@ def main(config: DictConfig):
             del student_preds, labels, batch
             
             # Frequent cleanup
-            if (i + 1) % 20 == 0:
+            if (i + 1) % 10 == 0:
                 gc.collect()
                 if torch.cuda.is_available():
                     torch.cuda.empty_cache()

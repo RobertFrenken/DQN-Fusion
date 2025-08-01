@@ -11,7 +11,8 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 from sklearn.metrics import confusion_matrix
 import random
-
+import psutil
+import gc
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
 from preprocessing import graph_creation, build_id_mapping_from_normal
 from torch_geometric.data import Batch
@@ -51,21 +52,475 @@ def extract_latent_vectors(pipeline, loader):
                 
     return np.array(zs), np.array(labels)
 
+def create_optimized_data_loaders(train_subset, test_dataset, full_train_dataset, batch_size, device):
+    """Create optimized data loaders similar to KD pipeline."""
+    
+    # Determine dataset size for batch sizing
+    dataset_size = len(train_subset) if train_subset else 0
+    dataset_size += len(test_dataset) if test_dataset else 0
+    dataset_size += len(full_train_dataset) if full_train_dataset else 0
+    
+    # Optimized worker configuration
+    pin_memory = True if torch.cuda.is_available() else False
+    num_workers = 8
+    prefetch_factor = 4 if num_workers > 0 else None
+    persistent_workers = True if num_workers > 0 else False
 
+    print(f"Creating optimized data loaders with batch size {batch_size} for {dataset_size} total graphs on {device}")
+    
+    '''
+    set_01: 302k graphs    # ~15-20GB in memory
+    set_02: 407k graphs    # ~20-25GB in memory  
+    set_03: 332k graphs    # ~16-20GB in memory
+    set_04: 244k graphs    # ~12-15GB in memory
+    hcrl-ch: 290k graphs   # ~14-18GB in memory
+    hcrl-sa: 18k graphs
+    '''
+    
+    # Aggressive batch sizing for teacher training
+    if torch.cuda.is_available():
+        batch_size = 2048  # Same as KD pipeline
+    else:
+        batch_size = min(batch_size, 1024)
+
+    print(f"Using optimized batch_size={batch_size} with {num_workers} workers")
+    print(f"Memory settings: pin_memory={pin_memory}, prefetch_factor={prefetch_factor}")
+
+    loaders = []
+    
+    if train_subset is not None:
+        train_loader = DataLoader(
+            train_subset, 
+            batch_size=batch_size, 
+            shuffle=True,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor
+        )
+        loaders.append(train_loader)
+    
+    if test_dataset is not None:
+        test_loader = DataLoader(
+            test_dataset, 
+            batch_size=batch_size, 
+            shuffle=False,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor
+        )
+        loaders.append(test_loader)
+    
+    if full_train_dataset is not None:
+        full_train_loader = DataLoader(
+            full_train_dataset, 
+            batch_size=batch_size, 
+            shuffle=True,
+            pin_memory=pin_memory,
+            num_workers=num_workers,
+            persistent_workers=persistent_workers,
+            prefetch_factor=prefetch_factor
+        )
+        loaders.append(full_train_loader)
+    
+    return loaders if len(loaders) > 1 else loaders[0]
+
+# Add memory logging function
+def log_memory_usage(stage=""):
+    """Log current memory usage."""
+    cpu_mem = psutil.virtual_memory()
+    print(f"CPU Memory: {cpu_mem.used/1024**3:.1f}GB / {cpu_mem.total/1024**3:.1f}GB ({cpu_mem.percent:.1f}%)")
+    
+    if torch.cuda.is_available():
+        gpu_memory = torch.cuda.memory_allocated() / 1024**3  # GB
+        gpu_cached = torch.cuda.memory_reserved() / 1024**3  # GB
+        print(f"[{stage}] GPU Memory: {gpu_memory:.2f}GB allocated, {gpu_cached:.2f}GB cached")
+    
+    ram_usage = psutil.virtual_memory().percent
+    print(f"[{stage}] RAM Usage: {ram_usage:.1f}%")
 class GATPipeline:
     """Two-stage pipeline for CAN bus anomaly detection using GAD-NR neighborhood reconstruction."""
     
     def __init__(self, num_ids, embedding_dim=8, device='cpu'):
         """Initialize the pipeline with autoencoder and classifier."""
         self.device = device
+        self.is_cuda = torch.cuda.is_available() and device.type == 'cuda'
+        
         self.autoencoder = GraphAutoencoderNeighborhood(
             num_ids=num_ids, in_channels=11, embedding_dim=embedding_dim
         ).to(device)
+        
         self.classifier = GATWithJK(
             num_ids=num_ids, in_channels=11, hidden_channels=32, 
-            out_channels=1, num_layers=3, heads=8, embedding_dim=embedding_dim
+            out_channels=1, num_layers=5, heads=8, embedding_dim=embedding_dim
         ).to(device)
         self.threshold = 0.0
+        
+        print(f"Initialized GAT Pipeline on {device} (CUDA: {self.is_cuda})")
+
+    def train_stage1(self, train_loader, val_loader=None, epochs=20):  # Increased from 10 to 20
+        """Stage 1: Train autoencoder on normal graphs for anomaly detection."""
+        print(f"Training autoencoder for {epochs} epochs with OPTIMIZED settings...")
+        self.autoencoder.train()
+        
+        # IMPROVED: Better learning rate schedule + weight decay
+        optimizer = torch.optim.Adam(
+            self.autoencoder.parameters(), 
+            lr=2e-3,        # Slightly higher initial LR
+            weight_decay=1e-4  # Add weight decay for regularization
+        )
+        
+        # ADD: Learning rate scheduler
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.7, patience=3, verbose=True
+        )
+        
+        # ADD: Mixed precision training for CUDA
+        scaler = torch.cuda.amp.GradScaler() if self.is_cuda else None
+        
+        best_loss = float('inf')
+        best_model_state = None
+        patience_counter = 0
+        
+        for epoch in range(epochs):
+            self.autoencoder.train()
+            epoch_loss = 0.0
+            num_batches = 0
+            
+            for batch_idx, batch in enumerate(train_loader):
+                batch = batch.to(self.device, non_blocking=True)
+                
+                # ENABLE FP16 mixed precision
+                if self.is_cuda:
+                    with torch.amp.autocast('cuda', dtype=torch.float16):
+                        # Forward pass
+                        cont_out, canid_logits, neighbor_logits, z, kl_loss = self.autoencoder(
+                            batch.x, batch.edge_index, batch.batch)
+                        
+                        # Compute losses
+                        cont_loss = (cont_out - batch.x[:, 1:]).pow(2).mean()
+                        canid_loss = nn.CrossEntropyLoss()(canid_logits, batch.x[:, 0].long())
+                        neighbor_loss = self._compute_neighborhood_loss(neighbor_logits, batch.x, batch.edge_index)
+                        
+                        total_loss = cont_loss + canid_loss + neighbor_loss + 0.1 * kl_loss
+                else:
+                    # CPU fallback
+                    cont_out, canid_logits, neighbor_logits, z, kl_loss = self.autoencoder(
+                        batch.x, batch.edge_index, batch.batch)
+                    
+                    cont_loss = (cont_out - batch.x[:, 1:]).pow(2).mean()
+                    canid_loss = nn.CrossEntropyLoss()(canid_logits, batch.x[:, 0].long())
+                    neighbor_loss = self._compute_neighborhood_loss(neighbor_logits, batch.x, batch.edge_index)
+                    
+                    total_loss = cont_loss + canid_loss + neighbor_loss + 0.1 * kl_loss
+                
+                # OPTIMIZED backward pass
+                optimizer.zero_grad(set_to_none=True)  # More memory efficient
+                
+                if scaler is not None:
+                    scaler.scale(total_loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.autoencoder.parameters(), max_norm=1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    total_loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.autoencoder.parameters(), max_norm=1.0)
+                    optimizer.step()
+                
+                epoch_loss += total_loss.item()
+                num_batches += 1
+                
+                # MEMORY cleanup
+                del batch, cont_out, canid_logits, neighbor_logits, z, kl_loss
+                del cont_loss, canid_loss, neighbor_loss, total_loss
+                
+                # Frequent cleanup for large batches
+                if batch_idx % 25 == 0:
+                    gc.collect()
+                    if self.is_cuda:
+                        torch.cuda.empty_cache()
+                
+                # Progress logging
+                if batch_idx % 100 == 0:
+                    print(f"Epoch {epoch+1}/{epochs}, Batch {batch_idx}/{len(train_loader)}")
+            
+            # EPOCH summary
+            train_avg_loss = epoch_loss / max(num_batches, 1)
+            print(f"Autoencoder Epoch {epoch+1}/{epochs} - Loss: {train_avg_loss:.4f}")
+            
+            # VALIDATION PHASE
+            if val_loader is not None:
+                self.autoencoder.eval()
+                val_loss = 0.0
+                val_batches = 0
+                
+                with torch.no_grad():
+                    for batch in val_loader:
+                        batch = batch.to(self.device, non_blocking=True)
+                        
+                        if self.is_cuda:
+                            with torch.amp.autocast('cuda', dtype=torch.float16):
+                                cont_out, canid_logits, neighbor_logits, z, kl_loss = self.autoencoder(
+                                    batch.x, batch.edge_index, batch.batch)
+                                
+                                cont_loss = (cont_out - batch.x[:, 1:]).pow(2).mean()
+                                canid_loss = nn.CrossEntropyLoss()(canid_logits, batch.x[:, 0].long())
+                                neighbor_loss = self._compute_neighborhood_loss(neighbor_logits, batch.x, batch.edge_index)
+                                
+                                total_val_loss = cont_loss + canid_loss + neighbor_loss + 0.1 * kl_loss
+                        else:
+                            cont_out, canid_logits, neighbor_logits, z, kl_loss = self.autoencoder(
+                                batch.x, batch.edge_index, batch.batch)
+                            
+                            cont_loss = (cont_out - batch.x[:, 1:]).pow(2).mean()
+                            canid_loss = nn.CrossEntropyLoss()(canid_logits, batch.x[:, 0].long())
+                            neighbor_loss = self._compute_neighborhood_loss(neighbor_logits, batch.x, batch.edge_index)
+                            
+                            total_val_loss = cont_loss + canid_loss + neighbor_loss + 0.1 * kl_loss
+                        
+                        val_loss += total_val_loss.item()
+                        val_batches += 1
+                        
+                        # Cleanup
+                        del batch, cont_out, canid_logits, neighbor_logits, z, kl_loss
+                        del cont_loss, canid_loss, neighbor_loss, total_val_loss
+                
+                val_avg_loss = val_loss / max(val_batches, 1)
+                print(f"Autoencoder Epoch {epoch+1}/{epochs} - Train Loss: {train_avg_loss:.4f}, Val Loss: {val_avg_loss:.4f}")
+                
+                # SAVE BEST MODEL based on validation loss
+                if val_avg_loss < best_val_loss * 0.999:  # Require 0.1% improvement
+                    best_val_loss = val_avg_loss
+                    patience_counter = 0
+                    best_model_state = {
+                        'state_dict': self.autoencoder.state_dict().copy(),
+                        'epoch': epoch + 1,
+                        'train_loss': train_avg_loss,
+                        'val_loss': val_avg_loss
+                    }
+                    print(f"  → New best autoencoder saved (epoch {epoch+1}, val_loss: {val_avg_loss:.4f})")
+                else:
+                    patience_counter += 1
+                
+                scheduler.step(val_avg_loss)  # Use validation loss for scheduler
+            else:
+                # Fallback to training loss if no validation loader
+                print(f"Autoencoder Epoch {epoch+1}/{epochs} - Train Loss: {train_avg_loss:.4f}")
+                if train_avg_loss < best_val_loss * 0.999:
+                    best_val_loss = train_avg_loss
+                    patience_counter = 0
+                    best_model_state = {
+                        'state_dict': self.autoencoder.state_dict().copy(),
+                        'epoch': epoch + 1,
+                        'train_loss': train_avg_loss,
+                        'val_loss': None
+                    }
+                    print(f"  → New best autoencoder saved (epoch {epoch+1}, train_loss: {train_avg_loss:.4f})")
+                else:
+                    patience_counter += 1
+                
+                scheduler.step(train_avg_loss)
+            
+            # Memory logging every 5 epochs
+            if (epoch + 1) % 5 == 0:
+                log_memory_usage(f"Autoencoder Epoch {epoch+1}")
+            
+            # Early stopping
+            if patience_counter >= 5:
+                print(f"Early stopping: No improvement for {patience_counter} epochs")
+                break
+            
+            # Major cleanup between epochs
+            gc.collect()
+            if self.is_cuda:
+                torch.cuda.empty_cache()
+        
+        # RESTORE BEST MODEL
+        if best_model_state is not None:
+            self.autoencoder.load_state_dict(best_model_state['state_dict'])
+            if best_model_state['val_loss'] is not None:
+                print(f"Restored best autoencoder from epoch {best_model_state['epoch']} " +
+                    f"(val_loss: {best_model_state['val_loss']:.4f})")
+            else:
+                print(f"Restored best autoencoder from epoch {best_model_state['epoch']} " +
+                    f"(train_loss: {best_model_state['train_loss']:.4f})")
+
+        self._set_threshold(train_loader, percentile=50)
+        print(f"Set anomaly threshold: {self.threshold:.4f}")
+
+    def _train_classifier(self, filtered_graphs, val_graphs=None, epochs=20):  # Increased from default
+        """Train binary classifier on filtered graphs."""
+        print(f"Training classifier for {epochs} epochs with OPTIMIZED settings...")
+        
+        labels = [int(graph.y.flatten()[0]) for graph in filtered_graphs]
+        num_pos, num_neg = sum(labels), len(labels) - sum(labels)
+        pos_weight = torch.tensor(1.0 if num_pos == 0 else num_neg / num_pos, device=self.device)
+        
+        self.classifier.train()
+        
+        # IMPROVED: Better learning rate + weight decay
+        optimizer = torch.optim.Adam(
+            self.classifier.parameters(), 
+            lr=1e-3,           # Good starting LR
+            weight_decay=1e-4  # Regularization
+        )
+        
+        # ADD: Learning rate scheduler
+        scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+            optimizer, mode='min', factor=0.8, patience=3, verbose=True
+        )
+        
+        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
+        
+        # ADD: Mixed precision for CUDA
+        scaler = torch.cuda.amp.GradScaler() if self.is_cuda else None
+        
+        # FIXED: Use validation loss for best model selection
+        best_val_loss = float('inf')
+        best_model_state = None 
+        patience_counter = 0
+        
+        # OPTIMIZED: Larger batch size for classifier
+        classifier_batch_size = 1024 if torch.cuda.is_available() else 256
+        
+        for epoch in range(epochs):
+            # TRAINING PHASE
+            self.classifier.train()
+            epoch_loss = 0.0
+            num_batches = 0
+            
+            for batch_idx, batch in enumerate(DataLoader(filtered_graphs, batch_size=classifier_batch_size, shuffle=True)):
+                batch = batch.to(self.device, non_blocking=True)
+                
+                # ENABLE FP16 mixed precision
+                if self.is_cuda:
+                    with torch.amp.autocast('cuda', dtype=torch.float16):
+                        preds = self.classifier(batch)
+                        loss = criterion(preds.squeeze(), batch.y.float())
+                else:
+                    preds = self.classifier(batch)
+                    loss = criterion(preds.squeeze(), batch.y.float())
+                
+                # OPTIMIZED backward pass
+                optimizer.zero_grad(set_to_none=True)
+                
+                if scaler is not None:
+                    scaler.scale(loss).backward()
+                    scaler.unscale_(optimizer)
+                    torch.nn.utils.clip_grad_norm_(self.classifier.parameters(), max_norm=1.0)
+                    scaler.step(optimizer)
+                    scaler.update()
+                else:
+                    loss.backward()
+                    torch.nn.utils.clip_grad_norm_(self.classifier.parameters(), max_norm=1.0)
+                    optimizer.step()
+                
+                epoch_loss += loss.item()
+                num_batches += 1
+                
+                # MEMORY cleanup
+                del batch, preds, loss
+                
+                # Cleanup every 20 batches
+                if batch_idx % 20 == 0:
+                    gc.collect()
+                    if self.is_cuda:
+                        torch.cuda.empty_cache()
+            
+            train_avg_loss = epoch_loss / max(num_batches, 1)
+            
+            # VALIDATION PHASE
+            if val_graphs is not None:
+                self.classifier.eval()
+                val_loss = 0.0
+                val_batches = 0
+                val_accuracy = 0.0
+                
+                with torch.no_grad():
+                    for batch in DataLoader(val_graphs, batch_size=classifier_batch_size, shuffle=False):
+                        batch = batch.to(self.device, non_blocking=True)
+                        
+                        if self.is_cuda:
+                            with torch.amp.autocast('cuda', dtype=torch.float16):
+                                preds = self.classifier(batch)
+                                loss = criterion(preds.squeeze(), batch.y.float())
+                        else:
+                            preds = self.classifier(batch)
+                            loss = criterion(preds.squeeze(), batch.y.float())
+                        
+                        val_loss += loss.item()
+                        val_batches += 1
+                        
+                        # Also compute accuracy for monitoring
+                        pred_labels = (preds.squeeze() > 0.0).long()
+                        val_accuracy += (pred_labels == batch.y.long()).float().mean().item()
+                        
+                        # Cleanup
+                        del batch, preds, loss, pred_labels
+                
+                val_avg_loss = val_loss / max(val_batches, 1)
+                val_avg_accuracy = val_accuracy / max(val_batches, 1)
+                
+                print(f"Classifier Epoch {epoch+1}/{epochs} - Train Loss: {train_avg_loss:.4f}, Val Loss: {val_avg_loss:.4f}, Val Acc: {val_avg_accuracy:.4f}")
+                
+                # CHANGED: Save best model based on validation loss (not accuracy)
+                if val_avg_loss < best_val_loss * 0.999:  # Require 0.1% improvement
+                    best_val_loss = val_avg_loss
+                    patience_counter = 0
+                    best_model_state = {
+                        'state_dict': self.classifier.state_dict().copy(),
+                        'epoch': epoch + 1,
+                        'train_loss': train_avg_loss,
+                        'val_loss': val_avg_loss,
+                        'val_accuracy': val_avg_accuracy
+                    }
+                    print(f"  → New best classifier saved (epoch {epoch+1}, val_loss: {val_avg_loss:.4f}, val_acc: {val_avg_accuracy:.4f})")
+                else:
+                    patience_counter += 1
+                
+                scheduler.step(val_avg_loss)  # Use validation loss for scheduler
+            else:
+                # Fallback to training loss if no validation
+                train_accuracy = self._evaluate_classifier(filtered_graphs)
+                print(f"Classifier Epoch {epoch+1}/{epochs} - Train Loss: {train_avg_loss:.4f}, Train Acc: {train_accuracy:.4f}")
+                
+                if train_avg_loss < best_val_loss * 0.999:
+                    best_val_loss = train_avg_loss
+                    patience_counter = 0
+                    best_model_state = {
+                        'state_dict': self.classifier.state_dict().copy(),
+                        'epoch': epoch + 1,
+                        'train_loss': train_avg_loss,
+                        'val_loss': None,
+                        'val_accuracy': train_accuracy
+                    }
+                    print(f"  → New best classifier saved (epoch {epoch+1}, train_loss: {train_avg_loss:.4f})")
+                else:
+                    patience_counter += 1
+                
+                scheduler.step(train_avg_loss)
+            
+            # Early stopping
+            if patience_counter >= 5:
+                print(f"Early stopping: No improvement for {patience_counter} epochs")
+                break
+            
+            # Major cleanup between epochs
+            gc.collect()
+            if self.is_cuda:
+                torch.cuda.empty_cache()
+        
+        # RESTORE BEST MODEL
+        if best_model_state is not None:
+            self.classifier.load_state_dict(best_model_state['state_dict'])
+            if best_model_state['val_loss'] is not None:
+                print(f"Restored best classifier from epoch {best_model_state['epoch']} " +
+                    f"(val_loss: {best_model_state['val_loss']:.4f}, val_acc: {best_model_state['val_accuracy']:.4f})")
+            else:
+                print(f"Restored best classifier from epoch {best_model_state['epoch']} " +
+                    f"(train_loss: {best_model_state['train_loss']:.4f}, train_acc: {best_model_state['val_accuracy']:.4f})")
 
     def _compute_neighborhood_loss(self, neighbor_logits, x, edge_index):
         """Compute neighborhood reconstruction loss using BCEWithLogitsLoss."""
@@ -81,35 +536,6 @@ class GATPipeline:
                 cont_out, _, _, _, _ = self.autoencoder(batch.x, batch.edge_index, batch.batch)
                 errors.append((cont_out - batch.x[:, 1:]).pow(2).mean(dim=1))
         self.threshold = torch.cat(errors).quantile(percentile / 100.0).item()
-
-    def train_stage1(self, train_loader, epochs=10):
-        """Stage 1: Train autoencoder on normal graphs for anomaly detection."""
-        print(f"Training autoencoder for {epochs} epochs...")
-        self.autoencoder.train()
-        optimizer = torch.optim.Adam(self.autoencoder.parameters(), lr=1e-2, weight_decay=1e-4)
-        
-        for epoch in range(epochs):
-            for batch in train_loader:
-                batch = batch.to(self.device)
-                
-                # Forward pass
-                cont_out, canid_logits, neighbor_logits, z, kl_loss = self.autoencoder(
-                    batch.x, batch.edge_index, batch.batch)
-                
-                # Compute losses
-                cont_loss = (cont_out - batch.x[:, 1:]).pow(2).mean()
-                canid_loss = nn.CrossEntropyLoss()(canid_logits, batch.x[:, 0].long())
-                neighbor_loss = self._compute_neighborhood_loss(neighbor_logits, batch.x, batch.edge_index)
-                
-                total_loss = cont_loss + canid_loss + neighbor_loss + 0.1 * kl_loss
-                
-                # Backward pass
-                optimizer.zero_grad()
-                total_loss.backward()
-                optimizer.step()
-        
-        self._set_threshold(train_loader, percentile=50)
-        print(f"Set anomaly threshold: {self.threshold:.4f}")
 
     def _compute_reconstruction_errors(self, loader):
         """Compute reconstruction errors for all graphs in loader."""
@@ -163,8 +589,8 @@ class GATPipeline:
                 neighbor_errors_attack, id_errors_normal, id_errors_attack)
 
     def _print_statistics_and_plots(self, errors_normal, errors_attack, 
-                                   neighbor_errors_normal, neighbor_errors_attack,
-                                   id_errors_normal, id_errors_attack):
+                               neighbor_errors_normal, neighbor_errors_attack,
+                               id_errors_normal, id_errors_attack, key_suffix=""):
         """Print statistics and generate plots for all error types."""
         print(f"\nReconstruction Error Statistics:")
         print(f"Processed {len(errors_normal)} normal, {len(errors_attack)} attack graphs")
@@ -177,25 +603,25 @@ class GATPipeline:
             print(f"CAN ID - Normal: {np.mean(id_errors_normal):.4f}±{np.std(id_errors_normal):.4f}")
             print(f"CAN ID - Attack: {np.mean(id_errors_attack):.4f}±{np.std(id_errors_attack):.4f}")
 
-            # Generate plots
+            # FIXED: Generate plots with KEY suffix
             neighbor_threshold = np.percentile(neighbor_errors_normal, 95)
             
             plot_recon_error_hist(errors_normal, errors_attack, self.threshold, 
-                                save_path="images/recon_error_hist.png")
+                                save_path=f"images/recon_error_hist_{key_suffix}.png")
             plot_neighborhood_error_hist(neighbor_errors_normal, neighbor_errors_attack, 
-                                        neighbor_threshold, save_path="images/neighborhood_error_hist.png")
+                                        neighbor_threshold, save_path=f"images/neighborhood_error_hist_{key_suffix}.png")
             plot_neighborhood_composite_error_hist(
                 errors_normal, errors_attack, neighbor_errors_normal, neighbor_errors_attack,
-                id_errors_normal, id_errors_attack, save_path="images/neighborhood_composite_error_hist.png")
+                id_errors_normal, id_errors_attack, save_path=f"images/neighborhood_composite_error_hist_{key_suffix}.png")
             plot_error_components_analysis(
                 errors_normal, errors_attack, neighbor_errors_normal, neighbor_errors_attack,
-                id_errors_normal, id_errors_attack, save_path="images/error_components_analysis.png")
+                id_errors_normal, id_errors_attack, save_path=f"images/error_components_analysis_{key_suffix}.png")
 
             plot_raw_error_components_with_composite(
                 errors_normal, errors_attack, neighbor_errors_normal, neighbor_errors_attack,
-                id_errors_normal, id_errors_attack, save_path="images/raw_error_components_with_composite.png")
+                id_errors_normal, id_errors_attack, save_path=f"images/raw_error_components_with_composite_{key_suffix}.png")
 
-    def train_stage2(self, full_loader, epochs=10):
+    def train_stage2(self, full_loader, val_loader=None, epochs=10, key_suffix=""):
         """Stage 2: Train classifier with all attacks + filtered normal graphs."""
         print(f"\nStage 2: Analyzing reconstruction errors and training classifier...")
         
@@ -212,8 +638,16 @@ class GATPipeline:
         if not balanced_graphs:
             print("No graphs available for classifier training.")
             return
-            
-        self._train_classifier(balanced_graphs, epochs)
+        
+        # CREATE VALIDATION GRAPHS from val_loader if provided
+        val_graphs = None
+        if val_loader is not None:
+            print("Creating validation graphs for classifier...")
+            val_graph_data = self._compute_composite_reconstruction_errors(val_loader)
+            val_graphs = [graph for graph, error, is_attack in val_graph_data]
+            print(f"Created {len(val_graphs)} validation graphs for classifier evaluation")
+        
+        self._train_classifier(balanced_graphs, epochs, val_graphs=val_graphs)
 
     def _compute_composite_reconstruction_errors(self, loader):
         """Compute composite reconstruction errors for filtering normal graphs."""
@@ -317,39 +751,6 @@ class GATPipeline:
         print(f"Final ratio: {len(selected_normal_graphs)/num_attacks:.1f}:1")
         
         return balanced_graphs
-
-    def _train_classifier(self, filtered_graphs, epochs):
-        """Train binary classifier on filtered graphs."""
-        print(f"Training classifier for {epochs} epochs...")
-        
-        labels = [int(graph.y.flatten()[0]) for graph in filtered_graphs]
-        num_pos, num_neg = sum(labels), len(labels) - sum(labels)
-        pos_weight = torch.tensor(1.0 if num_pos == 0 else num_neg / num_pos, device=self.device)
-        
-        self.classifier.train()
-        optimizer = torch.optim.Adam(self.classifier.parameters(), lr=1e-3, weight_decay=1e-4)
-        criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
-        
-        for epoch in range(epochs):
-            epoch_loss = 0.0
-            num_batches = 0
-            
-            for batch in DataLoader(filtered_graphs, batch_size=32, shuffle=True):
-                batch = batch.to(self.device)
-                preds = self.classifier(batch)
-                loss = criterion(preds.squeeze(), batch.y.float())
-                
-                optimizer.zero_grad()
-                loss.backward()
-                optimizer.step()
-                
-                epoch_loss += loss.item()
-                num_batches += 1
-            
-            avg_loss = epoch_loss / num_batches if num_batches > 0 else 0
-            if (epoch + 1) % 10 == 0 or epoch == 0:
-                acc = self._evaluate_classifier(filtered_graphs)
-                print(f"Epoch {epoch+1}/{epochs} - Loss: {avg_loss:.4f}, Acc: {acc:.4f}")
 
     def _evaluate_classifier(self, graphs):
         """Evaluate classifier accuracy."""
@@ -575,6 +976,13 @@ class GATPipeline:
 @hydra.main(config_path="conf", config_name="base", version_base=None)
 def main(config: DictConfig):
     """Main training and evaluation pipeline."""
+
+    # CRITICAL: Enable GPU memory optimization FIRST
+    if torch.cuda.is_available():
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:128'
+        torch.cuda.empty_cache()
+        print("Enabled CUDA memory optimization")
+    
     # Setup
     config_dict = OmegaConf.to_container(config, resolve=True)
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -594,7 +1002,11 @@ def main(config: DictConfig):
     KEY = config_dict['root_folder']
     root_folder = root_folders[KEY]
     id_mapping = build_id_mapping_from_normal(root_folder)
+    print(f"Starting preprocessing...")
+    start_time = time.time()
     dataset = graph_creation(root_folder, id_mapping=id_mapping, window_size=100)
+    preprocessing_time = time.time() - start_time
+    print(f"Preprocessing completed in {preprocessing_time:.2f} seconds")
     
     print(f"Dataset: {len(dataset)} graphs, {len(id_mapping)} unique CAN IDs")
     
@@ -607,10 +1019,12 @@ def main(config: DictConfig):
     DATASIZE = config_dict['datasize']
     TRAIN_RATIO = config_dict['train_ratio']
     BATCH_SIZE = config_dict['batch_size']
+    EPOCHS = config_dict['epochs']
     
     # Generate feature histograms
     feature_names = ["CAN ID", "data1", "data2", "data3", "data4", "data5", "data6", "data7", "data8", "count", "position"]
-    plot_feature_histograms([data for data in dataset], feature_names=feature_names, save_path="images/feature_histograms.png")
+    plot_feature_histograms([data for data in dataset], feature_names=feature_names, 
+                           save_path=f"images/feature_histograms_{KEY}.png")
 
     # Train/test split
     train_size = int(TRAIN_RATIO * len(dataset))
@@ -627,10 +1041,12 @@ def main(config: DictConfig):
     else:
         indices = normal_indices
     
+    
+    # UPDATED: Use optimized data loaders
     normal_subset = Subset(train_dataset, indices)
-    train_loader = DataLoader(normal_subset, batch_size=BATCH_SIZE, shuffle=True)
-    test_loader = DataLoader(test_dataset, batch_size=BATCH_SIZE, shuffle=False)
-    full_train_loader = DataLoader(train_dataset, batch_size=BATCH_SIZE, shuffle=True)
+    train_loader = create_optimized_data_loaders(normal_subset, None, None, BATCH_SIZE, device)
+    val_loader = create_optimized_data_loaders(None, test_dataset, None, BATCH_SIZE, device)  
+    full_train_loader = create_optimized_data_loaders(None, None, train_dataset, BATCH_SIZE, device)
 
     print(f'Normal training samples: {len(train_loader.dataset)}')
 
@@ -639,10 +1055,13 @@ def main(config: DictConfig):
 
     # Training
     print("\n=== Stage 1: Autoencoder Training ===")
-    pipeline.train_stage1(train_loader, epochs=10)
+    pipeline.train_stage1(train_loader, val_loader, epochs=EPOCHS)
+
+    log_memory_usage("After autoencoder training")
 
     # Visualization
-    plot_graph_reconstruction(pipeline, full_train_loader, num_graphs=4, save_path="images/graph_recon_examples.png")
+    plot_graph_reconstruction(pipeline, full_train_loader, num_graphs=4, 
+                            save_path=f"images/graph_recon_examples_{KEY}.png")
     
     # Latent space visualization
     N = min(10000, len(train_dataset))
@@ -650,18 +1069,41 @@ def main(config: DictConfig):
     subsample = [train_dataset[i] for i in indices]
     subsample_loader = DataLoader(subsample, batch_size=BATCH_SIZE, shuffle=False)
     zs, labels = extract_latent_vectors(pipeline, subsample_loader)
-    plot_latent_space(zs, labels, save_path="images/latent_space.png")
-    plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, save_path="images/node_recon_subplot.png")
+    plot_latent_space(zs, labels, save_path=f"images/latent_space_{KEY}.png")
+    plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, 
+                         save_path=f"images/node_recon_subplot_{KEY}.png")
     
     print("\n=== Stage 2: Classifier Training ===")
-    pipeline.train_stage2(full_train_loader, epochs=10)
+    pipeline.train_stage2(full_train_loader, val_loader=val_loader, epochs=EPOCHS, key_suffix=KEY)
 
-    # Save models
-    save_folder = "saved_models"
+    # ENHANCED: Save models with better naming and metadata
+    save_folder = "output_model_optimized"  # Different folder to distinguish
     os.makedirs(save_folder, exist_ok=True)
-    torch.save(pipeline.autoencoder.state_dict(), os.path.join(save_folder, f'autoencoder_{KEY}.pth'))
-    torch.save(pipeline.classifier.state_dict(), os.path.join(save_folder, f'classifier_{KEY}.pth'))
-    print(f"Models saved to '{save_folder}'")
+    
+    # Save with metadata
+    autoencoder_save_data = {
+        'state_dict': pipeline.autoencoder.state_dict(),
+        'threshold': pipeline.threshold,
+        'epochs': EPOCHS,
+        'embedding_dim': 8,
+        'num_ids': len(id_mapping),
+        'validation_based': True,
+    }
+    
+    classifier_save_data = {
+        'state_dict': pipeline.classifier.state_dict(),
+        'epochs': EPOCHS,
+        'embedding_dim': 8,
+        'num_ids': len(id_mapping),
+        'validation_based': True,
+    }
+    
+    torch.save(autoencoder_save_data, os.path.join(save_folder, f'autoencoder_best_{KEY}.pth'))
+    torch.save(classifier_save_data, os.path.join(save_folder, f'classifier_{KEY}.pth'))
+    
+    print(f"BEST VALIDATION models saved to '{save_folder}'")
+    print(f"  - Autoencoder: Best validation loss model (autoencoder_best_val_{KEY}.pth)")
+    print(f"  - Classifier: Best validation accuracy model (classifier_best_val_{KEY}.pth)")
 
     # Evaluation
     print("\n=== Test Set Evaluation ===")
@@ -674,7 +1116,7 @@ def main(config: DictConfig):
     # Standard prediction (original method)
     print("\n--- Standard Two-Stage Prediction ---")
     preds, labels = [], []
-    for batch in test_loader:
+    for batch in val_loader:
         batch = batch.to(device)
         pred = pipeline.predict(batch)
         preds.append(pred.cpu())
@@ -687,27 +1129,6 @@ def main(config: DictConfig):
     print(f"Standard Test Accuracy: {standard_accuracy:.4f}")
     print("Standard Confusion Matrix:")
     print(confusion_matrix(labels.cpu().numpy(), preds.cpu().numpy()))
-
-    # Fusion evaluation
-    fusion_results, all_labels, all_anomaly_scores, all_gat_probs = pipeline.evaluate_with_fusion(
-        test_loader, fusion_methods=['weighted', 'product', 'max'])
-
-    # Print summary
-    print(f"\n=== Fusion Results Summary ===")
-    print(f"Standard Two-Stage:     {standard_accuracy:.4f}")
-    for method, result in fusion_results.items():
-        if method in ['weighted', 'product', 'max']:
-            if 'alpha' in result:
-                print(f"Fusion ({method}):       {result['accuracy']:.4f} (α={result['alpha']:.1f})")
-            else:
-                print(f"Fusion ({method}):       {result['accuracy']:.4f}")
-
-    # Print confusion matrices for best fusion method
-    best_method = max([m for m in fusion_results.keys() if m in ['weighted', 'product', 'max']], 
-                    key=lambda x: fusion_results[x]['accuracy'])
-    print(f"\nBest Fusion Method: {best_method} (Accuracy: {fusion_results[best_method]['accuracy']:.4f})")
-    print("Best Fusion Confusion Matrix:")
-    print(confusion_matrix(all_labels, fusion_results[best_method]['predictions']))
 
 
 if __name__ == "__main__":

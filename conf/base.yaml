@@ -1,5 +1,5 @@
 ---
-epochs: 10
+epochs: 5
 lr: 0.0005
 train_ratio: 0.8
 root_folder: hcrl_sa
