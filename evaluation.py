@@ -51,21 +51,21 @@ def create_teacher_models(num_ids, embedding_dim, device):
         num_ids=num_ids, 
         in_channels=11, 
         embedding_dim=embedding_dim,
-        hidden_dim=32,  # Larger than student
-        latent_dim=32,  # Larger than student
-        num_encoder_layers=3,  # More layers than student
-        num_decoder_layers=3,  # More layers than student
-        encoder_heads=4,  # More heads than student
-        decoder_heads=4   # More heads than student
+        hidden_dim=32,  
+        latent_dim=32,  
+        num_encoder_layers=3,  
+        num_decoder_layers=3,  
+        encoder_heads=4,  
+        decoder_heads=4   
     ).to(device)
     
     teacher_classifier = GATWithJK(
         num_ids=num_ids, 
         in_channels=11, 
-        hidden_channels=32,  # Larger than student
+        hidden_channels=32,  
         out_channels=1, 
-        num_layers=5,  # More layers than student
-        heads=8,  # More heads than student
+        num_layers=5,  
+        heads=8,  
         embedding_dim=embedding_dim
     ).to(device)
     
