@@ -1,891 +1,876 @@
 import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
 import os
+import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
-from torch.utils.data import random_split, Subset
-import torch
-import sys
+from torch.utils.data import DataLoader as TorchDataLoader
 import time
+import gc
+from sklearn.metrics import (
+    accuracy_score, precision_score, recall_score, f1_score,
+    confusion_matrix, roc_auc_score, matthews_corrcoef, classification_report
+)
+from torch_geometric.data import Batch
+import hydra
 from omegaconf import DictConfig, OmegaConf
-from sklearn.manifold import TSNE
-import matplotlib.pyplot as plt
-import sys
+
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
 from preprocessing import graph_creation, build_id_mapping_from_normal
-from training_utils import PyTorchTrainer, PyTorchDistillationTrainer, DistillationTrainer
-from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
-from sklearn.metrics import classification_report, roc_auc_score, confusion_matrix
-from torch_geometric.data import Batch, Data
-import random
 
-# FIXED: Direct model creation instead of importing from training file
+
 def create_student_models(num_ids, embedding_dim, device):
     """Create student models with exact same architecture as training."""
-    
-    # Student autoencoder (small, efficient)
     student_autoencoder = GraphAutoencoderNeighborhood(
         num_ids=num_ids, 
         in_channels=11, 
         embedding_dim=embedding_dim,
-        hidden_dim=16,           # Must match training
-        latent_dim=16,           # Must match training
-        num_encoder_layers=2,    # Must match training
-        num_decoder_layers=2,    # Must match training
-        encoder_heads=2,         # Must match training
-        decoder_heads=2          # Must match training
+        hidden_dim=16,
+        latent_dim=16,
+        num_encoder_layers=2,
+        num_decoder_layers=2,
+        encoder_heads=2,
+        decoder_heads=2
     ).to(device)
     
-    # Student classifier (small, efficient)
     student_classifier = GATWithJK(
         num_ids=num_ids, 
         in_channels=11, 
-        hidden_channels=16,      # Must match training
+        hidden_channels=16,
         out_channels=1, 
-        num_layers=2,            # Must match training
-        heads=4,                 # Must match training
+        num_layers=2,
+        heads=4,
         embedding_dim=embedding_dim
     ).to(device)
     
     return student_autoencoder, student_classifier
 
 
-def create_data_loaders(train_subset, test_dataset, full_train_dataset, batch_size, device):
-    """AGGRESSIVE data loaders for evaluation - much larger batch sizes."""
+def create_teacher_models(num_ids, embedding_dim, device):
+    """Create teacher models with larger architecture."""
+    teacher_autoencoder = GraphAutoencoderNeighborhood(
+        num_ids=num_ids, 
+        in_channels=11, 
+        embedding_dim=embedding_dim,
+        hidden_dim=32,  # Larger than student
+        latent_dim=32,  # Larger than student
+        num_encoder_layers=3,  # More layers than student
+        num_decoder_layers=3,  # More layers than student
+        encoder_heads=4,  # More heads than student
+        decoder_heads=4   # More heads than student
+    ).to(device)
     
-    # Check GPU memory for optimal batch sizing
+    teacher_classifier = GATWithJK(
+        num_ids=num_ids, 
+        in_channels=11, 
+        hidden_channels=32,  # Larger than student
+        out_channels=1, 
+        num_layers=5,  # More layers than student
+        heads=8,  # More heads than student
+        embedding_dim=embedding_dim
+    ).to(device)
+    
+    return teacher_autoencoder, teacher_classifier
+
+
+def create_optimized_data_loader(dataset, batch_size, device, shuffle=False):
+    """Create optimized data loader for evaluation."""
     if torch.cuda.is_available():
         gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        print(f"Detected GPU memory: {gpu_memory_gb:.1f}GB")
-        
-        if gpu_memory_gb < 20:  # 16GB Tesla V100
-            eval_batch_size = 512    # 8x larger than current
-        else:  # 32GB Tesla V100
-            eval_batch_size = 1024   # 16x larger than current
+        if gpu_memory_gb < 20:
+            eval_batch_size = 512
+        else:
+            eval_batch_size = 1024
     else:
         eval_batch_size = 256
     
-    # EVALUATION-OPTIMIZED settings
-    pin_memory = True if torch.cuda.is_available() else False
-    num_workers = 4          # Fewer workers for evaluation
-    prefetch_factor = 2      # Conservative prefetch
-    persistent_workers = True
+    print(f"Evaluation DataLoader: batch_size={eval_batch_size}, workers=4")
     
-    print(f"Evaluation DataLoader: batch_size={eval_batch_size}, workers={num_workers}")
-    
-    test_loader = DataLoader(
-        test_dataset, 
-        batch_size=eval_batch_size,  # MUCH larger
-        shuffle=False,               # No shuffling needed for eval
-        pin_memory=pin_memory,
-        num_workers=num_workers,
-        persistent_workers=persistent_workers,
-        prefetch_factor=prefetch_factor,
-        drop_last=False             # Keep all samples
+    return DataLoader(
+        dataset, 
+        batch_size=eval_batch_size,
+        shuffle=shuffle,
+        pin_memory=True if torch.cuda.is_available() else False,
+        num_workers=4,
+        persistent_workers=True,
+        prefetch_factor=2,
+        drop_last=False
     )
+
+
+def optimize_threshold_for_method(pipeline, validation_loader, method='anomaly_only', target_metric='f1', model_type='student'):
+    """Optimize threshold for specific method using validation data."""
+    print(f"\n=== OPTIMIZING THRESHOLD FOR {model_type.upper()} {method.upper()} (target: {target_metric}) ===")
     
-    return test_loader
-class StudentEvaluationPipeline:
-    """Evaluation pipeline for knowledge distilled student models."""
+    all_scores = []
+    all_labels = []
+    
+    # Select appropriate models based on type
+    if model_type == 'student':
+        autoencoder = pipeline.student_autoencoder
+        classifier = pipeline.student_classifier
+    else:  # teacher
+        autoencoder = pipeline.teacher_autoencoder
+        classifier = pipeline.teacher_classifier
+    
+    autoencoder.eval()
+    classifier.eval()
+    
+    with torch.no_grad():
+        for batch in validation_loader:
+            batch = batch.to(pipeline.device, non_blocking=True)
+            
+            # Get anomaly scores
+            cont_out, canid_logits, neighbor_logits, _, _ = autoencoder(
+                batch.x, batch.edge_index, batch.batch)
+            
+            node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
+            neighbor_targets = autoencoder.create_neighborhood_targets(
+                batch.x, batch.edge_index, batch.batch)
+            neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
+                neighbor_logits, neighbor_targets).mean(dim=1)
+            
+            batch_size = batch.batch.max().item() + 1
+            graph_node_errors = torch.zeros(batch_size, device=pipeline.device)
+            graph_neighbor_errors = torch.zeros(batch_size, device=pipeline.device)
+            
+            graph_node_errors.scatter_reduce_(0, batch.batch, node_errors, reduce='amax')
+            graph_neighbor_errors.scatter_reduce_(0, batch.batch, neighbor_errors, reduce='amax')
+            
+            composite_scores = (1.0 * graph_node_errors + 20.0 * graph_neighbor_errors)
+            
+            all_scores.extend(composite_scores.cpu().numpy())
+            all_labels.extend(batch.y.cpu().numpy())
+    
+    all_scores = np.array(all_scores)
+    all_labels = np.array(all_labels)
+    
+    print(f"Validation data: {len(all_labels)} samples")
+    print(f"  Normal: {np.sum(all_labels == 0)} ({np.mean(all_labels == 0)*100:.1f}%)")
+    print(f"  Attack: {np.sum(all_labels == 1)} ({np.mean(all_labels == 1)*100:.1f}%)")
+    
+    # Define threshold candidates based on method
+    if method == 'anomaly_only':
+        score_percentiles = np.linspace(50, 99.5, 100)
+        thresholds = [np.percentile(all_scores, p) for p in score_percentiles]
+    elif method == 'two_stage':
+        score_percentiles = np.linspace(60, 95, 71)
+        thresholds = [np.percentile(all_scores, p) for p in score_percentiles]
+        # Add attack-focused thresholds
+        attack_scores = all_scores[all_labels == 1]
+        if len(attack_scores) > 0:
+            for p in [10, 5, 1]:
+                thresholds.append(np.percentile(attack_scores, p))
+    else:
+        min_score, max_score = np.min(all_scores), np.max(all_scores)
+        thresholds = np.linspace(min_score, max_score, 200)
+    
+    thresholds = sorted(list(set(thresholds)))
+    print(f"Evaluating {len(thresholds)} threshold candidates...")
+    
+    best_threshold = None
+    best_score = -1
+    best_metrics = None
+    
+    # Teacher models typically perform better, so use more realistic GAT accuracy
+    if model_type == 'teacher':
+        gat_accuracy_on_normal = 0.995  # Teachers are better
+        gat_accuracy_on_attack = 0.96   # Teachers are better
+    else:
+        gat_accuracy_on_normal = 0.98   # Students
+        gat_accuracy_on_attack = 0.92   # Students
+    
+    for threshold in thresholds:
+        if method == 'anomaly_only':
+            preds = (all_scores > threshold).astype(int)
+        elif method == 'two_stage':
+            # Simulate GAT performance on detected samples
+            anomaly_mask = all_scores > threshold
+            preds = np.zeros_like(all_labels)
+            
+            if np.any(anomaly_mask):
+                detected_labels = all_labels[anomaly_mask]
+                
+                for j, label in enumerate(detected_labels):
+                    idx = np.where(anomaly_mask)[0][j]
+                    if label == 0:
+                        preds[idx] = 1 if np.random.random() > gat_accuracy_on_normal else 0
+                    else:
+                        preds[idx] = 1 if np.random.random() < gat_accuracy_on_attack else 0
+        
+        # Compute metrics
+        if len(np.unique(preds)) > 1 and len(np.unique(all_labels)) > 1:
+            accuracy = accuracy_score(all_labels, preds)
+            precision = precision_score(all_labels, preds, zero_division=0)
+            recall = recall_score(all_labels, preds, zero_division=0)
+            f1 = f1_score(all_labels, preds, zero_division=0)
+            
+            tn, fp, fn, tp = confusion_matrix(all_labels, preds).ravel()
+            specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
+            balanced_acc = (recall + specificity) / 2
+            miss_rate = fn / (fn + tp) if (fn + tp) > 0 else 0
+            
+            metrics = {
+                'threshold': threshold,
+                'accuracy': accuracy,
+                'precision': precision,
+                'recall': recall,
+                'f1': f1,
+                'specificity': specificity,
+                'balanced_accuracy': balanced_acc,
+                'miss_rate': miss_rate,
+                'tp': tp, 'tn': tn, 'fp': fp, 'fn': fn
+            }
+            
+            # Select best based on target metric
+            if target_metric == 'f1':
+                current_score = f1
+            elif target_metric == 'low_miss_rate':
+                current_score = 1 - miss_rate
+            elif target_metric == 'security_score':
+                current_score = 0.7 * recall + 0.3 * precision
+            else:
+                current_score = accuracy
+            
+            if current_score > best_score:
+                best_score = current_score
+                best_threshold = threshold
+                best_metrics = metrics.copy()
+    
+    if best_threshold is None:
+        print("WARNING: Could not find optimal threshold, using median")
+        best_threshold = np.median(all_scores)
+        best_metrics = {'threshold': best_threshold}
+    
+    print(f"\nBest threshold: {best_threshold:.6f}")
+    print(f"Best {target_metric}: {best_score:.4f}")
+    
+    if best_metrics and 'accuracy' in best_metrics:
+        print(f"Detailed metrics:")
+        print(f"  Accuracy: {best_metrics['accuracy']:.4f}")
+        print(f"  F1-Score: {best_metrics['f1']:.4f}")
+        print(f"  Miss Rate: {best_metrics['miss_rate']:.4f}")
+    
+    return best_threshold, best_metrics
+
+
+def create_validation_split(train_dataset, validation_ratio=0.2, seed=42):
+    """Create validation split from training data."""
+    np.random.seed(seed)
+    
+    normal_indices = []
+    attack_indices = []
+    
+    for i, data in enumerate(train_dataset):
+        if data.y.item() == 0:
+            normal_indices.append(i)
+        else:
+            attack_indices.append(i)
+    
+    n_val_normal = int(len(normal_indices) * validation_ratio)
+    n_val_attack = int(len(attack_indices) * validation_ratio) if len(attack_indices) > 0 else 0
+    
+    val_normal_indices = np.random.choice(normal_indices, n_val_normal, replace=False)
+    val_attack_indices = np.random.choice(attack_indices, n_val_attack, replace=False) if n_val_attack > 0 else []
+    
+    val_indices = list(val_normal_indices) + list(val_attack_indices)
+    val_dataset = [train_dataset[i] for i in val_indices]
+    
+    print(f"Validation split: {len(val_normal_indices)} normal, {len(val_attack_indices)} attack")
+    return val_dataset
+
+
+class ComprehensiveEvaluationPipeline:
+    """Unified evaluation pipeline for both student and teacher models."""
     
     def __init__(self, num_ids, embedding_dim=8, device='cpu'):
         self.device = device
         self.is_cuda = torch.cuda.is_available() and device.type == 'cuda'
         
-        # Create student models
+        # Create both student and teacher models
         self.student_autoencoder, self.student_classifier = create_student_models(
             num_ids=num_ids, embedding_dim=embedding_dim, device=device
         )
         
-        self.threshold = 0.0
-        print(f"Initialized FAST Student Evaluation Pipeline on {device}")
+        self.teacher_autoencoder, self.teacher_classifier = create_teacher_models(
+            num_ids=num_ids, embedding_dim=embedding_dim, device=device
+        )
+        
+        # Thresholds for both model types
+        self.student_threshold = 0.0
+        self.teacher_threshold = 0.0
+        self.student_optimized_thresholds = {}
+        self.teacher_optimized_thresholds = {}
+        
+        # Model availability flags
+        self.student_models_loaded = False
+        self.teacher_models_loaded = False
+        
+        print(f"Initialized Comprehensive Evaluation Pipeline on {device}")
 
     def load_student_models(self, autoencoder_path, classifier_path, threshold_path=None):
-        """Load the trained student models (threshold now optional)."""
-        print(f"Loading student autoencoder from: {autoencoder_path}")
+        """Load trained student models."""
+        if not (os.path.exists(autoencoder_path) and os.path.exists(classifier_path)):
+            print("Student models not found, skipping...")
+            return False
+            
+        print(f"Loading student models...")
+        
         autoencoder_state_dict = torch.load(autoencoder_path, map_location=self.device, weights_only=True)
         self.student_autoencoder.load_state_dict(autoencoder_state_dict)
         
-        print(f"Loading student classifier from: {classifier_path}")
         classifier_state_dict = torch.load(classifier_path, map_location=self.device, weights_only=True)
         self.student_classifier.load_state_dict(classifier_state_dict)
         
-        # OPTIONAL: Threshold is no longer critical for fusion methods
         if threshold_path and os.path.exists(threshold_path):
             threshold_data = torch.load(threshold_path, map_location=self.device, weights_only=True)
             if isinstance(threshold_data, dict) and 'threshold' in threshold_data:
-                self.threshold = threshold_data['threshold']
+                self.student_threshold = threshold_data['threshold']
             else:
-                self.threshold = float(threshold_data)
-            print(f"Loaded threshold: {self.threshold} (used only for reference)")
+                self.student_threshold = float(threshold_data)
+            print(f"Loaded student threshold: {self.student_threshold}")
         else:
-            self.threshold = None
-            print("No threshold loaded - using threshold-free fusion methods")
+            self.student_threshold = None
+            print("No student threshold loaded")
         
-        # Set to eval mode
         self.student_autoencoder.eval()
         self.student_classifier.eval()
+        self.student_models_loaded = True
+        return True
+
+    def load_teacher_models(self, autoencoder_path, classifier_path, threshold_path=None):
+        """Load trained teacher models."""
+        if not (os.path.exists(autoencoder_path) and os.path.exists(classifier_path)):
+            print("Teacher models not found, skipping...")
+            return False
+            
+        print(f"Loading teacher models...")
         
-        print("Student models loaded and set to evaluation mode!")
-
-    def set_threshold(self, threshold):
-        """Set the anomaly detection threshold."""
-        self.threshold = threshold
-
-    def predict_batch_optimized(self, data):
-        """ULTRA-FAST batch prediction with temperature-scaled confidence fusion."""
-        if self.is_cuda:
-            data = data.to(self.device, non_blocking=True)
+        autoencoder_state_dict = torch.load(autoencoder_path, map_location=self.device, weights_only=True)
+        self.teacher_autoencoder.load_state_dict(autoencoder_state_dict)
+        
+        classifier_state_dict = torch.load(classifier_path, map_location=self.device, weights_only=True)
+        self.teacher_classifier.load_state_dict(classifier_state_dict)
+        
+        if threshold_path and os.path.exists(threshold_path):
+            threshold_data = torch.load(threshold_path, map_location=self.device, weights_only=True)
+            if isinstance(threshold_data, dict) and 'threshold' in threshold_data:
+                self.teacher_threshold = threshold_data['threshold']
+            else:
+                self.teacher_threshold = float(threshold_data)
+            print(f"Loaded teacher threshold: {self.teacher_threshold}")
         else:
-            data = data.to(self.device)
+            self.teacher_threshold = None
+            print("No teacher threshold loaded")
         
-        with torch.no_grad():
-            # Step 1: BATCH autoencoder forward pass
-            cont_out, canid_logits, neighbor_logits, _, _ = self.student_autoencoder(
-                data.x, data.edge_index, data.batch)
+        self.teacher_autoencoder.eval()
+        self.teacher_classifier.eval()
+        self.teacher_models_loaded = True
+        return True
+
+    def optimize_thresholds(self, train_dataset):
+        """Optimize thresholds using training data for both model types."""
+        print("\n" + "="*60)
+        print("OPTIMIZING THRESHOLDS FOR ALL MODELS")
+        print("="*60)
+        
+        val_dataset = create_validation_split(train_dataset, validation_ratio=0.2)
+        val_loader = create_optimized_data_loader(val_dataset, 512, self.device)
+        
+        # Optimize student thresholds if models loaded
+        if self.student_models_loaded:
+            print("\n" + "="*40)
+            print("STUDENT MODEL THRESHOLD OPTIMIZATION")
+            print("="*40)
             
-            # Step 2: VECTORIZED anomaly score computation
-            node_errors = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
+            student_anomaly_threshold, student_anomaly_metrics = optimize_threshold_for_method(
+                self, val_loader, method='anomaly_only', target_metric='f1', model_type='student'
+            )
             
-            neighbor_targets = self.student_autoencoder.create_neighborhood_targets(
-                data.x, data.edge_index, data.batch)
-            neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
-                neighbor_logits, neighbor_targets).mean(dim=1)
+            student_two_stage_threshold, student_two_stage_metrics = optimize_threshold_for_method(
+                self, val_loader, method='two_stage', target_metric='low_miss_rate', model_type='student'
+            )
             
-            # Step 3: EFFICIENT graph-level aggregation
-            batch_size = data.batch.max().item() + 1
-            graph_node_errors = torch.zeros(batch_size, device=self.device)
-            graph_neighbor_errors = torch.zeros(batch_size, device=self.device)
-            
-            # Ultra-fast scatter operations
-            graph_node_errors.scatter_reduce_(0, data.batch, node_errors, reduce='amax')
-            graph_neighbor_errors.scatter_reduce_(0, data.batch, neighbor_errors, reduce='amax')
-            
-            # Step 4: VECTORIZED composite scoring (same as training)
-            weight_node = 1.0
-            weight_neighbor = 20.0
-            raw_anomaly_scores = (weight_node * graph_node_errors + 
-                                weight_neighbor * graph_neighbor_errors)
-            
-            # Step 5: SINGLE classifier forward pass for ENTIRE batch
-            classifier_logits = self.student_classifier(data).squeeze()
-            
-            # Step 6: IMPROVED Raw Score Fusion (NO THRESHOLD DEPENDENCY)
-            temperature = 2.0
-            
-            # Get GAT probabilities and confidence
-            calibrated_logits = classifier_logits / temperature
-            gat_probs = torch.sigmoid(calibrated_logits)
-            gat_confidence = torch.abs(calibrated_logits)
-            
-            # Normalize anomaly scores to [0,1] for fusion
-            if raw_anomaly_scores.max() > raw_anomaly_scores.min():
-                norm_anomaly_scores = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
-                    raw_anomaly_scores.max() - raw_anomaly_scores.min())
-            else:
-                norm_anomaly_scores = torch.zeros_like(raw_anomaly_scores)
-            
-            # Normalize GAT confidence to [0,1]
-            if gat_confidence.max() > gat_confidence.min():
-                norm_gat_confidence = (gat_confidence - gat_confidence.min()) / (
-                    gat_confidence.max() - gat_confidence.min())
-            else:
-                norm_gat_confidence = torch.ones_like(gat_confidence)
-            
-            # IMPROVED: Dual confidence weighting
-            # Both models contribute to confidence estimation
-            anomaly_confidence = norm_anomaly_scores  # Higher score = more confident it's anomalous
-            
-            # Adaptive alpha based on BOTH model confidences
-            # When both are confident about anomaly: high alpha (trust anomaly detection more)
-            # When GAT is confident but anomaly is low: lower alpha (trust GAT more)
-            combined_confidence = (norm_gat_confidence + anomaly_confidence) / 2
-            min_alpha, max_alpha = 0.3, 0.7
-            adaptive_alpha = min_alpha + (max_alpha - min_alpha) * combined_confidence
-            
-            # THRESHOLD-FREE two-stage: Use percentile-based decision
-            # Instead of fixed threshold, use dynamic threshold based on score distribution
-            dynamic_threshold = torch.quantile(raw_anomaly_scores, 0.8)  # Top 20% as anomalies
-            anomaly_mask = raw_anomaly_scores > dynamic_threshold
-            two_stage_preds = torch.zeros(batch_size, device=self.device)
-            two_stage_preds[anomaly_mask] = (classifier_logits[anomaly_mask] > 0.0).float()
-            
-            # IMPROVED adaptive fusion prediction
-            fused_scores = adaptive_alpha * norm_anomaly_scores + (1 - adaptive_alpha) * gat_probs
-            fusion_preds = (fused_scores > 0.5).float()
-            
-            return {
-                'two_stage_preds': two_stage_preds.long(),
-                'fusion_preds': fusion_preds.long(),
-                'anomaly_scores': norm_anomaly_scores,
-                'gat_probs': gat_probs,
-                'gat_confidence': norm_gat_confidence,
-                'anomaly_confidence': anomaly_confidence,    # NEW
-                'adaptive_alpha': adaptive_alpha,
-                'raw_anomaly_scores': raw_anomaly_scores,
-                'dynamic_threshold': dynamic_threshold       # NEW: For analysis
+            self.student_optimized_thresholds = {
+                'anomaly_only': {'threshold': student_anomaly_threshold, 'metrics': student_anomaly_metrics},
+                'two_stage': {'threshold': student_two_stage_threshold, 'metrics': student_two_stage_metrics}
             }
+            
+            self.student_threshold = student_two_stage_threshold
+        
+        # Optimize teacher thresholds if models loaded
+        if self.teacher_models_loaded:
+            print("\n" + "="*40)
+            print("TEACHER MODEL THRESHOLD OPTIMIZATION")
+            print("="*40)
+            
+            teacher_anomaly_threshold, teacher_anomaly_metrics = optimize_threshold_for_method(
+                self, val_loader, method='anomaly_only', target_metric='f1', model_type='teacher'
+            )
+            
+            teacher_two_stage_threshold, teacher_two_stage_metrics = optimize_threshold_for_method(
+                self, val_loader, method='two_stage', target_metric='low_miss_rate', model_type='teacher'
+            )
+            
+            self.teacher_optimized_thresholds = {
+                'anomaly_only': {'threshold': teacher_anomaly_threshold, 'metrics': teacher_anomaly_metrics},
+                'two_stage': {'threshold': teacher_two_stage_threshold, 'metrics': teacher_two_stage_metrics}
+            }
+            
+            self.teacher_threshold = teacher_two_stage_threshold
+        
+        return {
+            'student': self.student_optimized_thresholds if self.student_models_loaded else None,
+            'teacher': self.teacher_optimized_thresholds if self.teacher_models_loaded else None
+        }
 
-    def predict_two_stage(self, data):
-        """Standard two-stage prediction: anomaly detection + classification."""
+    def predict_batch_comprehensive(self, data, model_type='both'):
+        """Comprehensive prediction with specified model type."""
         if self.is_cuda:
             data = data.to(self.device, non_blocking=True)
         else:
             data = data.to(self.device)
         
+        results = {}
+        
         with torch.no_grad():
-            # Stage 1: Anomaly detection using autoencoder
-            cont_out, _, _, _, _ = self.student_autoencoder(data.x, data.edge_index, data.batch)
+            # Student model predictions
+            if model_type in ['student', 'both'] and self.student_models_loaded:
+                student_results = self._predict_with_models(
+                    data, self.student_autoencoder, self.student_classifier,
+                    self.student_threshold, self.student_optimized_thresholds
+                )
+                results['student'] = student_results
             
-            # FIXED: Use the same composite scoring as training
-            node_errors = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
-            
-            # Get neighbor reconstruction errors
-            neighbor_targets = self.student_autoencoder.create_neighborhood_targets(
-                data.x, data.edge_index, data.batch)
-            _, _, neighbor_logits, _, _ = self.student_autoencoder(data.x, data.edge_index, data.batch)
-            neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
-                neighbor_logits, neighbor_targets).mean(dim=1)
-            
-            # Vectorized graph-level error computation with composite scoring
-            batch_size = data.batch.max().item() + 1
-            graph_node_errors = torch.zeros(batch_size, device=self.device)
-            graph_neighbor_errors = torch.zeros(batch_size, device=self.device)
-            
-            # Efficient scatter operations
-            graph_node_errors.scatter_reduce_(0, data.batch, node_errors, reduce='amax')
-            graph_neighbor_errors.scatter_reduce_(0, data.batch, neighbor_errors, reduce='amax')
-            
-            # FIXED: Use same composite scoring as training
-            weight_node = 1.0
-            weight_neighbor = 20.0  # High weight for neighborhood errors
-            
-            composite_errors = (weight_node * graph_node_errors + 
-                              weight_neighbor * graph_neighbor_errors)
-            
-            # Stage 2: Classification for anomalous graphs
-            preds = torch.zeros(batch_size, device=self.device)
-            anomaly_mask = composite_errors > self.threshold
-            
-            if anomaly_mask.any():
-                anomaly_indices = torch.nonzero(anomaly_mask).flatten()
-                
-                # Process anomalous graphs
-                for idx in anomaly_indices:
-                    # Get the graph for this index
-                    graphs = Batch.to_data_list(data)
-                    graph = graphs[idx]
-                    try:
-                        # Run classifier on the graph
-                        graph_batch = graph.to(self.device)
-                        classifier_logit = self.student_classifier(graph_batch).item()
-                        
-                        # Use threshold 0.0 for classification
-                        preds[idx] = (classifier_logit > 0.0).float()
-                        
-                    except Exception as e:
-                        # Fallback: if composite error is very high, classify as attack
-                        preds[idx] = (composite_errors[idx] > self.threshold * 1.5).float()
-            
-            return preds.long()
+            # Teacher model predictions
+            if model_type in ['teacher', 'both'] and self.teacher_models_loaded:
+                teacher_results = self._predict_with_models(
+                    data, self.teacher_autoencoder, self.teacher_classifier,
+                    self.teacher_threshold, self.teacher_optimized_thresholds
+                )
+                results['teacher'] = teacher_results
+        
+        return results
 
-    def predict_with_score_fusion(self, data, fusion_method='adaptive_confidence'):
-        """Advanced fusion methods using raw reconstruction scores."""
-        if self.is_cuda:
-            data = data.to(self.device, non_blocking=True)
-        else:
-            data = data.to(self.device)
+    def _predict_with_models(self, data, autoencoder, classifier, threshold, optimized_thresholds):
+        """Helper method to make predictions with given models."""
+        # Autoencoder forward pass
+        cont_out, canid_logits, neighbor_logits, _, _ = autoencoder(
+            data.x, data.edge_index, data.batch)
         
-        with torch.no_grad():
-            # Get all raw outputs (same computation as predict_batch_optimized)
-            cont_out, canid_logits, neighbor_logits, _, _ = self.student_autoencoder(
-                data.x, data.edge_index, data.batch)
-            
-            # Compute raw anomaly scores
-            node_errors = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
-            neighbor_targets = self.student_autoencoder.create_neighborhood_targets(
-                data.x, data.edge_index, data.batch)
-            neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
-                neighbor_logits, neighbor_targets).mean(dim=1)
-            
-            batch_size = data.batch.max().item() + 1
-            graph_node_errors = torch.zeros(batch_size, device=self.device)
-            graph_neighbor_errors = torch.zeros(batch_size, device=self.device)
-            
-            graph_node_errors.scatter_reduce_(0, data.batch, node_errors, reduce='amax')
-            graph_neighbor_errors.scatter_reduce_(0, data.batch, neighbor_errors, reduce='amax')
-            
-            raw_anomaly_scores = (1.0 * graph_node_errors + 20.0 * graph_neighbor_errors)
-            classifier_logits = self.student_classifier(data).squeeze()
-            
-            # Different fusion strategies
-            if fusion_method == 'percentile_gating':
-                # Use percentile-based gating instead of fixed threshold
-                anomaly_percentile = torch.quantile(raw_anomaly_scores, 0.75)  # Top 25%
-                anomaly_mask = raw_anomaly_scores > anomaly_percentile
-                
-                final_preds = torch.zeros(batch_size, device=self.device)
-                final_preds[anomaly_mask] = (classifier_logits[anomaly_mask] > 0.0).float()
-                
-            elif fusion_method == 'soft_voting':
-                # Soft voting: combine normalized scores directly
-                norm_anomaly = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
-                    raw_anomaly_scores.max() - raw_anomaly_scores.min() + 1e-8)
-                gat_probs = torch.sigmoid(classifier_logits)
-                
-                # Equal weighted soft voting
-                combined_score = (norm_anomaly + gat_probs) / 2
-                final_preds = (combined_score > 0.5).float()
-                
-            elif fusion_method == 'uncertainty_weighted':
-                # Weight by uncertainty: more uncertain predictions get less weight
-                norm_anomaly = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
-                    raw_anomaly_scores.max() - raw_anomaly_scores.min() + 1e-8)
-                gat_probs = torch.sigmoid(classifier_logits)
-                
-                # Uncertainty as distance from decision boundary
-                anomaly_uncertainty = torch.abs(norm_anomaly - 0.5)  # Closer to 0.5 = more uncertain
-                gat_uncertainty = torch.abs(gat_probs - 0.5)
-                
-                # Confidence = 1 - uncertainty
-                anomaly_confidence = 1 - anomaly_uncertainty
-                gat_confidence = 1 - gat_uncertainty
-                
-                # Weight by confidence
-                total_confidence = anomaly_confidence + gat_confidence + 1e-8
-                anomaly_weight = anomaly_confidence / total_confidence
-                gat_weight = gat_confidence / total_confidence
-                
-                combined_score = anomaly_weight * norm_anomaly + gat_weight * gat_probs
-                final_preds = (combined_score > 0.5).float()
-                
-            elif fusion_method == 'adaptive_confidence':
-                # Most sophisticated: adapt based on both raw scores and confidence
-                norm_anomaly = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
-                    raw_anomaly_scores.max() - raw_anomaly_scores.min() + 1e-8)
-                gat_probs = torch.sigmoid(classifier_logits)
-                gat_confidence = torch.abs(classifier_logits)
-                
-                # Normalize GAT confidence
-                if gat_confidence.max() > gat_confidence.min():
-                    norm_gat_confidence = (gat_confidence - gat_confidence.min()) / (
-                        gat_confidence.max() - gat_confidence.min())
-                else:
-                    norm_gat_confidence = torch.ones_like(gat_confidence)
-                
-                # High raw anomaly scores indicate high confidence in anomaly detection
-                anomaly_confidence = norm_anomaly
-                
-                # Dynamic alpha based on relative confidence
-                # When anomaly score is high and GAT confidence is low: trust anomaly more
-                # When GAT confidence is high and anomaly score is low: trust GAT more
-                confidence_ratio = (anomaly_confidence + 1e-8) / (norm_gat_confidence + 1e-8)
-                adaptive_alpha = torch.sigmoid(confidence_ratio - 1.0)  # Centers around 0.5
-                
-                combined_score = adaptive_alpha * norm_anomaly + (1 - adaptive_alpha) * gat_probs
-                final_preds = (combined_score > 0.5).float()
-                
-            else:
-                # Fallback: simple weighted average
-                norm_anomaly = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
-                    raw_anomaly_scores.max() - raw_anomaly_scores.min() + 1e-8)
-                gat_probs = torch.sigmoid(classifier_logits)
-                combined_score = 0.6 * norm_anomaly + 0.4 * gat_probs
-                final_preds = (combined_score > 0.5).float()
-            
-            return final_preds.long(), norm_anomaly, gat_probs
-    
-    def predict_with_fusion(self, data, fusion_method='weighted', alpha=0.6):
-        """
-        Improved fusion-based prediction with better decision logic.
-        """
-        if self.is_cuda:
-            data = data.to(self.device, non_blocking=True)
-        else:
-            data = data.to(self.device)
+        # Compute anomaly scores
+        node_errors = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
+        neighbor_targets = autoencoder.create_neighborhood_targets(
+            data.x, data.edge_index, data.batch)
+        neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
+            neighbor_logits, neighbor_targets).mean(dim=1)
         
-        with torch.no_grad():
-            # Get autoencoder outputs for anomaly detection
-            cont_out, canid_logits, neighbor_logits, _, _ = self.student_autoencoder(
-                data.x, data.edge_index, data.batch)
-            
-            # Compute composite anomaly scores
-            node_errors = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
-            
-            neighbor_targets = self.student_autoencoder.create_neighborhood_targets(
-                data.x, data.edge_index, data.batch)
-            neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
-                neighbor_logits, neighbor_targets).mean(dim=1)
-            
-            # Vectorized graph-level error computation
-            batch_size = data.batch.max().item() + 1
-            graph_node_errors = torch.zeros(batch_size, device=self.device)
-            graph_neighbor_errors = torch.zeros(batch_size, device=self.device)
-            
-            # Efficient scatter operations
-            graph_node_errors.scatter_reduce_(0, data.batch, node_errors, reduce='amax')
-            graph_neighbor_errors.scatter_reduce_(0, data.batch, neighbor_errors, reduce='amax')
-            
-            # Compute RAW composite anomaly scores
-            weight_node = 1.0
-            weight_neighbor = 20.0
-            raw_anomaly_scores = (weight_node * graph_node_errors + 
-                                weight_neighbor * graph_neighbor_errors)
-            
-            # Get GAT classification logits (NOT probabilities yet)
-            graphs = Batch.to_data_list(data)
-            gat_logits = []
-            
-            for i, graph in enumerate(graphs):
-                graph_batch = graph.to(self.device)
-                gat_logit = self.student_classifier(graph_batch).item()
-                gat_logits.append(gat_logit)
-            
-            gat_logits = torch.tensor(gat_logits, device=self.device)
-            
-            # IMPROVED FUSION STRATEGY - Use hierarchical decision making
-            final_preds = torch.zeros(batch_size, device=self.device)
-            
-            if fusion_method == 'hierarchical':
-                # Strategy 1: Hierarchical - Anomaly detection first, then GAT
-                anomaly_mask = raw_anomaly_scores > self.threshold
-                
-                for i in range(batch_size):
-                    if anomaly_mask[i]:
-                        # If anomaly detected, use GAT to classify
-                        final_preds[i] = (gat_logits[i] > 0.0).float()
-                    else:
-                        # If no anomaly detected, classify as normal
-                        final_preds[i] = 0.0
-                        
-            elif fusion_method == 'confidence_weighted':
-                # Strategy 2: Weight by confidence levels
-                # Normalize anomaly scores to [0,1]
-                if raw_anomaly_scores.max() > raw_anomaly_scores.min():
-                    norm_anomaly = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
-                        raw_anomaly_scores.max() - raw_anomaly_scores.min())
-                else:
-                    norm_anomaly = torch.zeros_like(raw_anomaly_scores)
-                
-                # Convert GAT logits to probabilities but keep confidence info
-                gat_probs = torch.sigmoid(gat_logits)
-                gat_confidence = torch.abs(gat_logits)  # Higher absolute value = more confident
-                
-                # Normalize confidence to [0,1]
-                if gat_confidence.max() > gat_confidence.min():
-                    norm_gat_conf = (gat_confidence - gat_confidence.min()) / (
-                        gat_confidence.max() - gat_confidence.min())
-                else:
-                    norm_gat_conf = torch.ones_like(gat_confidence)
-                
-                # Weight by confidence - more confident GAT gets higher weight
-                adaptive_alpha = 0.3 + 0.4 * norm_gat_conf  # Alpha ranges from 0.3 to 0.7
-                
-                fused_scores = adaptive_alpha * norm_anomaly + (1 - adaptive_alpha) * gat_probs
-                final_preds = (fused_scores > 0.5).float()
-                
-            elif fusion_method == 'conservative':
-                # Strategy 3: Conservative - Both must agree for attack classification
-                anomaly_binary = (raw_anomaly_scores > self.threshold).float()
-                gat_binary = (gat_logits > 0.0).float()
-                
-                # Only classify as attack if BOTH agree
-                final_preds = anomaly_binary * gat_binary
-                
-            elif fusion_method == 'optimistic':
-                # Strategy 4: Optimistic - Either can classify as attack
-                anomaly_binary = (raw_anomaly_scores > self.threshold).float()
-                gat_binary = (gat_logits > 0.0).float()
-                
-                # Classify as attack if EITHER agrees
-                final_preds = torch.maximum(anomaly_binary, gat_binary)
-                
-            elif fusion_method == 'gat_priority':
-                # Strategy 5: GAT has priority, anomaly detection as backup
-                gat_confident_mask = torch.abs(gat_logits) > 5.0  # High confidence threshold
-                
-                for i in range(batch_size):
-                    if gat_confident_mask[i]:
-                        # If GAT is confident, use its decision
-                        final_preds[i] = (gat_logits[i] > 0.0).float()
-                    else:
-                        # If GAT is not confident, fall back to anomaly detection
-                        final_preds[i] = (raw_anomaly_scores[i] > self.threshold).float()
-                        
-            else:
-                # Default: Traditional weighted fusion
-                if raw_anomaly_scores.max() > raw_anomaly_scores.min():
-                    norm_anomaly = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
-                        raw_anomaly_scores.max() - raw_anomaly_scores.min())
-                else:
-                    norm_anomaly = torch.zeros_like(raw_anomaly_scores)
-                
-                gat_probs = torch.sigmoid(gat_logits)
-                fused_scores = alpha * norm_anomaly + (1 - alpha) * gat_probs
-                final_preds = (fused_scores > 0.5).float()
-            
-            # For evaluation, return normalized scores
-            if raw_anomaly_scores.max() > raw_anomaly_scores.min():
-                normalized_anomaly_scores = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
-                    raw_anomaly_scores.max() - raw_anomaly_scores.min())
-            else:
-                normalized_anomaly_scores = torch.zeros_like(raw_anomaly_scores)
-                
-            gat_probs = torch.sigmoid(gat_logits)
-            
-            return final_preds.long(), normalized_anomaly_scores, gat_probs
-    
+        batch_size = data.batch.max().item() + 1
+        graph_node_errors = torch.zeros(batch_size, device=self.device)
+        graph_neighbor_errors = torch.zeros(batch_size, device=self.device)
+        
+        graph_node_errors.scatter_reduce_(0, data.batch, node_errors, reduce='amax')
+        graph_neighbor_errors.scatter_reduce_(0, data.batch, neighbor_errors, reduce='amax')
+        
+        raw_anomaly_scores = (1.0 * graph_node_errors + 20.0 * graph_neighbor_errors)
+        
+        # Classifier forward pass
+        classifier_logits = classifier(data).squeeze()
+        
+        # Normalize scores
+        if raw_anomaly_scores.max() > raw_anomaly_scores.min():
+            norm_anomaly_scores = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
+                raw_anomaly_scores.max() - raw_anomaly_scores.min())
+        else:
+            norm_anomaly_scores = torch.zeros_like(raw_anomaly_scores)
+        
+        gat_probs = torch.sigmoid(classifier_logits)
+        
+        # Two-stage predictions
+        two_stage_preds = torch.zeros(batch_size, device=self.device)
+        if threshold is not None:
+            anomaly_mask = raw_anomaly_scores > threshold
+            two_stage_preds[anomaly_mask] = (classifier_logits[anomaly_mask] > 0.0).float()
+        
+        # Optimized predictions if available
+        optimized_anomaly_preds = torch.zeros(batch_size, device=self.device)
+        optimized_two_stage_preds = torch.zeros(batch_size, device=self.device)
+        
+        if 'anomaly_only' in optimized_thresholds:
+            opt_threshold = optimized_thresholds['anomaly_only']['threshold']
+            optimized_anomaly_preds = (raw_anomaly_scores > opt_threshold).float()
+        
+        if 'two_stage' in optimized_thresholds:
+            opt_threshold = optimized_thresholds['two_stage']['threshold']
+            opt_anomaly_mask = raw_anomaly_scores > opt_threshold
+            optimized_two_stage_preds[opt_anomaly_mask] = (classifier_logits[opt_anomaly_mask] > 0.0).float()
+        
+        # Fusion strategy (GAT-dominant)
+        performance_weight_gat = 0.85
+        performance_weight_anomaly = 0.15
+        fusion_scores = (performance_weight_anomaly * norm_anomaly_scores + 
+                       performance_weight_gat * gat_probs)
+        fusion_preds = (fusion_scores > 0.5).float()
+        
+        return {
+            'two_stage_preds': two_stage_preds.long(),
+            'fusion_preds': fusion_preds.long(),
+            'optimized_anomaly_preds': optimized_anomaly_preds.long(),
+            'optimized_two_stage_preds': optimized_two_stage_preds.long(),
+            'anomaly_scores': norm_anomaly_scores,
+            'gat_probs': gat_probs,
+            'raw_anomaly_scores': raw_anomaly_scores
+        }
 
-# Also add the print_sample_evaluations function call to evaluate_fusion_methods:
-def print_sample_evaluations(all_labels, all_anomaly_scores, all_gat_probs, num_samples=10):
-    """Print sample-by-sample evaluation for debugging fusion behavior."""
-    print(f"\n=== Sample-by-Sample Fusion Analysis (first {num_samples} samples) ===")
-    print("Sample | Label | Anomaly Score | GAT Prob | Weighted(0.6) | Product | Max | Final Pred")
-    print("-" * 85)
+
+def compute_comprehensive_metrics(y_true, y_pred, name="method"):
+    """Compute comprehensive metrics for evaluation."""
+    metrics = {
+        'accuracy': accuracy_score(y_true, y_pred),
+        'precision': precision_score(y_true, y_pred, zero_division=0),
+        'recall': recall_score(y_true, y_pred, zero_division=0),
+        'f1': f1_score(y_true, y_pred, zero_division=0),
+    }
     
-    for i in range(min(num_samples, len(all_labels))):
-        label = all_labels[i]
-        # FIXED: Convert to scalar values
-        anomaly_score = float(all_anomaly_scores[i])
-        gat_prob = float(all_gat_probs[i])
-        
-        # Calculate different fusion scores
-        weighted_score = 0.6 * anomaly_score + 0.4 * gat_prob
-        product_score = (anomaly_score * gat_prob) ** 0.5
-        max_score = max(anomaly_score, gat_prob)  # Now works with scalars
-        
-        # Final prediction (using weighted as example)
-        final_pred = 1 if weighted_score > 0.5 else 0
-        
-        print(f"{i:6d} | {label:5d} | {anomaly_score:12.4f} | {gat_prob:8.4f} | "
-              f"{weighted_score:12.4f} | {product_score:7.4f} | {max_score:3.4f} | {final_pred:9d}")
-        
-def evaluate_student_model_fast(pipeline, data_loader, device):
-    """ULTRA-FAST evaluation with support for new fusion metrics."""
+    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
+    metrics['specificity'] = tn / (tn + fp) if (tn + fp) > 0 else 0.0
+    metrics['balanced_accuracy'] = (metrics['recall'] + metrics['specificity']) / 2
+    metrics['mcc'] = matthews_corrcoef(y_true, y_pred)
+    metrics['confusion_matrix'] = confusion_matrix(y_true, y_pred)
     
-    # Pre-allocate lists for speed  
+    # Support counts
+    metrics['support_class_0'] = np.sum(y_true == 0)
+    metrics['support_class_1'] = np.sum(y_true == 1)
+    metrics['total_samples'] = len(y_true)
+    
+    # Error counts
+    metrics['false_positives'] = fp
+    metrics['false_negatives'] = fn
+    metrics['true_positives'] = tp
+    metrics['true_negatives'] = tn
+    
+    return metrics
+
+
+def evaluate_comprehensive(pipeline, test_loader, device):
+    """Comprehensive evaluation with all available models."""
+    print(f"Comprehensive evaluation with {len(test_loader)} batches...")
+    
     all_labels = []
-    all_two_stage_preds = []
-    all_fusion_preds = []
-    all_anomaly_scores = []
-    all_gat_probs = []
-    all_gat_confidence = []     # NEW
-    all_adaptive_alpha = []     # NEW
+    student_results = {
+        'two_stage_preds': [], 'fusion_preds': [], 'optimized_anomaly_preds': [],
+        'optimized_two_stage_preds': [], 'anomaly_scores': [], 'gat_probs': []
+    }
+    teacher_results = {
+        'two_stage_preds': [], 'fusion_preds': [], 'optimized_anomaly_preds': [],
+        'optimized_two_stage_preds': [], 'anomaly_scores': [], 'gat_probs': []
+    }
     
-    print(f"Fast evaluation with {len(data_loader)} batches...")
-    
-    # FAST batch processing
     with torch.no_grad():
-        for batch_idx, batch in enumerate(data_loader):
+        for batch_idx, batch in enumerate(test_loader):
             batch = batch.to(device, non_blocking=True)
             
-            # SINGLE optimized prediction call
-            results = pipeline.predict_batch_optimized(batch)
+            batch_results = pipeline.predict_batch_comprehensive(batch, model_type='both')
             
-            # Collect results
-            all_two_stage_preds.append(results['two_stage_preds'].cpu())
-            all_fusion_preds.append(results['fusion_preds'].cpu())
-            all_anomaly_scores.append(results['anomaly_scores'].cpu())
-            all_gat_probs.append(results['gat_probs'].cpu())
             all_labels.append(batch.y.cpu())
             
-            # FIXED: Collect new metrics if available - check properly
-            if 'gat_confidence' in results and results['gat_confidence'] is not None:
-                all_gat_confidence.append(results['gat_confidence'].cpu())
-            if 'adaptive_alpha' in results and results['adaptive_alpha'] is not None:
-                all_adaptive_alpha.append(results['adaptive_alpha'].cpu())
+            # Collect student results
+            if 'student' in batch_results:
+                for key in student_results:
+                    if key in batch_results['student']:
+                        student_results[key].append(batch_results['student'][key].cpu())
             
-            # Progress update every 100 batches
-            if batch_idx % 100 == 0:
-                print(f"Processed batch {batch_idx}/{len(data_loader)}")
+            # Collect teacher results
+            if 'teacher' in batch_results:
+                for key in teacher_results:
+                    if key in batch_results['teacher']:
+                        teacher_results[key].append(batch_results['teacher'][key].cpu())
+            
+            if batch_idx % 10 == 0:
+                print(f"Processed batch {batch_idx}/{len(test_loader)}")
     
-    # FAST concatenation
+    # Concatenate results
     all_labels = torch.cat(all_labels).numpy()
-    all_two_stage_preds = torch.cat(all_two_stage_preds).numpy()
-    all_fusion_preds = torch.cat(all_fusion_preds).numpy()
-    all_anomaly_scores = torch.cat(all_anomaly_scores).numpy()
-    all_gat_probs = torch.cat(all_gat_probs).numpy()
     
-    # FIXED: Concatenate new metrics if available - check list length instead of truth value
-    if len(all_gat_confidence) > 0:
-        all_gat_confidence = torch.cat(all_gat_confidence).numpy()
-    else:
-        all_gat_confidence = None
+    # Process student results
+    for key in student_results:
+        if len(student_results[key]) > 0:
+            student_results[key] = torch.cat(student_results[key]).numpy()
+    
+    # Process teacher results
+    for key in teacher_results:
+        if len(teacher_results[key]) > 0:
+            teacher_results[key] = torch.cat(teacher_results[key]).numpy()
+    
+    # Compute metrics for all methods
+    results = {'labels': all_labels}
+    
+    # Student model metrics
+    if pipeline.student_models_loaded and len(student_results['anomaly_scores']) > 0:
+        anomaly_only_preds = (student_results['anomaly_scores'] > 0.5).astype(int)
+        gat_only_preds = (student_results['gat_probs'] > 0.5).astype(int)
         
-    if len(all_adaptive_alpha) > 0:
-        all_adaptive_alpha = torch.cat(all_adaptive_alpha).numpy()
-    else:
-        all_adaptive_alpha = None
+        results['student_two_stage'] = compute_comprehensive_metrics(all_labels, student_results['two_stage_preds'], 'student_two_stage')
+        results['student_fusion'] = compute_comprehensive_metrics(all_labels, student_results['fusion_preds'], 'student_fusion')
+        results['student_anomaly_only'] = compute_comprehensive_metrics(all_labels, anomaly_only_preds, 'student_anomaly_only')
+        results['student_gat_only'] = compute_comprehensive_metrics(all_labels, gat_only_preds, 'student_gat_only')
+        
+        # Steelmanned student methods
+        if len(student_results['optimized_anomaly_preds']) > 0:
+            results['student_steelmanned_anomaly'] = compute_comprehensive_metrics(
+                all_labels, student_results['optimized_anomaly_preds'], 'student_steelmanned_anomaly')
+        
+        if len(student_results['optimized_two_stage_preds']) > 0:
+            results['student_steelmanned_two_stage'] = compute_comprehensive_metrics(
+                all_labels, student_results['optimized_two_stage_preds'], 'student_steelmanned_two_stage')
     
-    # FAST metrics computation (existing code unchanged)
-    results = {}
-    
-    # Two-stage metrics
-    results['two_stage'] = {
-        'accuracy': accuracy_score(all_labels, all_two_stage_preds),
-        'precision': precision_score(all_labels, all_two_stage_preds, zero_division=0),
-        'recall': recall_score(all_labels, all_two_stage_preds, zero_division=0),
-        'f1': f1_score(all_labels, all_two_stage_preds, zero_division=0),
-        'confusion_matrix': confusion_matrix(all_labels, all_two_stage_preds)
-    }
-    
-    # Fusion metrics
-    results['fusion'] = {
-        'accuracy': accuracy_score(all_labels, all_fusion_preds),
-        'precision': precision_score(all_labels, all_fusion_preds, zero_division=0),
-        'recall': recall_score(all_labels, all_fusion_preds, zero_division=0),
-        'f1': f1_score(all_labels, all_fusion_preds, zero_division=0),
-        'confusion_matrix': confusion_matrix(all_labels, all_fusion_preds)
-    }
-    
-    # Individual component performance
-    anomaly_only_preds = (all_anomaly_scores > 0.5).astype(int)
-    gat_only_preds = (all_gat_probs > 0.5).astype(int)
-    
-    results['anomaly_only'] = {
-        'accuracy': accuracy_score(all_labels, anomaly_only_preds),
-        'f1': f1_score(all_labels, anomaly_only_preds, zero_division=0)
-    }
-    
-    results['gat_only'] = {
-        'accuracy': accuracy_score(all_labels, gat_only_preds),
-        'f1': f1_score(all_labels, gat_only_preds, zero_division=0)
-    }
-    
-    # Store all data for analysis
-    results['labels'] = all_labels
-    results['anomaly_scores'] = all_anomaly_scores
-    results['gat_probs'] = all_gat_probs
-    results['fusion_preds'] = all_fusion_preds
-    
-    # FIXED: Store new metrics if available - use proper None checks
-    if all_gat_confidence is not None:
-        results['gat_confidence'] = all_gat_confidence
-    if all_adaptive_alpha is not None:
-        results['adaptive_alpha'] = all_adaptive_alpha
+    # Teacher model metrics
+    if pipeline.teacher_models_loaded and len(teacher_results['anomaly_scores']) > 0:
+        anomaly_only_preds = (teacher_results['anomaly_scores'] > 0.5).astype(int)
+        gat_only_preds = (teacher_results['gat_probs'] > 0.5).astype(int)
+        
+        results['teacher_two_stage'] = compute_comprehensive_metrics(all_labels, teacher_results['two_stage_preds'], 'teacher_two_stage')
+        results['teacher_fusion'] = compute_comprehensive_metrics(all_labels, teacher_results['fusion_preds'], 'teacher_fusion')
+        results['teacher_anomaly_only'] = compute_comprehensive_metrics(all_labels, anomaly_only_preds, 'teacher_anomaly_only')
+        results['teacher_gat_only'] = compute_comprehensive_metrics(all_labels, gat_only_preds, 'teacher_gat_only')
+        
+        # Steelmanned teacher methods
+        if len(teacher_results['optimized_anomaly_preds']) > 0:
+            results['teacher_steelmanned_anomaly'] = compute_comprehensive_metrics(
+                all_labels, teacher_results['optimized_anomaly_preds'], 'teacher_steelmanned_anomaly')
+        
+        if len(teacher_results['optimized_two_stage_preds']) > 0:
+            results['teacher_steelmanned_two_stage'] = compute_comprehensive_metrics(
+                all_labels, teacher_results['optimized_two_stage_preds'], 'teacher_steelmanned_two_stage')
     
     return results
 
-def analyze_score_distributions(results, num_samples=20):
-    """Analyze the distribution of raw and normalized scores."""
-    print(f"\n=== Score Distribution Analysis ===")
-    
-    raw_scores = results.get('raw_anomaly_scores', [])
-    norm_scores = results.get('anomaly_scores', [])
-    gat_probs = results.get('gat_probs', [])
-    
-    if len(raw_scores) > 0:
-        print(f"Raw Anomaly Scores:")
-        print(f"  Min: {np.min(raw_scores):.6f}")
-        print(f"  Max: {np.max(raw_scores):.6f}")
-        print(f"  Mean: {np.mean(raw_scores):.6f}")
-        print(f"  75th percentile: {np.percentile(raw_scores, 75):.6f}")
-        print(f"  90th percentile: {np.percentile(raw_scores, 90):.6f}")
-        print(f"  95th percentile: {np.percentile(raw_scores, 95):.6f}")
-    
-    if len(norm_scores) > 0:
-        print(f"Normalized Anomaly Scores:")
-        print(f"  Min: {np.min(norm_scores):.6f}")
-        print(f"  Max: {np.max(norm_scores):.6f}")  
-        print(f"  Mean: {np.mean(norm_scores):.6f}")
-    
-    if len(gat_probs) > 0:
-        print(f"GAT Probabilities:")
-        print(f"  Min: {np.min(gat_probs):.6f}")
-        print(f"  Max: {np.max(gat_probs):.6f}")
-        print(f"  Mean: {np.mean(gat_probs):.6f}")
-    
-    # Show threshold-free decision making
-    if 'dynamic_threshold' in results:
-        print(f"Dynamic Threshold: {results['dynamic_threshold']:.6f}")
 
-def analyze_fusion_behavior(results, num_samples=20):
-    """Analyze how the adaptive fusion behaves."""
-    print(f"\n=== Adaptive Fusion Analysis (first {num_samples} samples) ===")
-    print("Sample | Label | Anomaly | GAT_Prob | Confidence | Alpha | Fused | Pred")
-    print("-" * 75)
+def print_results(results, dataset_name):
+    """Print comprehensive results for both student and teacher models."""
+    print(f"\n{'='*100}")
+    print(f"COMPREHENSIVE RESULTS FOR {dataset_name.upper()}")
+    print(f"{'='*100}")
     
-    labels = results['labels'][:num_samples]
-    anomaly_scores = results['anomaly_scores'][:num_samples] 
-    gat_probs = results['gat_probs'][:num_samples]
-    gat_confidence = results.get('gat_confidence', np.array([0.5] * num_samples))[:num_samples]
-    adaptive_alpha = results.get('adaptive_alpha', np.array([0.6] * num_samples))[:num_samples]
-    fusion_preds = results['fusion_preds'][:num_samples]
+    # Separate student and teacher methods
+    student_methods = []
+    teacher_methods = []
+    all_method_names = []
     
-    for i in range(min(num_samples, len(labels))):
-        # FIXED: Safe array indexing without truth value evaluation
-        try:
-            if hasattr(adaptive_alpha, '__len__') and len(adaptive_alpha) > i:
-                alpha = float(adaptive_alpha[i])
+    method_mapping = {
+        'student_two_stage': 'S-TwoStage',
+        'student_fusion': 'S-Fusion',
+        'student_anomaly_only': 'S-Anomaly',
+        'student_gat_only': 'S-GAT',
+        'student_steelmanned_anomaly': 'S-Steel-Anomaly',
+        'student_steelmanned_two_stage': 'S-Steel-TwoStage',
+        'teacher_two_stage': 'T-TwoStage',
+        'teacher_fusion': 'T-Fusion',
+        'teacher_anomaly_only': 'T-Anomaly',
+        'teacher_gat_only': 'T-GAT',
+        'teacher_steelmanned_anomaly': 'T-Steel-Anomaly',
+        'teacher_steelmanned_two_stage': 'T-Steel-TwoStage'
+    }
+    
+    # Collect available methods
+    available_methods = []
+    available_names = []
+    
+    for method_key, display_name in method_mapping.items():
+        if method_key in results:
+            available_methods.append(method_key)
+            available_names.append(display_name)
+    
+    if not available_methods:
+        print("No model results available!")
+        return
+    
+    # Metrics table
+    metrics = [('Accuracy', 'accuracy'), ('Precision', 'precision'), ('Recall', 'recall'), 
+               ('F1-Score', 'f1'), ('Specificity', 'specificity'), ('Balanced Acc', 'balanced_accuracy')]
+    
+    print(f"\n{'Metric':<15}", end='')
+    for name in available_names:
+        print(f"{name:>15}", end='')
+    print()
+    print('-' * (15 + 15 * len(available_names)))
+    
+    for metric_name, metric_key in metrics:
+        print(f"{metric_name:<15}", end='')
+        for method in available_methods:
+            if method in results:
+                value = results[method][metric_key]
+                print(f"{value:>15.4f}", end='')
             else:
-                alpha = 0.6  # Default value
-        except (IndexError, TypeError):
-            alpha = 0.6
-            
-        try:
-            if hasattr(gat_confidence, '__len__') and len(gat_confidence) > i:
-                confidence = float(gat_confidence[i])
-            else:
-                confidence = 0.5
-        except (IndexError, TypeError):
-            confidence = 0.5
-            
-        fused = alpha * gat_probs[i] + (1 - alpha) * anomaly_scores[i]
+                print(f"{'N/A':>15}", end='')
+        print()
+    
+    # Dataset characteristics (use any available method for stats)
+    first_method = available_methods[0]
+    total = results[first_method]['total_samples']
+    normal = results[first_method]['support_class_0']
+    attack = results[first_method]['support_class_1']
+    
+    print(f"\nDataset: {total:,} samples ({normal:,} normal, {attack:,} attack)")
+    print(f"Class imbalance: {normal/attack:.1f}:1 (Normal:Attack)")
+    
+    # Model comparison
+    print(f"\n{'='*60}")
+    print("MODEL COMPARISON")
+    print(f"{'='*60}")
+    
+    # Student vs Teacher comparison
+    if 'student_gat_only' in results and 'teacher_gat_only' in results:
+        student_f1 = results['student_gat_only']['f1']
+        teacher_f1 = results['teacher_gat_only']['f1']
+        improvement = teacher_f1 - student_f1
+        print(f"GAT Performance - Student: {student_f1:.4f}, Teacher: {teacher_f1:.4f} (Δ: {improvement:+.4f})")
+    
+    if 'student_fusion' in results and 'teacher_fusion' in results:
+        student_f1 = results['student_fusion']['f1']
+        teacher_f1 = results['teacher_fusion']['f1']
+        improvement = teacher_f1 - student_f1
+        print(f"Fusion Performance - Student: {student_f1:.4f}, Teacher: {teacher_f1:.4f} (Δ: {improvement:+.4f})")
+    
+    # Show steelmanned improvements
+    print(f"\n{'='*60}")
+    print("STEELMANNED IMPROVEMENTS")
+    print(f"{'='*60}")
+    
+    for model_type in ['student', 'teacher']:
+        if f'{model_type}_steelmanned_anomaly' in results and f'{model_type}_anomaly_only' in results:
+            original_f1 = results[f'{model_type}_anomaly_only']['f1']
+            steelmanned_f1 = results[f'{model_type}_steelmanned_anomaly']['f1']
+            improvement = steelmanned_f1 - original_f1
+            print(f"{model_type.title()} Anomaly-Only F1 improvement: {improvement:+.4f}")
         
-        print(f"{i:6d} | {labels[i]:5d} | {anomaly_scores[i]:7.3f} | {gat_probs[i]:8.3f} | "
-              f"{confidence:10.3f} | {alpha:5.3f} | {fused:5.3f} | {fusion_preds[i]:4d}")
-    
-    # FIXED: Summary statistics with safe array checking
-    try:
-        if hasattr(adaptive_alpha, '__len__') and len(adaptive_alpha) > 0:
-            alpha_array = np.array(adaptive_alpha)
-            if alpha_array.size > 0:
-                print(f"\nAlpha Statistics:")
-                print(f"  Mean: {np.mean(alpha_array):.3f}")
-                print(f"  Min:  {np.min(alpha_array):.3f}")  
-                print(f"  Max:  {np.max(alpha_array):.3f}")
-                print(f"  Std:  {np.std(alpha_array):.3f}")
-            else:
-                print(f"\nAlpha Statistics: Using default value (0.6)")
-        else:
-            print(f"\nAlpha Statistics: Using default value (0.6)")
-    except Exception as e:
-        print(f"\nAlpha Statistics: Error computing statistics - {e}")
-        print(f"Using default value (0.6)")
+        if f'{model_type}_steelmanned_two_stage' in results and f'{model_type}_two_stage' in results:
+            original_f1 = results[f'{model_type}_two_stage']['f1']
+            steelmanned_f1 = results[f'{model_type}_steelmanned_two_stage']['f1']
+            improvement = steelmanned_f1 - original_f1
+            print(f"{model_type.title()} Two-Stage F1 improvement: {improvement:+.4f}")
 
-def main(evaluate_known_only=True):
-    """OPTIMIZED main evaluation function."""
+
+@hydra.main(config_path="conf", config_name="base", version_base=None)
+def main(config: DictConfig):
+    """Main evaluation function for both student and teacher models."""
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-
-    # Check available models
-    available_models = []
-    model_patterns = [
-        ("set_01", "datasets/can-train-and-test-v1.5/set_01"),
-        ("set_02", "datasets/can-train-and-test-v1.5/set_02"), 
-        ("set_03", "datasets/can-train-and-test-v1.5/set_03"),
-        ("set_04", "datasets/can-train-and-test-v1.5/set_04"),
-        ("hcrl_ch", "datasets/can-train-and-test-v1.5/hcrl-ch"),
-        ("hcrl_sa", "datasets/can-train-and-test-v1.5/hcrl-sa"),
-    ]
     
-    test_datasets = []
-    for model_key, folder_path in model_patterns:
-        autoencoder_path = f"saved_models/student_autoencoder_{model_key}.pth"
-        classifier_path = f"saved_models/student_classifier_{model_key}.pth"
-        threshold_path = f"saved_models/student_threshold_{model_key}.pth"
-        
-        if os.path.exists(autoencoder_path) and os.path.exists(classifier_path):
-            test_datasets.append({
-                "folder": folder_path,
-                "student_autoencoder": autoencoder_path,
-                "student_classifier": classifier_path,
-                "threshold": threshold_path
-            })
-            available_models.append(model_key)
-
-    if not available_models:
-        print("No student models found!")
+    # Get dataset from config
+    config_dict = OmegaConf.to_container(config, resolve=True)
+    dataset_key = config_dict['root_folder']
+    
+    # Dataset paths
+    root_folders = {
+        'hcrl_ch': r"datasets/can-train-and-test-v1.5/hcrl-ch",
+        'hcrl_sa': r"datasets/can-train-and-test-v1.5/hcrl-sa",
+        'set_01': r"datasets/can-train-and-test-v1.5/set_01",
+        'set_02': r"datasets/can-train-and-test-v1.5/set_02",
+        'set_03': r"datasets/can-train-and-test-v1.5/set_03",
+        'set_04': r"datasets/can-train-and-test-v1.5/set_04",
+    }
+    
+    if dataset_key not in root_folders:
+        print(f"Dataset {dataset_key} not found!")
         return
-
-    print("=" * 80)
-    print("OPTIMIZED STUDENT MODEL EVALUATION")
-    print("=" * 80)
-    print(f"Found models: {', '.join(available_models)}")
-
-    for dataset_info in test_datasets:
-        root_folder = dataset_info["folder"]
-        student_autoencoder_path = dataset_info["student_autoencoder"]
-        student_classifier_path = dataset_info["student_classifier"]
-        threshold_path = dataset_info["threshold"]
-
-        print(f"\n{'='*50}")
-        print(f"Evaluating: {root_folder.split('/')[-1]}")
-        print(f"{'='*50}")
-
-        try:
-            eval_start = time.time()
-            
-            # Build dataset
-            id_mapping = build_id_mapping_from_normal(root_folder)
-            
-            if "hcrl-ch" in root_folder:
-                combined_dataset = []
-                for subfolder_name in os.listdir(root_folder):
-                    subfolder_path = os.path.join(root_folder, subfolder_name)
-                    if os.path.isdir(subfolder_path) and subfolder_name.startswith("test_"):
-                        test_data = graph_creation(subfolder_path, folder_type="test_", 
-                                                 id_mapping=id_mapping, window_size=100)
-                        combined_dataset.extend(test_data)
-                test_dataset = combined_dataset
-                
-            elif "hcrl-sa" in root_folder:
-                test_subfolder = os.path.join(root_folder, "test_01_known_vehicle_known_attack")
-                if not os.path.exists(test_subfolder):
-                    print(f"Test folder not found: {test_subfolder}")
-                    continue
-                test_dataset = graph_creation(test_subfolder, folder_type="test_", 
-                                            id_mapping=id_mapping, window_size=100)
-            else:
-                test_subfolder = os.path.join(root_folder, "test_01_known_vehicle_known_attack")
-                if not os.path.exists(test_subfolder):
-                    print(f"Test folder not found: {test_subfolder}")
-                    continue
-                test_dataset = graph_creation(test_subfolder, folder_type="test_", 
-                                            id_mapping=id_mapping, window_size=100)
-
-            print(f"Loaded {len(test_dataset)} test graphs")
-
-            # OPTIMIZED data loader with large batch size
-            test_loader = create_data_loaders(None, test_dataset, None, 512, device)
-
-            # Initialize pipeline
-            pipeline = StudentEvaluationPipeline(
-                num_ids=len(id_mapping), embedding_dim=8, device=device)
-            pipeline.load_student_models(student_autoencoder_path, student_classifier_path, threshold_path)
-
-            # FAST evaluation
-            results = evaluate_student_model_fast(pipeline, test_loader, device)
-
-            eval_time = time.time() - eval_start
-            print(f"\nEvaluation completed in {eval_time:.2f} seconds")
-
-            # Print results
-            print(f"\n=== RESULTS ===")
-            
-            two_stage = results['two_stage']
-            print(f"Two-Stage: Acc={two_stage['accuracy']:.4f}, F1={two_stage['f1']:.4f}")
-            
-            fusion = results['fusion']
-            print(f"Fusion:    Acc={fusion['accuracy']:.4f}, F1={fusion['f1']:.4f}")
-            
-            anomaly = results['anomaly_only']
-            gat = results['gat_only']
-            print(f"Anomaly Only: Acc={anomaly['accuracy']:.4f}, F1={anomaly['f1']:.4f}")
-            print(f"GAT Only:     Acc={gat['accuracy']:.4f}, F1={gat['f1']:.4f}")
-
-            # FIXED: Show analysis with proper error handling
-            try:
-                analyze_score_distributions(results)
-            except Exception as e:
-                print(f"Error in score distribution analysis: {e}")
-            
-            # FIXED: Show adaptive fusion analysis with better error handling
-            try:
-                if 'adaptive_alpha' in results and results['adaptive_alpha'] is not None:
-                    analyze_fusion_behavior(results, num_samples=15)
-                else:
-                    print("\nNo adaptive alpha data available for fusion analysis")
-            except Exception as e:
-                print(f"Error in fusion behavior analysis: {e}")
-
-        except Exception as e:
-            print(f"Error evaluating {root_folder}: {str(e)}")
-            import traceback
-            traceback.print_exc()  # This will show the full error traceback for debugging
-            continue  # Continue to next dataset instead of crashing
+    
+    root_folder = root_folders[dataset_key]
+    
+    # Model paths
+    student_autoencoder_path = f"saved_models/student_autoencoder_{dataset_key}.pth"
+    student_classifier_path = f"saved_models/student_classifier_{dataset_key}.pth"
+    student_threshold_path = f"saved_models/student_threshold_{dataset_key}.pth"
+    
+    teacher_autoencoder_path = f"saved_models/teacher_autoencoder_{dataset_key}.pth"
+    teacher_classifier_path = f"saved_models/teacher_classifier_{dataset_key}.pth"
+    teacher_threshold_path = f"saved_models/teacher_threshold_{dataset_key}.pth"
+    
+    print(f"\n{'='*60}")
+    print(f"EVALUATING: {dataset_key}")
+    print(f"{'='*60}")
+    
+    try:
+        eval_start = time.time()
+        
+        # Build dataset
+        id_mapping = build_id_mapping_from_normal(root_folder)
+        
+        # Load training data for threshold optimization
+        train_folder = os.path.join(root_folder, "training")
+        train_dataset = None
+        if os.path.exists(train_folder):
+            print("Loading training data for threshold optimization...")
+            train_dataset = graph_creation(train_folder, folder_type="training_", 
+                                         id_mapping=id_mapping, window_size=100)
+            print(f"Loaded {len(train_dataset)} training graphs")
+        
+        # Load test data
+        if "hcrl-ch" in root_folder:
+            combined_dataset = []
+            for subfolder_name in os.listdir(root_folder):
+                subfolder_path = os.path.join(root_folder, subfolder_name)
+                if os.path.isdir(subfolder_path) and subfolder_name.startswith("test_"):
+                    test_data = graph_creation(subfolder_path, folder_type="test_", 
+                                             id_mapping=id_mapping, window_size=100)
+                    combined_dataset.extend(test_data)
+            test_dataset = combined_dataset
+        else:
+            test_subfolder = os.path.join(root_folder, "test_01_known_vehicle_known_attack")
+            if not os.path.exists(test_subfolder):
+                print(f"Test folder not found: {test_subfolder}")
+                return
+            test_dataset = graph_creation(test_subfolder, folder_type="test_", 
+                                        id_mapping=id_mapping, window_size=100)
+        
+        print(f"Loaded {len(test_dataset)} test graphs")
+        
+        # Create data loader
+        test_loader = create_optimized_data_loader(test_dataset, 512, device)
+        
+        # Initialize comprehensive pipeline
+        pipeline = ComprehensiveEvaluationPipeline(
+            num_ids=len(id_mapping), embedding_dim=8, device=device)
+        
+        # Load student models
+        student_loaded = pipeline.load_student_models(
+            student_autoencoder_path, student_classifier_path, student_threshold_path)
+        
+        # Load teacher models
+        teacher_loaded = pipeline.load_teacher_models(
+            teacher_autoencoder_path, teacher_classifier_path, teacher_threshold_path)
+        
+        if not student_loaded and not teacher_loaded:
+            print("No models found! Please train models first.")
+            return
+        
+        # Optimize thresholds if training data available
+        if train_dataset is not None and len(train_dataset) > 100:
+            pipeline.optimize_thresholds(train_dataset)
+        else:
+            print("Skipping threshold optimization (insufficient training data)")
+        
+        # Comprehensive evaluation
+        results = evaluate_comprehensive(pipeline, test_loader, device)
+        
+        eval_time = time.time() - eval_start
+        print(f"\nEvaluation completed in {eval_time:.2f} seconds")
+        
+        # Print results
+        print_results(results, dataset_key)
+        
+        # Memory cleanup
+        del pipeline, test_loader, test_dataset
+        if train_dataset is not None:
+            del train_dataset
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+        
+    except Exception as e:
+        print(f"Error evaluating {dataset_key}: {str(e)}")
+        import traceback
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

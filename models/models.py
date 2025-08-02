@@ -261,8 +261,54 @@ if __name__ == '__main__':
     # Knowledge Distillation Scenario
     # teacher_model = GATWithJK(in_channels=10, hidden_channels=32, out_channels=1, num_layers=5, heads=8)
     # student_model = GATWithJK(in_channels=10, hidden_channels=32, out_channels=1, num_layers=2, heads=4)
-    autoencoder = GraphAutoencoderNeighborhood(num_ids=2000, in_channels=11, embedding_dim=8)
+    #autoencoder = GraphAutoencoderNeighborhood(num_ids=2000, in_channels=11, embedding_dim=8)
     # net = GATWithJK(10, 8, 1)
+
+    # Teacher models
+    teacher_autoencoder = GraphAutoencoderNeighborhood(
+        num_ids=2000, 
+        in_channels=11, 
+        # embedding_dim=embedding_dim,
+        hidden_dim=32,           # Larger hidden dimension
+        latent_dim=32,           # Larger latent dimension
+        num_encoder_layers=3,    # More layers
+        num_decoder_layers=3,
+        encoder_heads=4,         # More attention heads
+        decoder_heads=4
+    )
+    
+    teacher_classifier = GATWithJK(
+       num_ids=2000,  
+        in_channels=11, 
+        hidden_channels=32,      # Larger hidden channels
+        out_channels=1, 
+        num_layers=5,            # More layers
+        heads=8,                # More attention heads
+        # embedding_dim=embedding_dim
+    )
+    
+    # Student models
+    student_autoencoder = GraphAutoencoderNeighborhood(
+        num_ids=2000,  
+        in_channels=11, 
+        # embedding_dim=embedding_dim,
+        hidden_dim=16,           # Smaller hidden dimension
+        latent_dim=16,           # Smaller latent dimension
+        num_encoder_layers=2,    # Fewer layers
+        num_decoder_layers=2,
+        encoder_heads=2,         # Fewer attention heads
+        decoder_heads=2
+    )
+    
+    student_classifier = GATWithJK(
+        num_ids=2000,  
+        in_channels=11, 
+        hidden_channels=16,      # Smaller hidden channels
+        out_channels=1, 
+        num_layers=2,            # Fewer layers
+        heads=4,                 # Fewer attention heads
+        # embedding_dim=embedding_dim
+    )
 
     def model_characteristics(model):
         """Print model characteristics including parameter count and size.
@@ -281,9 +327,13 @@ if __name__ == '__main__':
         print(f'Number of Parameters: {num_params:.3f}')
         print(f'Model size: {size_all_mb:.3f} MB')
 
-    # model_characteristics(teacher_model)
-    # print(teacher_model)
-    # model_characteristics(student_model)
-    # print(student_model)
-    model_characteristics(autoencoder)
-    print(autoencoder)
+    
+    model_characteristics(teacher_autoencoder)
+    #print(teacher_autoencoder)
+    model_characteristics(teacher_classifier)
+    #print(teacher_classifier)
+    
+    model_characteristics(student_autoencoder)
+    #print(student_autoencoder)
+    model_characteristics(student_classifier)
+    #print(student_classifier)

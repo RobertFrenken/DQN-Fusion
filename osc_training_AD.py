@@ -79,7 +79,7 @@ def create_optimized_data_loaders(train_subset, test_dataset, full_train_dataset
     
     # Aggressive batch sizing for teacher training
     if torch.cuda.is_available():
-        batch_size = 4096  # Same as KD pipeline
+        batch_size = 2048  # Same as KD pipeline
     else:
         batch_size = min(batch_size, 1024)
 
@@ -173,7 +173,7 @@ class GATPipeline:
         
         # ADD: Learning rate scheduler
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.7, patience=5, verbose=True
+            optimizer, mode='min', factor=0.7, patience=3, verbose=True
         )
         
         # ADD: Mixed precision training for CUDA
@@ -328,7 +328,7 @@ class GATPipeline:
                 log_memory_usage(f"Autoencoder Epoch {epoch+1}")
             
             # Early stopping
-            if patience_counter >= 10:
+            if patience_counter >= 5:
                 print(f"Early stopping: No improvement for {patience_counter} epochs")
                 break
             
@@ -369,7 +369,7 @@ class GATPipeline:
         
         # ADD: Learning rate scheduler
         scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode='min', factor=0.8, patience=5, verbose=True
+            optimizer, mode='min', factor=0.8, patience=3, verbose=True
         )
         
         criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
@@ -503,7 +503,7 @@ class GATPipeline:
                 scheduler.step(train_avg_loss)
             
             # Early stopping
-            if patience_counter >= 10:
+            if patience_counter >= 5:
                 print(f"Early stopping: No improvement for {patience_counter} epochs")
                 break
             
@@ -630,9 +630,8 @@ class GATPipeline:
         errors_normal, errors_attack, neighbor_errors_normal, neighbor_errors_attack, id_errors_normal, id_errors_attack = result
         
         # Print statistics and generate plots
-        # FIXED: Print statistics and generate plots with key_suffix parameter
-        # self._print_statistics_and_plots(errors_normal, errors_attack, neighbor_errors_normal, 
-        #                                 neighbor_errors_attack, id_errors_normal, id_errors_attack, key_suffix)
+        self._print_statistics_and_plots(errors_normal, errors_attack, neighbor_errors_normal, 
+                                        neighbor_errors_attack, id_errors_normal, id_errors_attack)
 
         # Create balanced dataset with new strategy
         balanced_graphs = self._create_balanced_dataset_with_composite_filtering(full_loader)
@@ -647,8 +646,8 @@ class GATPipeline:
             val_graph_data = self._compute_composite_reconstruction_errors(val_loader)
             val_graphs = [graph for graph, error, is_attack in val_graph_data]
             print(f"Created {len(val_graphs)} validation graphs for classifier evaluation")
-
-        self._train_classifier(balanced_graphs, val_graphs=val_graphs, epochs=epochs)
+        
+        self._train_classifier(balanced_graphs, epochs, val_graphs=val_graphs)
 
     def _compute_composite_reconstruction_errors(self, loader):
         """Compute composite reconstruction errors for filtering normal graphs."""
@@ -1028,13 +1027,11 @@ def main(config: DictConfig):
     TRAIN_RATIO = config_dict['train_ratio']
     BATCH_SIZE = config_dict['batch_size']
     EPOCHS = config_dict['epochs']
-    QUIET_MODE = True
     
     # Generate feature histograms
     feature_names = ["CAN ID", "data1", "data2", "data3", "data4", "data5", "data6", "data7", "data8", "count", "position"]
-    
-    # plot_feature_histograms([data for data in dataset], feature_names=feature_names, 
-    #                            save_path=f"images/feature_histograms_{KEY}.png")
+    plot_feature_histograms([data for data in dataset], feature_names=feature_names, 
+                           save_path=f"images/feature_histograms_{KEY}.png")
 
     # Train/test split
     train_size = int(TRAIN_RATIO * len(dataset))
@@ -1070,18 +1067,18 @@ def main(config: DictConfig):
     log_memory_usage("After autoencoder training")
 
     # Visualization
-    # plot_graph_reconstruction(pipeline, full_train_loader, num_graphs=4, 
-    #                         save_path=f"images/graph_recon_examples_{KEY}.png")
+    plot_graph_reconstruction(pipeline, full_train_loader, num_graphs=4, 
+                            save_path=f"images/graph_recon_examples_{KEY}.png")
     
     # Latent space visualization
-    # N = min(10000, len(train_dataset))
-    # indices = np.random.choice(len(train_dataset), size=N, replace=False)
-    # subsample = [train_dataset[i] for i in indices]
-    # subsample_loader = DataLoader(subsample, batch_size=BATCH_SIZE, shuffle=False)
-    # zs, labels = extract_latent_vectors(pipeline, subsample_loader)
-    # plot_latent_space(zs, labels, save_path=f"images/latent_space_{KEY}.png")
-    # plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, 
-    #                      save_path=f"images/node_recon_subplot_{KEY}.png")
+    N = min(10000, len(train_dataset))
+    indices = np.random.choice(len(train_dataset), size=N, replace=False)
+    subsample = [train_dataset[i] for i in indices]
+    subsample_loader = DataLoader(subsample, batch_size=BATCH_SIZE, shuffle=False)
+    zs, labels = extract_latent_vectors(pipeline, subsample_loader)
+    plot_latent_space(zs, labels, save_path=f"images/latent_space_{KEY}.png")
+    plot_node_recon_errors(pipeline, full_train_loader, num_graphs=5, 
+                         save_path=f"images/node_recon_subplot_{KEY}.png")
     
     print("\n=== Stage 2: Classifier Training ===")
     pipeline.train_stage2(full_train_loader, val_loader=val_loader, epochs=EPOCHS, key_suffix=KEY)
@@ -1116,29 +1113,29 @@ def main(config: DictConfig):
     print(f"  - Classifier: Best validation accuracy model (classifier_best_val_{KEY}.pth)")
 
     # Evaluation
-    # print("\n=== Test Set Evaluation ===")
-    # test_labels = [data.y.item() for data in test_dataset]
-    # unique, counts = np.unique(test_labels, return_counts=True)
-    # print("Test set distribution:")
-    # for u, c in zip(unique, counts):
-    #     print(f"  Label {u}: {c} samples")
+    print("\n=== Test Set Evaluation ===")
+    test_labels = [data.y.item() for data in test_dataset]
+    unique, counts = np.unique(test_labels, return_counts=True)
+    print("Test set distribution:")
+    for u, c in zip(unique, counts):
+        print(f"  Label {u}: {c} samples")
 
     # Standard prediction (original method)
-    # print("\n--- Standard Two-Stage Prediction ---")
-    # preds, labels = [], []
-    # for batch in val_loader:
-    #     batch = batch.to(device)
-    #     pred = pipeline.predict(batch)
-    #     preds.append(pred.cpu())
-    #     labels.append(batch.y.cpu())
+    print("\n--- Standard Two-Stage Prediction ---")
+    preds, labels = [], []
+    for batch in val_loader:
+        batch = batch.to(device)
+        pred = pipeline.predict(batch)
+        preds.append(pred.cpu())
+        labels.append(batch.y.cpu())
 
-    # preds = torch.cat(preds)
-    # labels = torch.cat(labels)
-    # standard_accuracy = (preds == labels).float().mean().item()
+    preds = torch.cat(preds)
+    labels = torch.cat(labels)
+    standard_accuracy = (preds == labels).float().mean().item()
 
-    # print(f"Standard Test Accuracy: {standard_accuracy:.4f}")
-    # print("Standard Confusion Matrix:")
-    # print(confusion_matrix(labels.cpu().numpy(), preds.cpu().numpy()))
+    print(f"Standard Test Accuracy: {standard_accuracy:.4f}")
+    print("Standard Confusion Matrix:")
+    print(confusion_matrix(labels.cpu().numpy(), preds.cpu().numpy()))
 
 
 if __name__ == "__main__":
