@@ -61,7 +61,6 @@ class FocalLoss(nn.Module):
             return F_loss
         
 
-
 def compute_class_weights(labels):
     """
     Compute class weights based on the distribution of labels.
@@ -72,6 +71,7 @@ def compute_class_weights(labels):
     """
     class_weights = compute_class_weight('balanced', classes=np.unique(labels), y=labels)
     return torch.tensor(class_weights, dtype=torch.float)
+
 #########################################
 # 1) PyTorch Trainer Class              #
 #########################################
