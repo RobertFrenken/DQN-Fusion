@@ -88,7 +88,7 @@ The framework addresses CAN bus cybersecurity by:
 
 ## Installation
 ```bash
-git clone https://github.com/robertfrenken/CAN-Graph.git
+git clone https://anonymous.4open.science/r/Multi-Stage-VGAE-GAT
 cd CAN-Graph
 python -m venv venv
 venv\Scripts\activate  # On Windows
