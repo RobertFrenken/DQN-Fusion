@@ -11,15 +11,15 @@ import time
 import hydra
 from omegaconf import DictConfig, OmegaConf
 from models.models import GATWithJK, GraphAutoencoder
-from preprocessing import graph_creation, build_id_mapping_from_normal
-from training_utils import PyTorchTrainer, PyTorchDistillationTrainer, DistillationTrainer
+from old_code.preprocessing import graph_creation, build_id_mapping_from_normal
+from training.training_utils import PyTorchTrainer, PyTorchDistillationTrainer, DistillationTrainer
 from torch_geometric.data import Batch
 from sklearn.metrics import confusion_matrix
 import random
 import matplotlib.pyplot as plt
 
 
-from plotting_utils import (
+from utils.plotting_utils import (
     plot_feature_histograms,
     print_graph_stats,
     print_graph_structure,

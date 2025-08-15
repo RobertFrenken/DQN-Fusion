@@ -34,8 +34,8 @@ from typing import Tuple, Dict, Any, Optional, List
 import warnings
 
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
-from preprocessing import graph_creation, build_id_mapping_from_normal
-from training_utils import distillation_loss_fn
+from old_code.preprocessing import graph_creation, build_id_mapping_from_normal
+from training.training_utils import distillation_loss_fn
 
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)

@@ -15,7 +15,7 @@ import umap
 import plotly.express as px
 import pandas as pd
 
-from preprocessing import graph_creation, GraphDataset
+from old_code.preprocessing import graph_creation, GraphDataset
 from models import GATWithJK  
 
 ########################################

@@ -13,8 +13,8 @@ from sklearn.metrics import confusion_matrix
 import random
 
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
-from preprocessing import graph_creation, build_id_mapping_from_normal
-from training_utils import DistillationTrainer, distillation_loss_fn, FocalLoss
+from old_code.preprocessing import graph_creation, build_id_mapping_from_normal
+from training.training_utils import DistillationTrainer, distillation_loss_fn, FocalLoss
 from torch_geometric.data import Batch
 
 def extract_latent_vectors(pipeline, loader):

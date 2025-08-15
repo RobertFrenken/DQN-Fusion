@@ -15,7 +15,7 @@ import hydra
 from omegaconf import DictConfig, OmegaConf
 
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
-from preprocessing import graph_creation, build_id_mapping_from_normal
+from old_code.preprocessing import graph_creation, build_id_mapping_from_normal
 
 
 def create_student_models(num_ids, embedding_dim, device):
