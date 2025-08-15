@@ -2,7 +2,8 @@ File Structure:
 CAN-Graph/
 │
 ├── models/
-│   ├── models.py
+│   ├── models.py - holds the classifier, AD, and in future fusion methods
+│   └── pipeline.py - holds the pipeline class to train the models
 │   └── __init__.py
 ├── preprocessing/
 │   ├── preprocessing.py - will take in the root folder name, and return the processed graphs
