@@ -5,6 +5,9 @@ This module implements a comprehensive knowledge distillation framework for CAN 
 intrusion detection, transferring knowledge from large teacher models to compact
 student models while maintaining detection performance.
 
+
+adding note
+
 Key Features:
 - Teacher-student architecture with configurable compression ratios
 - Memory-optimized training with mixed precision support
