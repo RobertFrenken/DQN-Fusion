@@ -3,7 +3,44 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import global_mean_pool
 from torch_geometric.nn import GATConv, JumpingKnowledge
+import numpy as np
 
+class QFusionAgent:
+    def __init__(self, alpha_steps=11, state_bins=10, lr=0.1, gamma=0.9, epsilon=0.2):
+        """
+        Q-learning agent for dynamic fusion of GAT and VGAE outputs.
+        - alpha_steps: Number of discrete fusion weights (0.0, 0.1, ..., 1.0)
+        - state_bins: Number of bins for discretizing state features
+        """
+        self.alpha_values = np.linspace(0, 1, alpha_steps)
+        self.state_bins = state_bins
+        self.lr = lr
+        self.gamma = gamma
+        self.epsilon = epsilon
+        # Q-table: shape [state_bins, state_bins, alpha_steps]
+        self.Q = np.zeros((state_bins, state_bins, alpha_steps))
+
+    def discretize(self, anomaly_score, gat_prob):
+        # Discretize scores to bins
+        a_bin = min(int(anomaly_score * self.state_bins), self.state_bins - 1)
+        g_bin = min(int(gat_prob * self.state_bins), self.state_bins - 1)
+        return a_bin, g_bin
+
+    def select_action(self, anomaly_score, gat_prob):
+        a_bin, g_bin = self.discretize(anomaly_score, gat_prob)
+        if np.random.rand() < self.epsilon:
+            action_idx = np.random.randint(len(self.alpha_values))
+        else:
+            action_idx = np.argmax(self.Q[a_bin, g_bin])
+        return self.alpha_values[action_idx], action_idx, (a_bin, g_bin)
+
+    def update(self, state, action_idx, reward, next_state):
+        a_bin, g_bin = state
+        next_a_bin, next_g_bin = next_state
+        best_next = np.max(self.Q[next_a_bin, next_g_bin])
+        td_target = reward + self.gamma * best_next
+        td_error = td_target - self.Q[a_bin, g_bin, action_idx]
+        self.Q[a_bin, g_bin, action_idx] += self.lr * td_error
 class GATWithJK(nn.Module):
     """Graph Attention Network with Jumping Knowledge connections."""
     
