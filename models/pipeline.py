@@ -8,7 +8,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.data import Batch
 from typing import List, Tuple, Optional, Dict, Any
 from sklearn.metrics import confusion_matrix, classification_report
-
+from models.adaptive_fusion import QFusionAgent
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
 from utils.plotting_utils import (
     plot_recon_error_hist,
