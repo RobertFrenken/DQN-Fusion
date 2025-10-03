@@ -685,3 +685,17 @@ def test_adaptive_fusion():
     
 if __name__ == "__main__":
     test_adaptive_fusion()
+
+
+'''
+6. Benefits of This Approach
+Adaptive Learning: The fusion weights adapt to different scenarios
+State-Dependent: Different fusion strategies for different confidence combinations
+Continuous Improvement: The agent keeps learning from new data
+Interpretable: You can visualize the learned policy
+Comparative: Easy to compare against fixed fusion strategies
+Start by running the test, then integrate step by step into your existing pipeline. 
+The Q-learning agent will learn when to trust the GAT classifier more vs. when 
+to rely more on anomaly detection based on their respective confidence levels.
+
+'''
