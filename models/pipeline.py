@@ -61,6 +61,17 @@ class GATPipeline:
             heads=8, 
             embedding_dim=embedding_dim
         ).to(self.device)
+
+        # Initialize Q-learning fusion agent
+        self.fusion_agent = QFusionAgent(
+            alpha_steps=21,     # 0.0, 0.05, 0.10, ..., 1.0
+            state_bins=10,      # 10x10 state grid
+            lr=0.1,             # Learning rate
+            gamma=0.9,          # Discount factor
+            epsilon=0.2,        # Initial exploration
+            epsilon_decay=0.995,
+            min_epsilon=0.01
+        )
         
         self.threshold = 0.0
         print(f"✓ GAT Pipeline initialized on {self.device}")
@@ -677,6 +688,249 @@ class GATPipeline:
         return (torch.tensor(final_preds, device=self.device),
                 torch.tensor(anomaly_scores),
                 torch.tensor(gat_probs))
+    
+    def train_adaptive_fusion(self, train_loader: DataLoader, 
+                            epochs: int = 5, validation_interval: int = 100) -> Dict:
+        """
+        Train the Q-learning fusion agent using online learning.
+        
+        Args:
+            train_loader: Training data for fusion learning
+            epochs: Number of training epochs
+            validation_interval: Interval for validation and epsilon decay
+            
+        Returns:
+            Dictionary with training statistics
+        """
+        print(f"\n=== Training Adaptive Fusion Agent ({epochs} epochs) ===")
+        
+        if not self.fusion_enabled:
+            print("Enabling fusion mode...")
+            self.fusion_enabled = True
+        
+        self.autoencoder.eval()
+        self.classifier.eval()
+        
+        training_stats = {
+            'epoch_accuracies': [],
+            'epoch_rewards': [],
+            'epsilon_values': [],
+            'fusion_weights_used': []
+        }
+        
+        for epoch in range(epochs):
+            epoch_correct = 0
+            epoch_total = 0
+            epoch_rewards = []
+            epoch_alphas = []
+            
+            print(f"\nEpoch {epoch + 1}/{epochs} (ε={self.fusion_agent.epsilon:.3f})")
+            
+            for batch_idx, batch in enumerate(train_loader):
+                batch = batch.to(self.device)
+                
+                # Get model outputs
+                with torch.no_grad():
+                    # Autoencoder outputs for anomaly detection
+                    cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
+                        batch.x, batch.edge_index, batch.batch)
+                    
+                    # Compute anomaly scores
+                    anomaly_scores = self._compute_normalized_anomaly_scores(
+                        batch, cont_out, canid_logits, neighbor_logits)
+                    
+                    # GAT classifier outputs
+                    gat_logits = self.classifier(batch)
+                    gat_probs = torch.sigmoid(gat_logits.squeeze()).cpu().numpy()
+                
+                # Process each graph in the batch
+                graphs = Batch.to_data_list(batch)
+                true_labels = batch.y.cpu().numpy()
+                
+                for i, (graph, true_label, anomaly_score, gat_prob) in enumerate(
+                    zip(graphs, true_labels, anomaly_scores, gat_probs)):
+                    
+                    # Select fusion weight
+                    alpha, action_idx, state = self.fusion_agent.select_action(
+                        anomaly_score, gat_prob, training=True)
+                    
+                    # Make fused prediction
+                    fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob
+                    prediction = 1 if fused_score > 0.5 else 0
+                    
+                    # Compute reward
+                    reward = self.fusion_agent.compute_reward(
+                        prediction, int(true_label), anomaly_score, gat_prob)
+                    
+                    # Update Q-table
+                    self.fusion_agent.update_q_table(state, action_idx, reward)
+                    
+                    # Track statistics
+                    epoch_correct += (prediction == int(true_label))
+                    epoch_total += 1
+                    epoch_rewards.append(reward)
+                    epoch_alphas.append(alpha)
+                
+                # Periodic validation and epsilon decay
+                if batch_idx % validation_interval == 0 and batch_idx > 0:
+                    self.fusion_agent.decay_epsilon()
+                    
+                    if batch_idx % (validation_interval * 2) == 0:
+                        current_acc = epoch_correct / epoch_total if epoch_total > 0 else 0.0
+                        avg_reward = np.mean(epoch_rewards[-validation_interval:])
+                        print(f"  Batch {batch_idx}: Acc={current_acc:.3f}, "
+                              f"Reward={avg_reward:.3f}, α_avg={np.mean(epoch_alphas[-validation_interval:]):.3f}")
+            
+            # Epoch statistics
+            epoch_accuracy = epoch_correct / epoch_total if epoch_total > 0 else 0.0
+            epoch_avg_reward = np.mean(epoch_rewards)
+            epoch_avg_alpha = np.mean(epoch_alphas)
+            
+            training_stats['epoch_accuracies'].append(epoch_accuracy)
+            training_stats['epoch_rewards'].append(epoch_avg_reward)
+            training_stats['epsilon_values'].append(self.fusion_agent.epsilon)
+            training_stats['fusion_weights_used'].append(epoch_avg_alpha)
+            
+            print(f"Epoch {epoch + 1} Summary:")
+            print(f"  Accuracy: {epoch_accuracy:.4f}")
+            print(f"  Avg Reward: {epoch_avg_reward:.4f}")
+            print(f"  Avg Fusion Weight: {epoch_avg_alpha:.4f}")
+            print(f"  Epsilon: {self.fusion_agent.epsilon:.4f}")
+        
+        print(f"\n✓ Adaptive fusion training complete!")
+        self._plot_fusion_training_stats(training_stats)
+        
+        return training_stats
+    
+    def predict_with_adaptive_fusion(self, data) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+        """
+        Prediction using learned adaptive fusion weights.
+        
+        Returns:
+            Tuple of (predictions, anomaly_scores, gat_probs, fusion_weights)
+        """
+        data = data.to(self.device)
+        
+        with torch.no_grad():
+            # Get model outputs
+            cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
+                data.x, data.edge_index, data.batch)
+            gat_logits = self.classifier(data)
+            gat_probs = torch.sigmoid(gat_logits.squeeze())
+            
+            # Compute anomaly scores
+            anomaly_scores = self._compute_normalized_anomaly_scores(
+                data, cont_out, canid_logits, neighbor_logits)
+            
+            predictions = []
+            fusion_weights = []
+            
+            graphs = Batch.to_data_list(data)
+            
+            for i, (graph, anomaly_score, gat_prob) in enumerate(
+                zip(graphs, anomaly_scores, gat_probs.cpu().numpy())):
+                
+                # Get learned fusion weight (no exploration during inference)
+                alpha, _, _ = self.fusion_agent.select_action(
+                    anomaly_score, gat_prob, training=False)
+                
+                # Fused prediction
+                fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob
+                prediction = 1 if fused_score > 0.5 else 0
+                
+                predictions.append(prediction)
+                fusion_weights.append(alpha)
+        
+        return (
+            torch.tensor(predictions, device=self.device),
+            torch.tensor(anomaly_scores),
+            gat_probs.cpu(),
+            torch.tensor(fusion_weights)
+        )
+
+    def evaluate_adaptive_fusion(self, test_loader: DataLoader) -> Dict[str, Any]:
+        """
+        Evaluate model using adaptive fusion and compare with fixed fusion.
+        
+        Returns:
+            Dictionary with comprehensive evaluation results
+        """
+        print(f"\n=== Adaptive Fusion Evaluation ===")
+        
+        # Results storage
+        all_labels = []
+        all_adaptive_preds = []
+        all_fixed_preds = []
+        all_anomaly_scores = []
+        all_gat_probs = []
+        all_fusion_weights = []
+        
+        for batch in test_loader:
+            batch = batch.to(self.device)
+            labels = batch.y.cpu().numpy()
+            
+            # Adaptive fusion predictions
+            adaptive_preds, anomaly_scores, gat_probs, fusion_weights = \
+                self.predict_with_adaptive_fusion(batch)
+            
+            # Fixed fusion predictions (α=0.85)
+            fixed_preds, _, _ = self.predict_with_fusion(batch, alpha=0.85)
+            
+            # Store results
+            all_labels.extend(labels)
+            all_adaptive_preds.extend(adaptive_preds.cpu().numpy())
+            all_fixed_preds.extend(fixed_preds.cpu().numpy())
+            all_anomaly_scores.extend(anomaly_scores.cpu().numpy())
+            all_gat_probs.extend(gat_probs.cpu().numpy())
+            all_fusion_weights.extend(fusion_weights.cpu().numpy())
+        
+        # Calculate metrics
+        adaptive_accuracy = np.mean(np.array(all_adaptive_preds) == np.array(all_labels))
+        fixed_accuracy = np.mean(np.array(all_fixed_preds) == np.array(all_labels))
+        
+        results = {
+            'adaptive': {
+                'accuracy': adaptive_accuracy,
+                'confusion_matrix': confusion_matrix(all_labels, all_adaptive_preds),
+                'report': classification_report(all_labels, all_adaptive_preds, output_dict=True)
+            },
+            'fixed': {
+                'accuracy': fixed_accuracy,
+                'confusion_matrix': confusion_matrix(all_labels, all_fixed_preds),
+                'report': classification_report(all_labels, all_fixed_preds, output_dict=True)
+            },
+            'fusion_analysis': {
+                'anomaly_scores': all_anomaly_scores,
+                'gat_probs': all_gat_probs,
+                'fusion_weights': all_fusion_weights,
+                'labels': all_labels
+            }
+        }
+        
+        # Print comparison
+        print(f"Adaptive Fusion Accuracy: {adaptive_accuracy:.4f}")
+        print(f"Fixed Fusion Accuracy:    {fixed_accuracy:.4f}")
+        print(f"Improvement: {(adaptive_accuracy - fixed_accuracy)*100:.2f}%")
+        
+        # Analyze fusion weight distribution
+        avg_weight = np.mean(all_fusion_weights)
+        print(f"Average Fusion Weight: {avg_weight:.3f} (vs. fixed 0.85)")
+        
+        # Generate analysis plots
+        self._plot_fusion_analysis(results['fusion_analysis'])
+        
+        return results
+
+    def save_fusion_agent(self, save_folder: str, dataset_key: str):
+        """Save the trained fusion agent."""
+        agent_path = os.path.join(save_folder, f'fusion_agent_{dataset_key}.pkl')
+        self.fusion_agent.save_agent(agent_path)
+    
+    def load_fusion_agent(self, save_folder: str, dataset_key: str):
+        """Load a trained fusion agent."""
+        agent_path = os.path.join(save_folder, f'fusion_agent_{dataset_key}.pkl')
+        self.fusion_agent.load_agent(agent_path)
+        self.fusion_enabled = True
 
     def evaluate(self, test_loader: DataLoader, method: str = 'fusion') -> Dict[str, Any]:
         """
