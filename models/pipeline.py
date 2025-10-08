@@ -705,6 +705,9 @@ class GATPipeline:
         self.autoencoder.eval()
         self.classifier.eval()
 
+        target_update_interval = 50
+        step_count = 0
+
         training_stats = {
             'epoch_accuracies': [],
             'epoch_rewards': [],
@@ -756,6 +759,11 @@ class GATPipeline:
                     self.fusion_agent.store_experience(state, action_idx, reward, next_state, done)
                     self.fusion_agent.train_step()
                     self.fusion_agent.decay_epsilon()
+
+                    # update target network every x epochs
+                    step_count += 1
+                    if step_count % target_update_interval == 0:
+                        self.fusion_agent.update_target_network()
 
                     epoch_correct += (prediction == int(true_label))
                     epoch_total += 1

@@ -44,6 +44,8 @@ class DQNFusionAgent:
         self.device = device
 
         self.q_network = QNetwork(self.state_dim, self.action_dim).to(device)
+        self.target_network = QNetwork(self.state_dim, self.action_dim).to(self.device)
+        self.target_network.load_state_dict(self.q_network.state_dict())
         self.optimizer = optim.Adam(self.q_network.parameters(), lr=lr)
         self.loss_fn = nn.MSELoss()
         self.replay_buffer = deque(maxlen=buffer_size)
@@ -51,6 +53,9 @@ class DQNFusionAgent:
 
         self.reward_history = []
         self.accuracy_history = []
+
+    def update_target_network(self):
+        self.target_network.load_state_dict(self.q_network.state_dict())
 
     def select_action(self, anomaly_score: float, gat_prob: float, training: bool = True) -> Tuple[float, int, np.ndarray]:
         state = np.array([anomaly_score, gat_prob], dtype=np.float32)

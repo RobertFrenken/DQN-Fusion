@@ -38,7 +38,7 @@ import warnings
 
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
 from archive.preprocessing import graph_creation, build_id_mapping_from_normal
-from training.training_utils import distillation_loss_fn
+from training.trainers import distillation_loss_fn
 from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)
