@@ -19,7 +19,7 @@ from typing import List, Tuple
 
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
 from models.pipeline import GATPipeline
-from old_code.preprocessing import graph_creation, build_id_mapping_from_normal
+from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from torch_geometric.data import Batch
 from utils.plotting_utils import (
     plot_feature_histograms,
