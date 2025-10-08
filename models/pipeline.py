@@ -17,9 +17,6 @@ from utils.plotting_utils import (
     plot_recon_error_hist,
     plot_neighborhood_error_hist,
     plot_error_components_analysis,
-    plot_graph_reconstruction,
-    plot_latent_space,
-    plot_node_recon_errors,
 )
 
 FUSION_WEIGHTS = {

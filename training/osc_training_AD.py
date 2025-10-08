@@ -17,7 +17,6 @@ from torch_geometric.loader import DataLoader
 from torch.utils.data import random_split, Subset
 from typing import List, Tuple
 
-from models.models import GATWithJK, GraphAutoencoderNeighborhood
 from models.pipeline import GATPipeline
 from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from torch_geometric.data import Batch

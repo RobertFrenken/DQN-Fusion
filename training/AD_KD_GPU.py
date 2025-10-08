@@ -37,9 +37,9 @@ from typing import Tuple, Dict, Any, Optional, List
 import warnings
 
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
-from old_code.preprocessing import graph_creation, build_id_mapping_from_normal
+from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from training.training_utils import distillation_loss_fn
-
+from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -80,29 +80,6 @@ STUDENT_CONFIG = {
 }
 
 # ==================== Utility Functions ====================
-
-def setup_gpu_optimization():
-    """Configure GPU memory optimization settings."""
-    if torch.cuda.is_available():
-        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:128'
-        torch.cuda.empty_cache()
-        print("✓ GPU memory optimization enabled")
-
-def log_memory_usage(stage: str = ""):
-    """Log current CPU and GPU memory usage."""
-    cpu_mem = psutil.virtual_memory()
-    print(f"[{stage}] CPU Memory: {cpu_mem.used/1024**3:.1f}GB / {cpu_mem.total/1024**3:.1f}GB ({cpu_mem.percent:.1f}%)")
-    
-    if torch.cuda.is_available():
-        gpu_memory = torch.cuda.memory_allocated() / 1024**3
-        gpu_cached = torch.cuda.memory_reserved() / 1024**3
-        print(f"[{stage}] GPU Memory: {gpu_memory:.2f}GB allocated, {gpu_cached:.2f}GB cached")
-
-def cleanup_memory():
-    """Perform comprehensive memory cleanup."""
-    gc.collect()
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
 
 def create_teacher_student_models(num_ids: int, embedding_dim: int, device: str) -> Tuple[nn.Module, nn.Module, nn.Module, nn.Module]:
     """
