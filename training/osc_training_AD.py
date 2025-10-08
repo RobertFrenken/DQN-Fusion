@@ -17,6 +17,7 @@ from torch_geometric.loader import DataLoader
 from torch.utils.data import random_split, Subset
 from typing import List, Tuple
 
+from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 from models.pipeline import GATPipeline
 from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from torch_geometric.data import Batch
@@ -37,21 +38,6 @@ DATASET_PATHS = {
     'set_04': r"datasets/can-train-and-test-v1.5/set_04",
 }
 
-def setup_gpu_optimization():
-    """Configure GPU memory optimization settings."""
-    if torch.cuda.is_available():
-        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:128'
-        torch.cuda.empty_cache()
-        print("✓ GPU memory optimization enabled")
-
-def log_memory_usage(stage: str = ""):
-    """Log current CPU and GPU memory usage."""
-    cpu_mem = psutil.virtual_memory()
-    print(f"[{stage}] CPU Memory: {cpu_mem.used/1024**3:.1f}GB / {cpu_mem.total/1024**3:.1f}GB ({cpu_mem.percent:.1f}%)")
-    if torch.cuda.is_available():
-        gpu_memory = torch.cuda.memory_allocated() / 1024**3
-        gpu_cached = torch.cuda.memory_reserved() / 1024**3
-        print(f"[{stage}] GPU Memory: {gpu_memory:.2f}GB allocated, {gpu_cached:.2f}GB cached")
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
                                  batch_size: int = 1024, device: str = 'cuda') -> List[DataLoader]:
