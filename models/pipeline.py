@@ -10,6 +10,7 @@ from typing import List, Tuple, Optional, Dict, Any
 from sklearn.metrics import confusion_matrix, classification_report
 from models.adaptive_fusion import QFusionAgent
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
+from training.osc_training_AD import log_memory_usage
 from utils.plotting_utils import (
     plot_recon_error_hist,
     plot_neighborhood_error_hist,
