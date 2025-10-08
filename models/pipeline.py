@@ -8,7 +8,7 @@ from torch_geometric.loader import DataLoader
 from torch_geometric.data import Batch
 from typing import List, Tuple, Optional, Dict, Any
 from sklearn.metrics import confusion_matrix, classification_report
-from models.adaptive_fusion import QFusionAgent
+from models.adaptive_fusion import QFusionAgent, DQNFusionAgent
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
 from training.osc_training_AD import log_memory_usage
 from utils.plotting_utils import (
@@ -64,15 +64,17 @@ class GATPipeline:
         ).to(self.device)
 
         # Initialize Q-learning fusion agent
-        self.fusion_agent = QFusionAgent(
-            alpha_steps=21,     # 0.0, 0.05, 0.10, ..., 1.0
-            state_bins=10,      # 10x10 state grid
-            lr=0.1,             # Learning rate
+        self.fusion_agent = DQNFusionAgent(
+            alpha_steps=21,     # Number of discrete fusion weights
+            lr=1e-3,            # Learning rate for Adam
             gamma=0.9,          # Discount factor
             epsilon=0.2,        # Initial exploration
             epsilon_decay=0.995,
-            min_epsilon=0.01
-        )
+            min_epsilon=0.01,
+            buffer_size=10000,
+            batch_size=64,
+            device=str(self.device)
+)
         
         self.threshold = 0.0
         print(f"✓ GAT Pipeline initialized on {self.device}")
@@ -690,117 +692,104 @@ class GATPipeline:
                 torch.tensor(anomaly_scores),
                 torch.tensor(gat_probs))
     
-    def train_adaptive_fusion(self, train_loader: DataLoader, 
-                            epochs: int = 5, validation_interval: int = 100) -> Dict:
+    def train_adaptive_fusion(self, train_loader: DataLoader, epochs: int = 5, validation_interval: int = 100) -> Dict:
         """
-        Train the Q-learning fusion agent using online learning.
-        
+        Train the DQN fusion agent using online learning.
         Args:
             train_loader: Training data for fusion learning
             epochs: Number of training epochs
             validation_interval: Interval for validation and epsilon decay
-            
         Returns:
             Dictionary with training statistics
         """
-        print(f"\n=== Training Adaptive Fusion Agent ({epochs} epochs) ===")
-        
-        if not self.fusion_enabled:
-            print("Enabling fusion mode...")
-            self.fusion_enabled = True
-        
+        print(f"\n=== Training Adaptive Fusion Agent (DQN, {epochs} epochs) ===")
         self.autoencoder.eval()
         self.classifier.eval()
-        
+
         training_stats = {
             'epoch_accuracies': [],
             'epoch_rewards': [],
             'epsilon_values': [],
             'fusion_weights_used': []
         }
-        
+
         for epoch in range(epochs):
             epoch_correct = 0
             epoch_total = 0
             epoch_rewards = []
             epoch_alphas = []
-            
+
             print(f"\nEpoch {epoch + 1}/{epochs} (ε={self.fusion_agent.epsilon:.3f})")
-            
+
             for batch_idx, batch in enumerate(train_loader):
                 batch = batch.to(self.device)
-                
-                # Get model outputs
+
                 with torch.no_grad():
-                    # Autoencoder outputs for anomaly detection
                     cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
                         batch.x, batch.edge_index, batch.batch)
-                    
-                    # Compute anomaly scores
                     anomaly_scores = self._compute_normalized_anomaly_scores(
                         batch, cont_out, canid_logits, neighbor_logits)
-                    
-                    # GAT classifier outputs
                     gat_logits = self.classifier(batch)
                     gat_probs = torch.sigmoid(gat_logits.squeeze()).cpu().numpy()
-                
-                # Process each graph in the batch
+
                 graphs = Batch.to_data_list(batch)
                 true_labels = batch.y.cpu().numpy()
-                
+
                 for i, (graph, true_label, anomaly_score, gat_prob) in enumerate(
                     zip(graphs, true_labels, anomaly_scores, gat_probs)):
-                    
-                    # Select fusion weight
-                    alpha, action_idx, state = self.fusion_agent.select_action(
-                        anomaly_score, gat_prob, training=True)
-                    
-                    # Make fused prediction
+
+                    # Select fusion weight using DQN
+                    alpha, action_idx, state = self.fusion_agent.select_action(anomaly_score, gat_prob, training=True)
                     fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob
                     prediction = 1 if fused_score > 0.5 else 0
-                    
-                    # Compute reward
-                    reward = self.fusion_agent.compute_reward(
-                        prediction, int(true_label), anomaly_score, gat_prob)
-                    
-                    # Update Q-table
-                    self.fusion_agent.update_q_table(state, action_idx, reward)
-                    
-                    # Track statistics
+                    reward = self.fusion_agent.compute_reward(prediction, int(true_label), anomaly_score, gat_prob)
+
+                    # Next state: use next sample if available, else current state
+                    if i < len(graphs) - 1:
+                        next_anomaly_score = anomaly_scores[i + 1]
+                        next_gat_prob = gat_probs[i + 1]
+                        next_state = np.array([next_anomaly_score, next_gat_prob], dtype=np.float32)
+                    else:
+                        next_state = state
+                    done = (i == len(graphs) - 1)
+
+                    # Store experience and train DQN
+                    self.fusion_agent.store_experience(state, action_idx, reward, next_state, done)
+                    self.fusion_agent.train_step()
+                    self.fusion_agent.decay_epsilon()
+
                     epoch_correct += (prediction == int(true_label))
                     epoch_total += 1
                     epoch_rewards.append(reward)
                     epoch_alphas.append(alpha)
-                
+
                 # Periodic validation and epsilon decay
                 if batch_idx % validation_interval == 0 and batch_idx > 0:
                     self.fusion_agent.decay_epsilon()
-                    
                     if batch_idx % (validation_interval * 2) == 0:
                         current_acc = epoch_correct / epoch_total if epoch_total > 0 else 0.0
                         avg_reward = np.mean(epoch_rewards[-validation_interval:])
                         print(f"  Batch {batch_idx}: Acc={current_acc:.3f}, "
-                              f"Reward={avg_reward:.3f}, α_avg={np.mean(epoch_alphas[-validation_interval:]):.3f}")
-            
+                            f"Reward={avg_reward:.3f}, α_avg={np.mean(epoch_alphas[-validation_interval:]):.3f}")
+
             # Epoch statistics
             epoch_accuracy = epoch_correct / epoch_total if epoch_total > 0 else 0.0
             epoch_avg_reward = np.mean(epoch_rewards)
             epoch_avg_alpha = np.mean(epoch_alphas)
-            
+
             training_stats['epoch_accuracies'].append(epoch_accuracy)
             training_stats['epoch_rewards'].append(epoch_avg_reward)
             training_stats['epsilon_values'].append(self.fusion_agent.epsilon)
             training_stats['fusion_weights_used'].append(epoch_avg_alpha)
-            
+
             print(f"Epoch {epoch + 1} Summary:")
             print(f"  Accuracy: {epoch_accuracy:.4f}")
             print(f"  Avg Reward: {epoch_avg_reward:.4f}")
             print(f"  Avg Fusion Weight: {epoch_avg_alpha:.4f}")
             print(f"  Epsilon: {self.fusion_agent.epsilon:.4f}")
-        
-        print(f"\n✓ Adaptive fusion training complete!")
+
+        print(f"\n✓ Adaptive fusion training (DQN) complete!")
         self._plot_fusion_training_stats(training_stats)
-        
         return training_stats
     
     def predict_with_adaptive_fusion(self, data) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
@@ -832,8 +821,7 @@ class GATPipeline:
                 zip(graphs, anomaly_scores, gat_probs.cpu().numpy())):
                 
                 # Get learned fusion weight (no exploration during inference)
-                alpha, _, _ = self.fusion_agent.select_action(
-                    anomaly_score, gat_prob, training=False)
+                alpha, _, _ = self.fusion_agent.select_action(anomaly_score, gat_prob, training=False)
                 
                 # Fused prediction
                 fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob
