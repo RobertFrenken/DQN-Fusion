@@ -868,9 +868,9 @@ def main(config: DictConfig):
     )
     
     # === Load Pre-trained Models ===
-    autoencoder_path = f"saved_models/autoencoder_best_{dataset_key}.pth"
-    classifier_path = f"saved_models/classifier_{dataset_key}.pth"
-    
+    autoencoder_path = f"saved_models1/autoencoder_best_{dataset_key}.pth"
+    classifier_path = f"saved_models1/classifier_{dataset_key}.pth"
+
     try:
         pipeline.load_pretrained_models(autoencoder_path, classifier_path)
     except FileNotFoundError as e:
