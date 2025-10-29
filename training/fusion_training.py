@@ -11,9 +11,14 @@ Key Features:
 - Evaluate and compare fusion strategies
 - Save trained fusion agent for deployment
 """
+import sys
+import os
+from pathlib import Path
+# Clean path setup - add parent directory to Python path
+project_root = Path(__file__).parent.parent
+sys.path.insert(0, str(project_root))
 
 import numpy as np
-import os
 import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
@@ -37,6 +42,9 @@ from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 
 warnings.filterwarnings('ignore', category=UserWarning)
+
+
+
 
 # Configuration Constants
 DATASET_PATHS = {
@@ -790,7 +798,7 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
             loaders.append(loader)
     return loaders if len(loaders) > 1 else loaders[0]
 
-@hydra.main(config_path="conf", config_name="base", version_base=None)
+@hydra.main(config_path="../conf", config_name="base", version_base=None)
 def main(config: DictConfig):
     """
     Main fusion training pipeline.
@@ -860,8 +868,8 @@ def main(config: DictConfig):
     )
     
     # === Load Pre-trained Models ===
-    autoencoder_path = f"output_model_optimized/autoencoder_best_{dataset_key}.pth"
-    classifier_path = f"output_model_optimized/classifier_{dataset_key}.pth"
+    autoencoder_path = f"saved_models/autoencoder_best_{dataset_key}.pth"
+    classifier_path = f"saved_models/classifier_{dataset_key}.pth"
     
     try:
         pipeline.load_pretrained_models(autoencoder_path, classifier_path)
