@@ -357,7 +357,8 @@ class FusionTrainingPipeline:
             print(f"Attack Class Averages: Anomaly={attack_anomaly_avg:.3f}, GAT={attack_gat_avg:.3f}")
 
     def initialize_fusion_agent(self, alpha_steps: int = 21, lr: float = 1e-3, 
-                               epsilon: float = 0.3, buffer_size: int = 100000):
+                               epsilon: float = 0.3, buffer_size: int = 100000,
+                               batch_size: int = 128, target_update_freq: int = 100):
         """
         Initialize the DQN fusion agent.
         
@@ -374,11 +375,11 @@ class FusionTrainingPipeline:
             lr=lr,
             gamma=0.95,  # Slightly higher discount for fusion learning
             epsilon=epsilon,
-            epsilon_decay=0.998,
-            min_epsilon=0.05,
+            epsilon_decay=0.995,
+            min_epsilon=0.1,
             buffer_size=buffer_size,
-            batch_size=256,
-            target_update_freq=500,
+            batch_size=batch_size,
+            target_update_freq=target_update_freq,
             device=str(self.device)
         )
         
@@ -387,16 +388,10 @@ class FusionTrainingPipeline:
         print(f"  State space: 4D (anomaly_score, gat_prob, confidence_diff, avg_confidence)")
         print(f"  Buffer size: {buffer_size:,}")
 
-    def train_fusion_agent(self, episodes: int = 1000, validation_interval: int = 100,
-                          early_stopping_patience: int = 10, save_interval: int = 200):
+    def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 10,  # Shorter episodes for testing
+                          early_stopping_patience: int = 20, save_interval: int = 25):
         """
-        Train the fusion agent using reinforcement learning.
-        
-        Args:
-            episodes: Number of training episodes
-            validation_interval: Interval for validation
-            early_stopping_patience: Early stopping patience
-            save_interval: Interval for saving agent checkpoints
+        Enhanced training with better instrumentation and learning dynamics.
         """
         print(f"\n=== Training Fusion Agent ===")
         print(f"Episodes: {episodes}, Validation every {validation_interval} episodes")
@@ -404,9 +399,13 @@ class FusionTrainingPipeline:
         if not self.training_data or not self.fusion_agent:
             raise ValueError("Training data and fusion agent must be initialized first")
         
-        # Training tracking
+        # Enhanced tracking
         episode_rewards = []
         episode_accuracies = []
+        episode_losses = []
+        episode_q_values = []
+        action_distributions = []
+        reward_stats = []
         validation_scores = []
         best_validation_score = -float('inf')
         patience_counter = 0
@@ -418,52 +417,77 @@ class FusionTrainingPipeline:
             episode_reward = 0
             episode_correct = 0
             episode_samples = 0
+            episode_loss_sum = 0
+            episode_loss_count = 0
+            episode_q_sum = 0
+            episode_action_counts = np.zeros(len(self.fusion_agent.alpha_values))
+            episode_raw_rewards = []
             
             # Shuffle training data for each episode
-            shuffled_data = random.sample(self.training_data, len(self.training_data))
+            shuffled_data = random.sample(self.training_data, min(len(self.training_data), 5000))  # Limit episode size
             
-            # Process samples in batches for efficiency
-            batch_size = 64
-            for i in range(0, len(shuffled_data), batch_size):
-                batch_data = shuffled_data[i:i+batch_size]
+            # Process samples with sequential next_states
+            for i, (anomaly_score, gat_prob, true_label) in enumerate(shuffled_data):
+                # Current state
+                current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
                 
-                for anomaly_score, gat_prob, true_label in batch_data:
-                    # Current state
-                    current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
-                    
-                    # Select action (fusion weight)
-                    alpha, action_idx, _ = self.fusion_agent.select_action(
-                        anomaly_score, gat_prob, training=True
-                    )
-                    
-                    # Make fused prediction
-                    fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob
-                    prediction = 1 if fused_score > 0.5 else 0
-                    
-                    # Compute reward
-                    reward = self.fusion_agent.compute_fusion_reward(
-                        prediction, true_label, anomaly_score, gat_prob, alpha
-                    )
-                    
-                    # Store experience (next_state is None for simplicity in this implementation)
-                    next_state = current_state  # Could be improved with sequential data
-                    done = True  # Each sample is treated as a terminal state
-                    
-                    self.fusion_agent.store_experience(
-                        current_state, action_idx, reward, next_state, done
-                    )
-                    
-                    # Train the agent
-                    if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
-                        loss = self.fusion_agent.train_step()
-                    
-                    # Track statistics
-                    episode_reward += reward
-                    episode_correct += (prediction == true_label)
-                    episode_samples += 1
+                # Select action (fusion weight)
+                alpha, action_idx, _ = self.fusion_agent.select_action(
+                    anomaly_score, gat_prob, training=True
+                )
                 
-                # Periodic memory cleanup
-                if i % (batch_size * 10) == 0:
+                # Track action distribution
+                episode_action_counts[action_idx] += 1
+                
+                # Make fused prediction
+                fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob
+                prediction = 1 if fused_score > 0.5 else 0
+                
+                # Compute raw reward
+                raw_reward = self.fusion_agent.compute_fusion_reward(
+                    prediction, true_label, anomaly_score, gat_prob, alpha
+                )
+                
+                # Clip and normalize reward for better learning
+                clipped_reward = np.clip(raw_reward, -5.0, 5.0)  # Clip extreme rewards
+                normalized_reward = clipped_reward / 5.0  # Normalize to [-1, 1]
+                
+                episode_raw_rewards.append(raw_reward)
+                
+                # Get next state (use next sample if available, else current)
+                if i + 1 < len(shuffled_data):
+                    next_anomaly, next_gat, _ = shuffled_data[i + 1]
+                    next_state = self.fusion_agent.normalize_state(next_anomaly, next_gat)
+                    done = False  # Not terminal, agent can bootstrap
+                else:
+                    next_state = current_state  # Terminal state
+                    done = True
+                
+                # Store experience with improved dynamics
+                self.fusion_agent.store_experience(
+                    current_state, action_idx, normalized_reward, next_state, done
+                )
+                
+                # Train more frequently with smaller batches
+                if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
+                    loss = self.fusion_agent.train_step()
+                    if loss is not None:
+                        episode_loss_sum += loss
+                        episode_loss_count += 1
+                
+                # Track Q-values for sample states
+                with torch.no_grad():
+                    state_tensor = torch.tensor(current_state).unsqueeze(0).to(self.fusion_agent.device)
+                    q_vals = self.fusion_agent.q_network(state_tensor)
+                    episode_q_sum += q_vals.mean().item()
+                
+                # Track statistics
+                episode_reward += normalized_reward
+                episode_correct += (prediction == true_label)
+                episode_samples += 1
+                
+                # More frequent memory cleanup
+                if i % 100 == 0:
                     cleanup_memory()
             
             # End episode
@@ -472,35 +496,63 @@ class FusionTrainingPipeline:
             # Calculate episode statistics
             episode_accuracy = episode_correct / episode_samples if episode_samples > 0 else 0
             avg_episode_reward = episode_reward / episode_samples if episode_samples > 0 else 0
+            avg_episode_loss = episode_loss_sum / episode_loss_count if episode_loss_count > 0 else 0
+            avg_q_value = episode_q_sum / episode_samples if episode_samples > 0 else 0
             
+            # Store episode stats
             episode_rewards.append(avg_episode_reward)
             episode_accuracies.append(episode_accuracy)
+            episode_losses.append(avg_episode_loss)
+            episode_q_values.append(avg_q_value)
+            action_distributions.append(episode_action_counts / episode_samples)
             
-            # Decay exploration rate
-            if episode % 5 == 0:
+            # Reward statistics
+            reward_stats.append({
+                'raw_mean': np.mean(episode_raw_rewards),
+                'raw_std': np.std(episode_raw_rewards),
+                'raw_min': np.min(episode_raw_rewards),
+                'raw_max': np.max(episode_raw_rewards)
+            })
+            
+            # Decay exploration rate more gradually
+            if episode % 2 == 0:  # Every 2 episodes instead of 5
                 self.fusion_agent.decay_epsilon()
+            
+            # Enhanced logging every episode for debugging
+            if episode % 5 == 0 or episode < 10:  # More frequent early logging
+                print(f"\n📊 Episode {episode + 1}/{episodes} Stats:")
+                print(f"  Accuracy: {episode_accuracy:.4f}")
+                print(f"  Normalized Reward: {avg_episode_reward:.4f}")
+                print(f"  Raw Reward Range: [{reward_stats[-1]['raw_min']:.2f}, {reward_stats[-1]['raw_max']:.2f}]")
+                print(f"  Avg Loss: {avg_episode_loss:.6f}")
+                print(f"  Avg Q-Value: {avg_q_value:.4f}")
+                print(f"  Epsilon: {self.fusion_agent.epsilon:.4f}")
+                print(f"  Buffer Size: {len(self.fusion_agent.replay_buffer)}")
+                
+                # Action distribution analysis
+                most_used_actions = np.argsort(episode_action_counts)[-3:][::-1]
+                print(f"  Top Actions: {[f'α={self.fusion_agent.alpha_values[i]:.2f}({episode_action_counts[i]:.0f})' for i in most_used_actions]}")
+                
+                # Q-value analysis for sample states
+                self._analyze_q_values_for_sample_states()
             
             # Validation and logging
             if (episode + 1) % validation_interval == 0:
-                val_results = self.fusion_agent.validate_agent(self.validation_data, num_samples=5000)
+                val_results = self.fusion_agent.validate_agent(self.validation_data, num_samples=1000)
                 validation_scores.append(val_results)
                 
-                print(f"\nEpisode {episode + 1}/{episodes}:")
-                print(f"  Training Accuracy: {episode_accuracy:.4f}")
-                print(f"  Training Reward: {avg_episode_reward:.4f}")
+                print(f"\n🎯 Validation Results (Episode {episode + 1}):")
                 print(f"  Validation Accuracy: {val_results['accuracy']:.4f}")
                 print(f"  Validation Reward: {val_results['avg_reward']:.4f}")
-                print(f"  Epsilon: {self.fusion_agent.epsilon:.4f}")
-                print(f"  Avg Fusion Weight: {val_results['avg_alpha']:.4f}")
+                print(f"  Avg Alpha: {val_results['avg_alpha']:.4f} ± {val_results['alpha_std']:.4f}")
                 
                 # Early stopping check
                 current_val_score = val_results['accuracy']
                 if current_val_score > best_validation_score:
                     best_validation_score = current_val_score
                     patience_counter = 0
-                    
-                    # Save best model
                     self.save_fusion_agent("saved_models/fusion_checkpoints", "best")
+                    print(f"  🏆 New best validation score!")
                 else:
                     patience_counter += 1
                 
@@ -511,23 +563,23 @@ class FusionTrainingPipeline:
             # Periodic checkpoints
             if (episode + 1) % save_interval == 0:
                 self.save_fusion_agent("saved_models/fusion_checkpoints", f"episode_{episode+1}")
-            
-            # Progress update
-            if (episode + 1) % 50 == 0:
-                print(f"Episode {episode + 1}/{episodes} - "
-                      f"Acc: {episode_accuracy:.3f}, "
-                      f"Reward: {avg_episode_reward:.3f}, "
-                      f"ε: {self.fusion_agent.epsilon:.3f}")
         
         print(f"\n✓ Fusion agent training completed!")
         print(f"Best validation accuracy: {best_validation_score:.4f}")
         
-        # Plot training progress
-        self._plot_training_progress(episode_accuracies, episode_rewards, validation_scores)
+        # Enhanced analysis plots
+        self._plot_enhanced_training_progress(
+            episode_accuracies, episode_rewards, episode_losses, 
+            episode_q_values, action_distributions, reward_stats, validation_scores
+        )
         
         return {
             'episode_accuracies': episode_accuracies,
             'episode_rewards': episode_rewards,
+            'episode_losses': episode_losses,
+            'episode_q_values': episode_q_values,
+            'action_distributions': action_distributions,
+            'reward_stats': reward_stats,
             'validation_scores': validation_scores,
             'best_validation_score': best_validation_score
         }
@@ -759,6 +811,100 @@ class FusionTrainingPipeline:
             json.dump(config, f, indent=2)
         
         print(f"✓ Fusion agent and config saved to {save_folder}")
+    
+    def _analyze_q_values_for_sample_states(self):
+        """Analyze Q-values for sample states to check learning."""
+        if not self.training_data:
+            return
+            
+        # Sample a few representative states
+        sample_indices = [0, len(self.training_data)//4, len(self.training_data)//2, 
+                         3*len(self.training_data)//4, len(self.training_data)-1]
+        
+        print(f"  Q-Value Analysis for Sample States:")
+        for i, idx in enumerate(sample_indices[:3]):  # Just show first 3
+            if idx < len(self.training_data):
+                anomaly_score, gat_prob, true_label = self.training_data[idx]
+                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+                
+                with torch.no_grad():
+                    state_tensor = torch.tensor(state).unsqueeze(0).to(self.fusion_agent.device)
+                    q_values = self.fusion_agent.q_network(state_tensor).squeeze()
+                    best_action = torch.argmax(q_values).item()
+                    best_alpha = self.fusion_agent.alpha_values[best_action]
+                    max_q = q_values[best_action].item()
+                
+                print(f"    State{i+1}: VGAE={anomaly_score:.3f}, GAT={gat_prob:.3f}, Label={true_label} "
+                      f"→ Best α={best_alpha:.2f} (Q={max_q:.3f})")
+
+    def _plot_enhanced_training_progress(self, accuracies, rewards, losses, q_values, 
+                                       action_distributions, reward_stats, validation_scores):
+        """Enhanced training progress visualization."""
+        fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+        episodes = range(1, len(accuracies) + 1)
+        
+        # Training accuracy
+        axes[0,0].plot(episodes, accuracies, 'b-', linewidth=2, alpha=0.7)
+        axes[0,0].set_xlabel('Episode')
+        axes[0,0].set_ylabel('Training Accuracy')
+        axes[0,0].set_title('Training Accuracy Over Episodes')
+        axes[0,0].grid(True, alpha=0.3)
+        
+        # Training rewards (normalized)
+        axes[0,1].plot(episodes, rewards, 'g-', linewidth=2, alpha=0.7)
+        axes[0,1].set_xlabel('Episode')
+        axes[0,1].set_ylabel('Normalized Reward')
+        axes[0,1].set_title('Training Rewards (Normalized)')
+        axes[0,1].grid(True, alpha=0.3)
+        
+        # Training losses
+        axes[0,2].plot(episodes, losses, 'r-', linewidth=2, alpha=0.7)
+        axes[0,2].set_xlabel('Episode')
+        axes[0,2].set_ylabel('Average Loss')
+        axes[0,2].set_title('Training Loss Over Episodes')
+        axes[0,2].grid(True, alpha=0.3)
+        axes[0,2].set_yscale('log')  # Log scale for loss
+        
+        # Q-values
+        axes[1,0].plot(episodes, q_values, 'm-', linewidth=2, alpha=0.7)
+        axes[1,0].set_xlabel('Episode')
+        axes[1,0].set_ylabel('Average Q-Value')
+        axes[1,0].set_title('Q-Values Over Episodes')
+        axes[1,0].grid(True, alpha=0.3)
+        
+        # Action distribution heatmap
+        if action_distributions:
+            action_matrix = np.array(action_distributions).T
+            im = axes[1,1].imshow(action_matrix, aspect='auto', cmap='viridis', origin='lower')
+            axes[1,1].set_xlabel('Episode')
+            axes[1,1].set_ylabel('Action Index (α value)')
+            axes[1,1].set_title('Action Distribution Heatmap')
+            
+            # Add alpha value labels
+            alpha_ticks = range(0, len(self.fusion_agent.alpha_values), 5)
+            alpha_labels = [f'{self.fusion_agent.alpha_values[i]:.1f}' for i in alpha_ticks]
+            axes[1,1].set_yticks(alpha_ticks)
+            axes[1,1].set_yticklabels(alpha_labels)
+            plt.colorbar(im, ax=axes[1,1], label='Usage Frequency')
+        
+        # Raw reward statistics
+        if reward_stats:
+            raw_means = [rs['raw_mean'] for rs in reward_stats]
+            raw_stds = [rs['raw_std'] for rs in reward_stats]
+            axes[1,2].plot(episodes, raw_means, 'orange', linewidth=2, label='Mean')
+            axes[1,2].fill_between(episodes, 
+                                 np.array(raw_means) - np.array(raw_stds),
+                                 np.array(raw_means) + np.array(raw_stds),
+                                 alpha=0.3, color='orange')
+            axes[1,2].set_xlabel('Episode')
+            axes[1,2].set_ylabel('Raw Reward')
+            axes[1,2].set_title('Raw Reward Statistics')
+            axes[1,2].legend()
+            axes[1,2].grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        plt.savefig('images/enhanced_fusion_training_progress.png', dpi=300, bbox_inches='tight')
+        plt.show()
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
                                  batch_size: int = 1024, device: str = 'cuda') -> List[DataLoader]:
