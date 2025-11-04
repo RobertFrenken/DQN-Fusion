@@ -389,7 +389,8 @@ class FusionTrainingPipeline:
         print(f"  Buffer size: {buffer_size:,}")
 
     def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 10,  # Shorter episodes for testing
-                          early_stopping_patience: int = 20, save_interval: int = 25):
+                          early_stopping_patience: int = 20, save_interval: int = 25,
+                          dataset_key: str = 'default'):
         """
         Enhanced training with better instrumentation and learning dynamics.
         """
@@ -570,7 +571,8 @@ class FusionTrainingPipeline:
         # Enhanced analysis plots
         self._plot_enhanced_training_progress(
             episode_accuracies, episode_rewards, episode_losses, 
-            episode_q_values, action_distributions, reward_stats, validation_scores
+            episode_q_values, action_distributions, reward_stats, validation_scores,
+            dataset_key
         )
         
         return {
@@ -584,7 +586,7 @@ class FusionTrainingPipeline:
             'best_validation_score': best_validation_score
         }
 
-    def evaluate_fusion_strategies(self, test_loader: DataLoader) -> Dict[str, Any]:
+    def evaluate_fusion_strategies(self, test_loader: DataLoader, dataset_key: str) -> Dict[str, Any]:
         """
         Comprehensive evaluation comparing different fusion strategies.
         
@@ -649,7 +651,7 @@ class FusionTrainingPipeline:
         self._print_comparison_table(results)
         
         # 5. Generate analysis plots
-        self._plot_fusion_analysis(test_anomaly_scores, test_gat_probs, test_labels, adaptive_alphas)
+        self._plot_fusion_analysis(test_anomaly_scores, test_gat_probs, test_labels, adaptive_alphas, dataset_key)
         
         return results
 
@@ -694,6 +696,7 @@ class FusionTrainingPipeline:
 
     def _plot_training_progress(self, accuracies: List, rewards: List, validation_scores: List):
         """Plot training progress visualization."""
+        plt.ioff()  # Turn off interactive mode
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
         
         episodes = range(1, len(accuracies) + 1)
@@ -735,11 +738,13 @@ class FusionTrainingPipeline:
         
         plt.tight_layout()
         plt.savefig('images/fusion_training_progress.png', dpi=300, bbox_inches='tight')
-        plt.show()
+        # plt.show()
 
     def _plot_fusion_analysis(self, anomaly_scores: List, gat_probs: List, 
-                            labels: List, adaptive_alphas: List):
+                            labels: List, adaptive_alphas: List,
+                            dataset_key: str):
         """Plot detailed fusion analysis."""
+        plt.ioff()  # Turn off interactive mode
         fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
         
         # Convert to numpy arrays
@@ -788,8 +793,9 @@ class FusionTrainingPipeline:
         ax4.grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig('images/fusion_analysis.png', dpi=300, bbox_inches='tight')
-        plt.show()
+        filename = f'images/fusion_analysis_{dataset_key}.png'
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        # plt.show()
 
     def save_fusion_agent(self, save_folder: str, suffix: str = "final"):
         """Save the trained fusion agent."""
@@ -838,8 +844,9 @@ class FusionTrainingPipeline:
                       f"→ Best α={best_alpha:.2f} (Q={max_q:.3f})")
 
     def _plot_enhanced_training_progress(self, accuracies, rewards, losses, q_values, 
-                                       action_distributions, reward_stats, validation_scores):
+                                       action_distributions, reward_stats, validation_scores, dataset_key):
         """Enhanced training progress visualization."""
+        plt.ioff()  # Turn off interactive mode
         fig, axes = plt.subplots(2, 3, figsize=(20, 12))
         episodes = range(1, len(accuracies) + 1)
         
@@ -903,8 +910,9 @@ class FusionTrainingPipeline:
             axes[1,2].grid(True, alpha=0.3)
         
         plt.tight_layout()
-        plt.savefig('images/enhanced_fusion_training_progress.png', dpi=300, bbox_inches='tight')
-        plt.show()
+        filename = f'images/enhanced_fusion_training_progress_{dataset_key}.png'
+        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        # plt.show()
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
                                  batch_size: int = 1024, device: str = 'cuda') -> List[DataLoader]:
@@ -1045,12 +1053,13 @@ def main(config: DictConfig):
         episodes=FUSION_EPISODES,
         validation_interval=100,
         early_stopping_patience=10,
-        save_interval=200
+        save_interval=200,
+        dataset_key=dataset_key  # Add this line
     )
     
     # === Final Evaluation ===
     print(f"\n=== Final Evaluation and Comparison ===")
-    evaluation_results = pipeline.evaluate_fusion_strategies(test_loader)
+    evaluation_results = pipeline.evaluate_fusion_strategies(test_loader, dataset_key)
     
     # === Save Final Model ===
     pipeline.save_fusion_agent("saved_models", dataset_key)
