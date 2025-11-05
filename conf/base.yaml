@@ -13,7 +13,7 @@ use_focal_loss: true
 profile: false
 
 # Fusion-specific parameters
-fusion_episodes: 50        # Number of fusion training episodes
+fusion_episodes: 125        # Number of fusion training episodes
 max_train_samples: 25000   # Limit training samples for memory
 max_val_samples: 5000      # Limit validation samples
 alpha_steps: 21            # Number of fusion weight steps
