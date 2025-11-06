@@ -11,7 +11,7 @@ import sys
 
 
 class QNetwork(nn.Module):
-    """Enhanced Q-network with batch normalization and dropout."""
+    """Q-network with batch normalization and dropout."""
     
     def __init__(self, state_dim, action_dim, hidden_dim=128):
         super().__init__()
