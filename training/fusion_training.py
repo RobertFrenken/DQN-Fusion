@@ -412,7 +412,8 @@ class FusionTrainingPipeline:
         patience_counter = 0
         
         # Create save directory
-        os.makedirs("saved_models/fusion_checkpoints", exist_ok=True)
+        checkpoint_dir = f"saved_models/fusion_checkpoints/{dataset_key}"
+        os.makedirs(checkpoint_dir, exist_ok=True)
         
         for episode in range(episodes):
             episode_reward = 0
@@ -552,7 +553,7 @@ class FusionTrainingPipeline:
                 if current_val_score > best_validation_score:
                     best_validation_score = current_val_score
                     patience_counter = 0
-                    self.save_fusion_agent("saved_models/fusion_checkpoints", "best")
+                    self.save_fusion_agent("saved_models/fusion_checkpoints", "best", dataset_key)
                     print(f"  🏆 New best validation score!")
                 else:
                     patience_counter += 1
@@ -563,7 +564,7 @@ class FusionTrainingPipeline:
             
             # Periodic checkpoints
             if (episode + 1) % save_interval == 0:
-                self.save_fusion_agent("saved_models/fusion_checkpoints", f"episode_{episode+1}")
+                self.save_fusion_agent("saved_models/fusion_checkpoints", f"episode_{episode+1}", dataset_key)
         
         print(f"\n✓ Fusion agent training completed!")
         print(f"Best validation accuracy: {best_validation_score:.4f}")
@@ -797,14 +798,14 @@ class FusionTrainingPipeline:
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         # plt.show()
 
-    def save_fusion_agent(self, save_folder: str, suffix: str = "final"):
+    def save_fusion_agent(self, save_folder: str, suffix: str = "final", dataset_key: str = "default"):
         """Save the trained fusion agent."""
         os.makedirs(save_folder, exist_ok=True)
-        filepath = os.path.join(save_folder, f'fusion_agent_{suffix}.pth')
+        filepath = os.path.join(save_folder, f'fusion_agent_{dataset_key}_{suffix}.pth')
         self.fusion_agent.save_agent(filepath)
         
         # Also save configuration
-        config_path = os.path.join(save_folder, f'fusion_config_{suffix}.json')
+        config_path = os.path.join(save_folder, f'fusion_config_{dataset_key}_{suffix}.json')
         import json
         config = {
             'num_ids': self.num_ids,
@@ -912,6 +913,7 @@ class FusionTrainingPipeline:
         plt.tight_layout()
         filename = f'images/enhanced_fusion_training_progress_{dataset_key}.png'
         plt.savefig(filename, dpi=300, bbox_inches='tight')
+        plt.close(fig)
         # plt.show()
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
@@ -1062,7 +1064,7 @@ def main(config: DictConfig):
     evaluation_results = pipeline.evaluate_fusion_strategies(test_loader, dataset_key)
     
     # === Save Final Model ===
-    pipeline.save_fusion_agent("saved_models", dataset_key)
+    pipeline.save_fusion_agent("saved_models", "final", dataset_key)
     
     # === Summary ===
     print(f"\n🎉 FUSION TRAINING COMPLETED!")
