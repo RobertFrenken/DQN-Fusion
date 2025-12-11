@@ -132,24 +132,28 @@ class EnhancedDQNFusionAgent:
         confidence_diff = abs(anomaly_score - gat_prob)
         avg_confidence = (anomaly_score + gat_prob) / 2.0
         
-        if self.state_dim >= 6:
+        if hasattr(self, 'state_dim') and self.state_dim >= 6:
             # Enhanced features for better policy diversity
             max_confidence = max(anomaly_score, gat_prob)
             min_confidence = min(anomaly_score, gat_prob)
             
-            return np.array([
+            state = np.array([
                 anomaly_score, gat_prob, confidence_diff,
                 avg_confidence, max_confidence, min_confidence
-            ])
+            ], dtype=np.float32)  # Explicit float32 dtype
         else:
             # Original 4D state
-            return np.array([anomaly_score, gat_prob, confidence_diff, avg_confidence])
+            state = np.array([
+                anomaly_score, gat_prob, confidence_diff, avg_confidence
+            ], dtype=np.float32)  # Explicit float32 dtype
+        
+        return state
         
 
     def select_action(self, anomaly_score: float, gat_prob: float, training: bool = True) -> Tuple[float, int, np.ndarray]:
         """Select action using epsilon-greedy policy with enhanced state."""
         state = self.normalize_state(anomaly_score, gat_prob)
-        state_tensor = torch.tensor(state).unsqueeze(0).to(self.device)
+        state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.device)
         
         if training and np.random.rand() < self.epsilon:
             action_idx = np.random.randint(self.action_dim)
@@ -205,7 +209,11 @@ class EnhancedDQNFusionAgent:
     def store_experience(self, state: np.ndarray, action_idx: int, reward: float, 
                         next_state: np.ndarray, done: bool):
         """Store experience in replay buffer."""
-        self.replay_buffer.append((state, action_idx, reward, next_state, done))
+        state = state.astype(np.float32) if state.dtype != np.float32 else state
+        next_state = next_state.astype(np.float32) if next_state.dtype != np.float32 else next_state
+        
+        experience = (state, action_idx, reward, next_state, done)
+        self.replay_buffer.append(experience)
         self.current_episode_reward += reward
 
     def train_step(self) -> Optional[float]:

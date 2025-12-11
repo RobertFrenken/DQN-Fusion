@@ -531,6 +531,7 @@ class FusionTrainingPipeline:
         """
         Enhanced training with better instrumentation and learning dynamics.
         """
+        torch.set_default_dtype(torch.float32)
         print(f"\n=== Training Fusion Agent ===")
         print(f"Episodes: {episodes}, Validation every {validation_interval} episodes")
         
@@ -634,7 +635,7 @@ class FusionTrainingPipeline:
                 
                 # Track Q-values for sample states
                 with torch.no_grad():
-                    state_tensor = torch.tensor(current_state).unsqueeze(0).to(self.fusion_agent.device)
+                    state_tensor = torch.tensor(current_state, dtype=torch.float32).unsqueeze(0).to(self.fusion_agent.device)
                     q_vals = self.fusion_agent.q_network(state_tensor)
                     episode_q_sum += q_vals.mean().item()
                 
@@ -990,7 +991,7 @@ class FusionTrainingPipeline:
                 state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
                 
                 with torch.no_grad():
-                    state_tensor = torch.tensor(state).unsqueeze(0).to(self.fusion_agent.device)
+                    state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.fusion_agent.device)
                     q_values = self.fusion_agent.q_network(state_tensor).squeeze()
                     best_action = torch.argmax(q_values).item()
                     best_alpha = self.fusion_agent.alpha_values[best_action]
