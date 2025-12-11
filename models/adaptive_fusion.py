@@ -75,12 +75,12 @@ class EnhancedDQNFusionAgent:
     
     def __init__(self, alpha_steps=21, lr=1e-3, gamma=0.9, epsilon=0.2,
                  epsilon_decay=0.995, min_epsilon=0.01, buffer_size=50000,
-                 batch_size=128, target_update_freq=100, device='cpu'):
+                 batch_size=128, target_update_freq=100, device='cpu', state_dim=4):
         
         # Action and state space
         self.alpha_values = np.linspace(0, 1, alpha_steps)
         self.action_dim = alpha_steps
-        self.state_dim = 4  # anomaly_score, gat_prob, confidence_diff, avg_confidence
+        self.state_dim = state_dim  # anomaly_score, gat_prob, confidence_diff, avg_confidence
         
         # Hyperparameters
         self.lr = lr
@@ -93,8 +93,8 @@ class EnhancedDQNFusionAgent:
         self.target_update_freq = target_update_freq
         
         # Networks
-        self.q_network = QNetwork(self.state_dim, self.action_dim).to(device)
-        self.target_network = QNetwork(self.state_dim, self.action_dim).to(device)
+        self.q_network = QNetwork(state_dim, self.action_dim).to(self.device)  # Use state_dim
+        self.target_network = QNetwork(state_dim, self.action_dim).to(self.device)  # Use state_dim
         self.target_network.load_state_dict(self.q_network.state_dict())
         
         # Optimizer and loss
@@ -127,12 +127,24 @@ class EnhancedDQNFusionAgent:
         # Clip to valid ranges
         anomaly_score = np.clip(anomaly_score, 0.0, 1.0)
         gat_prob = np.clip(gat_prob, 0.0, 1.0)
-        
+
         # Additional features
         confidence_diff = abs(anomaly_score - gat_prob)
         avg_confidence = (anomaly_score + gat_prob) / 2.0
         
-        return np.array([anomaly_score, gat_prob, confidence_diff, avg_confidence], dtype=np.float32)
+        if self.state_dim >= 6:
+            # Enhanced features for better policy diversity
+            max_confidence = max(anomaly_score, gat_prob)
+            min_confidence = min(anomaly_score, gat_prob)
+            
+            return np.array([
+                anomaly_score, gat_prob, confidence_diff,
+                avg_confidence, max_confidence, min_confidence
+            ])
+        else:
+            # Original 4D state
+            return np.array([anomaly_score, gat_prob, confidence_diff, avg_confidence])
+        
 
     def select_action(self, anomaly_score: float, gat_prob: float, training: bool = True) -> Tuple[float, int, np.ndarray]:
         """Select action using epsilon-greedy policy with enhanced state."""

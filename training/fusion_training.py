@@ -11,6 +11,7 @@ Key Features:
 - Evaluate and compare fusion strategies
 - Save trained fusion agent for deployment
 """
+
 import sys
 import os
 from pathlib import Path
@@ -42,7 +43,23 @@ from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 
 warnings.filterwarnings('ignore', category=UserWarning)
-
+try:
+    from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
+except ImportError:
+    print("Warning: utils_logging not found, using fallback functions")
+    
+    def setup_gpu_optimization():
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = True
+    
+    def log_memory_usage(stage=""):
+        if torch.cuda.is_available():
+            memory_used = torch.cuda.memory_allocated() / 1024**3
+            print(f"{stage} GPU Memory: {memory_used:.2f} GB")
+    
+    def cleanup_memory():
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
 
 
 
@@ -358,39 +375,159 @@ class FusionTrainingPipeline:
 
     def initialize_fusion_agent(self, alpha_steps: int = 21, lr: float = 1e-3, 
                                epsilon: float = 0.3, buffer_size: int = 100000,
-                               batch_size: int = 128, target_update_freq: int = 100):
-        """
-        Initialize the DQN fusion agent.
+                               batch_size: int = 64, target_update_freq: int = 100,
+                               config_dict: dict = None):
+        """Initialize fusion agent with curriculum learning support."""
+        self.curriculum_enabled = False
+        self.curriculum_config = {}
         
-        Args:
-            alpha_steps: Number of discrete fusion weights
-            lr: Learning rate
-            epsilon: Initial exploration rate
-            buffer_size: Experience replay buffer size
-        """
-        print(f"\n=== Initializing Fusion Agent ===")
+        # Extract curriculum learning config
+        if config_dict:
+            self.curriculum_enabled = config_dict.get('curriculum_learning', False)
+            if self.curriculum_enabled:
+                self.curriculum_config = {
+                    'phases': config_dict.get('curriculum_phases', 3),
+                    'disagreement_threshold': config_dict.get('curriculum_disagreement_threshold', 0.3),
+                    'confidence_threshold': config_dict.get('curriculum_confidence_threshold', 0.2),
+                    'phase_1_episodes': config_dict.get('curriculum_phase_1_episodes', 300),
+                    'phase_2_episodes': config_dict.get('curriculum_phase_2_episodes', 400),
+                    'phase_3_episodes': config_dict.get('curriculum_phase_3_episodes', 300)
+                }
+                print(f"✓ Curriculum Learning enabled: {self.curriculum_config}")
+        
+        # Enhanced state dimension
+        state_dim = config_dict.get('state_dimension', 4) if config_dict else 4
         
         self.fusion_agent = EnhancedDQNFusionAgent(
             alpha_steps=alpha_steps,
             lr=lr,
-            gamma=0.95,  # Slightly higher discount for fusion learning
+            gamma=0.95,
             epsilon=epsilon,
-            epsilon_decay=0.995,
-            min_epsilon=0.1,
+            epsilon_decay=config_dict.get('fusion_epsilon_decay', 0.995) if config_dict else 0.995,
+            min_epsilon=config_dict.get('fusion_min_epsilon', 0.1) if config_dict else 0.1,
             buffer_size=buffer_size,
             batch_size=batch_size,
             target_update_freq=target_update_freq,
-            device=str(self.device)
+            device=str(self.device),
+            state_dim=state_dim  # Pass enhanced state dimension
         )
         
-        print(f"✓ Fusion Agent initialized:")
-        print(f"  Action space: {alpha_steps} fusion weights")
-        print(f"  State space: 4D (anomaly_score, gat_prob, confidence_diff, avg_confidence)")
-        print(f"  Buffer size: {buffer_size:,}")
+        print(f"✓ Fusion Agent initialized with {state_dim}D state space")
+
+    def _get_curriculum_phase(self, episode: int, total_episodes: int) -> dict:
+        """Determine current curriculum learning phase and sampling strategy."""
+        
+        if not self.curriculum_enabled:
+            return {'phase': 'natural', 'high_disagreement_prob': 0.2, 
+                   'extreme_confidence_prob': 0.2, 'balanced_prob': 0.6}
+        
+        config = self.curriculum_config
+        phase_1_end = config['phase_1_episodes']
+        phase_2_end = phase_1_end + config['phase_2_episodes']
+        
+        if episode < phase_1_end:
+            # Phase 1: Focus on extreme/difficult cases
+            return {
+                'phase': 'extreme_focus',
+                'high_disagreement_prob': 0.5,   # 50% high disagreement
+                'extreme_confidence_prob': 0.3,  # 30% extreme confidence  
+                'balanced_prob': 0.2              # 20% balanced
+            }
+        elif episode < phase_2_end:
+            # Phase 2: Mixed scenarios
+            return {
+                'phase': 'mixed_scenarios', 
+                'high_disagreement_prob': 0.3,   # 30% high disagreement
+                'extreme_confidence_prob': 0.25, # 25% extreme confidence
+                'balanced_prob': 0.45             # 45% balanced
+            }
+        else:
+            # Phase 3: Natural distribution
+            return {
+                'phase': 'natural_distribution',
+                'high_disagreement_prob': 0.15,  # 15% high disagreement  
+                'extreme_confidence_prob': 0.15, # 15% extreme confidence
+                'balanced_prob': 0.7              # 70% balanced
+            }
+
+    def _categorize_training_samples(self, training_data: List) -> dict:
+        """Categorize training samples for curriculum learning."""
+        
+        categories = {
+            'high_disagreement': [],
+            'extreme_confidence': [], 
+            'balanced': []
+        }
+        
+        disagreement_thresh = self.curriculum_config.get('disagreement_threshold', 0.3)
+        confidence_thresh = self.curriculum_config.get('confidence_threshold', 0.2)
+        
+        for anomaly_score, gat_prob, label in training_data:
+            disagreement = abs(anomaly_score - gat_prob)
+            avg_confidence = (anomaly_score + gat_prob) / 2.0
+            
+            if disagreement > disagreement_thresh:
+                categories['high_disagreement'].append((anomaly_score, gat_prob, label))
+            elif avg_confidence < confidence_thresh or avg_confidence > (1 - confidence_thresh):
+                categories['extreme_confidence'].append((anomaly_score, gat_prob, label))
+            else:
+                categories['balanced'].append((anomaly_score, gat_prob, label))
+        
+        return categories
+
+    def _sample_by_curriculum(self, episode: int, total_episodes: int, episode_size: int) -> List:
+        """Sample training data based on curriculum learning phase."""
+        
+        if not self.curriculum_enabled:
+            return random.sample(self.training_data, min(episode_size, len(self.training_data)))
+        
+        # Get current curriculum phase
+        curriculum_phase = self._get_curriculum_phase(episode, total_episodes)
+        
+        # Categorize available samples  
+        categories = self._categorize_training_samples(self.training_data)
+        
+        # Sample according to curriculum probabilities
+        samples = []
+        n_high_disagreement = int(episode_size * curriculum_phase['high_disagreement_prob'])
+        n_extreme_confidence = int(episode_size * curriculum_phase['extreme_confidence_prob'])
+        n_balanced = episode_size - n_high_disagreement - n_extreme_confidence
+        
+        # Sample from each category
+        if categories['high_disagreement'] and n_high_disagreement > 0:
+            samples.extend(random.sample(
+                categories['high_disagreement'], 
+                min(n_high_disagreement, len(categories['high_disagreement']))
+            ))
+            
+        if categories['extreme_confidence'] and n_extreme_confidence > 0:
+            samples.extend(random.sample(
+                categories['extreme_confidence'],
+                min(n_extreme_confidence, len(categories['extreme_confidence']))
+            ))
+            
+        if categories['balanced'] and n_balanced > 0:
+            samples.extend(random.sample(
+                categories['balanced'],
+                min(n_balanced, len(categories['balanced']))
+            ))
+        
+        # Fill remaining spots with any available samples
+        remaining_needed = episode_size - len(samples)
+        if remaining_needed > 0:
+            all_remaining = [s for s in self.training_data if s not in samples]
+            if all_remaining:
+                samples.extend(random.sample(
+                    all_remaining, 
+                    min(remaining_needed, len(all_remaining))
+                ))
+        
+        random.shuffle(samples)
+        return samples
 
     def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 10,  # Shorter episodes for testing
                           early_stopping_patience: int = 20, save_interval: int = 25,
-                          dataset_key: str = 'default'):
+                          dataset_key: str = 'default', config_dict: dict = None):
         """
         Enhanced training with better instrumentation and learning dynamics.
         """
@@ -410,12 +547,30 @@ class FusionTrainingPipeline:
         validation_scores = []
         best_validation_score = -float('inf')
         patience_counter = 0
+        base_episode_size = config_dict.get('episode_sample_size', 10000) if config_dict else 10000
         
         # Create save directory
         checkpoint_dir = f"saved_models/fusion_checkpoints/{dataset_key}"
         os.makedirs(checkpoint_dir, exist_ok=True)
         
         for episode in range(episodes):
+            # Determine episode size
+            base_episode_size = config_dict.get('episode_sample_size', 10000) if config_dict else 10000
+            current_episode_size = min(base_episode_size, len(self.training_data))
+            
+            # Use curriculum sampling if enabled
+            shuffled_data = self._sample_by_curriculum(episode, episodes, current_episode_size)
+            
+            # Print curriculum info
+            if self.curriculum_enabled and episode % 10 == 0:
+                phase_info = self._get_curriculum_phase(episode, episodes)
+                print(f"  Curriculum Phase: {phase_info['phase']}")
+                
+                # Count sample types in this episode
+                categories = self._categorize_training_samples(shuffled_data)
+                print(f"  Sample Distribution: {len(categories['high_disagreement'])} disagreement, "
+                      f"{len(categories['extreme_confidence'])} extreme, {len(categories['balanced'])} balanced")
+            
             episode_reward = 0
             episode_correct = 0
             episode_samples = 0
@@ -425,8 +580,8 @@ class FusionTrainingPipeline:
             episode_action_counts = np.zeros(len(self.fusion_agent.alpha_values))
             episode_raw_rewards = []
             
-            # Shuffle training data for each episode
-            shuffled_data = random.sample(self.training_data, min(len(self.training_data), 5000))  # Limit episode size
+            # Curriculum-based sampling
+            shuffled_data = self._sample_by_curriculum(episode, episodes, current_episode_size)
             
             # Process samples with sequential next_states
             for i, (anomaly_score, gat_prob, true_label) in enumerate(shuffled_data):
@@ -520,8 +675,8 @@ class FusionTrainingPipeline:
             if episode % 2 == 0:  # Every 2 episodes instead of 5
                 self.fusion_agent.decay_epsilon()
             
-            # Enhanced logging every episode for debugging
-            if episode % 5 == 0 or episode < 10:  # More frequent early logging
+            # logging every n episodes for debugging
+            if episode % 50 == 0 or episode == 10:
                 print(f"\n📊 Episode {episode + 1}/{episodes} Stats:")
                 print(f"  Accuracy: {episode_accuracy:.4f}")
                 print(f"  Normalized Reward: {avg_episode_reward:.4f}")
@@ -914,16 +1069,17 @@ class FusionTrainingPipeline:
         filename = f'images/enhanced_fusion_training_progress_{dataset_key}.png'
         plt.savefig(filename, dpi=300, bbox_inches='tight')
         plt.close(fig)
+        plt.ion()  # Turn interactive mode back on
         # plt.show()
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
                                  batch_size: int = 1024, device: str = 'cuda') -> List[DataLoader]:
     """Create optimized data loaders for fusion training."""
     if torch.cuda.is_available() and device == 'cuda':
-        batch_size = 2048
-        num_workers = 6
+        batch_size = 8192
+        num_workers = 12
         pin_memory = True
-        prefetch_factor = 3
+        prefetch_factor = 4
         persistent_workers = True
     else:
         batch_size = min(batch_size, 1024)
@@ -998,6 +1154,13 @@ def main(config: DictConfig):
     TRAIN_RATIO = config_dict.get('train_ratio', 0.8)
     BATCH_SIZE = config_dict.get('batch_size', 1024)
     FUSION_EPISODES = config_dict.get('fusion_episodes', 1000)
+    ALPHA_STEPS = 21
+    FUSION_LR = 0.015
+    FUSION_EPSILON = 0.7
+    BUFFER_SIZE = 200000
+    FUSION_BATCH_SIZE = 512
+    TARGET_UPDATE_FREQ = 50
+
     
     # Set random seeds
     torch.manual_seed(42)
@@ -1034,29 +1197,44 @@ def main(config: DictConfig):
         print("Please run osc_training_AD.py first to train the base models!")
         return
     
-    # === Prepare Fusion Data ===
+    # MUCH more aggressive sampling based on dataset size
+    dataset_configs = {
+        'hcrl_sa': {'max_train': 18000, 'max_val': 4000},     # Use almost all data
+        'set_04': {'max_train': 100000, 'max_val': 20000},    # 4x increase  
+        'hcrl_ch': {'max_train': 120000, 'max_val': 25000},   # 4.8x increase
+        'set_01': {'max_train': 150000, 'max_val': 30000},    # 6x increase
+        'set_03': {'max_train': 130000, 'max_val': 26000},    # 5.2x increase
+        'set_02': {'max_train': 180000, 'max_val': 36000},    # 7.2x increase
+    }
+    
+    config_for_dataset = dataset_configs.get(dataset_key, {'max_train': 50000, 'max_val': 10000})
+    
     pipeline.prepare_fusion_data(
         train_loader, 
         test_loader, 
-        max_train_samples=50000,  # Limit for memory efficiency
-        max_val_samples=10000
+        max_train_samples=config_for_dataset['max_train'],  # Much larger
+        max_val_samples=config_for_dataset['max_val']       # Much larger
     )
     
-    # === Initialize and Train Fusion Agent ===
+    # Initialize fusion agent with config
     pipeline.initialize_fusion_agent(
-        alpha_steps=21,           # 0.0, 0.05, ..., 1.0
-        lr=1e-3,                 # Learning rate
-        epsilon=0.3,             # Initial exploration
-        buffer_size=100000       # Experience replay buffer
+        alpha_steps=config_dict.get('alpha_steps', 21),           # Use config or default
+        lr=config_dict.get('fusion_lr', 0.015),                  # Use config or default
+        epsilon=config_dict.get('fusion_epsilon', 0.7),          # Use config or default
+        buffer_size=config_dict.get('fusion_buffer_size', 200000), # Use config or default
+        batch_size=config_dict.get('fusion_batch_size', 512),    # Use config or default
+        target_update_freq=config_dict.get('fusion_target_update', 50), # Use config or default
+        config_dict=config_dict
     )
     
     # Train the fusion agent
     training_results = pipeline.train_fusion_agent(
-        episodes=FUSION_EPISODES,
+        episodes=config_dict.get('fusion_episodes', 1000),       # Use config or default
         validation_interval=100,
-        early_stopping_patience=10,
+        early_stopping_patience=15,
         save_interval=200,
-        dataset_key=dataset_key  # Add this line
+        dataset_key=dataset_key,
+        config_dict=config_dict  # Pass config_dict here
     )
     
     # === Final Evaluation ===
