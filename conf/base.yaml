@@ -13,7 +13,7 @@ use_focal_loss: true
 profile: false
 
 # Enhanced fusion parameters for better learning
-fusion_episodes: 1000           # Double episodes for more exposure
+fusion_episodes: 800            # Slightly reduced with more efficient training
 max_train_samples: 150000      # 4x increase (adjust per dataset)
 max_val_samples: 30000         # 4x increase  
 alpha_steps: 21                # More granular actions: 0.0, 0.033, 0.067, ..., 1.0
@@ -21,7 +21,11 @@ fusion_lr: 0.015               # Higher LR for faster learning
 fusion_epsilon: 0.7            # Higher exploration initially
 fusion_epsilon_decay: 0.998    # Slower decay
 fusion_min_epsilon: 0.15       # Higher minimum exploration
-fusion_buffer_size: 200000     # 20x larger buffer for V100 memory
-fusion_batch_size: 512         # 4x larger batches
-fusion_target_update: 50       # More frequent target updates
-episode_sample_size: 10000     # Process more samples per episode
+
+# GPU-optimized Q-network training parameters
+fusion_buffer_size: 500000     # Larger buffer for GPU (auto-adjusts based on device)
+fusion_batch_size: 4096        # Much larger batches for GPU efficiency (auto-adjusts)  
+fusion_target_update: 25       # More frequent updates for GPU training
+episode_sample_size: 12000     # Larger episodes for GPU processing
+training_step_interval: 32     # Batch experiences before training
+gpu_training_steps: 8          # Multiple training steps per batch for GPU efficiency

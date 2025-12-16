@@ -221,6 +221,30 @@ class FusionDataExtractor:
         
         return anomaly_scores, gat_probabilities, labels
 
+class GPUStatePreprocessor:
+    """GPU-accelerated state preprocessing for batch operations."""
+    
+    def __init__(self, device: str):
+        self.device = torch.device(device)
+    
+    def batch_normalize_states(self, anomaly_scores, gat_probs):
+        """GPU-accelerated batch state normalization."""
+        if not isinstance(anomaly_scores, torch.Tensor):
+            anomaly_scores = torch.tensor(anomaly_scores, dtype=torch.float32, device=self.device)
+        if not isinstance(gat_probs, torch.Tensor):
+            gat_probs = torch.tensor(gat_probs, dtype=torch.float32, device=self.device)
+        
+        # Batch compute features on GPU
+        disagreement = torch.abs(anomaly_scores - gat_probs)
+        avg_confidence = (anomaly_scores + gat_probs) / 2.0
+        
+        # Stack into batch of normalized states
+        states = torch.stack([
+            anomaly_scores, gat_probs, disagreement, avg_confidence
+        ], dim=1)  # [batch_size, 4]
+        
+        return states.cpu().numpy()  # Return as numpy for compatibility
+
 class FusionTrainingPipeline:
     """Complete pipeline for training the fusion agent."""
     
@@ -238,6 +262,9 @@ class FusionTrainingPipeline:
         # Training data
         self.training_data = None
         self.validation_data = None
+        
+        # GPU state preprocessor
+        self.gpu_preprocessor = GPUStatePreprocessor(str(device))
         
         print(f"✓ Fusion Training Pipeline initialized on {device}")
 
@@ -375,7 +402,7 @@ class FusionTrainingPipeline:
 
     def initialize_fusion_agent(self, alpha_steps: int = 21, lr: float = 1e-3, 
                                epsilon: float = 0.3, buffer_size: int = 100000,
-                               batch_size: int = 64, target_update_freq: int = 100,
+                               batch_size: int = 2048, target_update_freq: int = 100,
                                config_dict: dict = None):
         """Initialize fusion agent with curriculum learning support."""
         self.curriculum_enabled = False
@@ -395,9 +422,15 @@ class FusionTrainingPipeline:
                 }
                 print(f"✓ Curriculum Learning enabled: {self.curriculum_config}")
         
-        # Enhanced state dimension
+        # Enhanced state dimension and GPU optimization parameters
         state_dim = config_dict.get('state_dimension', 4) if config_dict else 4
         
+        # GPU-optimized training parameters
+        if self.device.type == 'cuda':
+            # Large batch sizes for GPU efficiency
+            batch_size = max(batch_size, 4096)  # Minimum 4K batch for GPU
+            buffer_size = max(buffer_size, 500000)  # Larger buffer for GPU training
+            
         self.fusion_agent = EnhancedDQNFusionAgent(
             alpha_steps=alpha_steps,
             lr=lr,
@@ -584,6 +617,11 @@ class FusionTrainingPipeline:
             # Curriculum-based sampling
             shuffled_data = self._sample_by_curriculum(episode, episodes, current_episode_size)
             
+            # GPU-optimized batch processing for Q-network training
+            training_step_interval = config_dict.get('training_step_interval', 32 if self.device.type == 'cuda' else 8)
+            gpu_training_steps = config_dict.get('gpu_training_steps', 8 if self.device.type == 'cuda' else 4)
+            experience_batch = []  # Collect experiences for batch processing
+            
             # Process samples with sequential next_states
             for i, (anomaly_score, gat_prob, true_label) in enumerate(shuffled_data):
                 # Current state
@@ -621,17 +659,40 @@ class FusionTrainingPipeline:
                     next_state = current_state  # Terminal state
                     done = True
                 
-                # Store experience with improved dynamics
-                self.fusion_agent.store_experience(
-                    current_state, action_idx, normalized_reward, next_state, done
-                )
+                # Store experience for batch processing
+                experience_batch.append({
+                    'state': current_state,
+                    'action': action_idx, 
+                    'reward': normalized_reward,
+                    'next_state': next_state,
+                    'done': done
+                })
                 
-                # Train more frequently with smaller batches
-                if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
-                    loss = self.fusion_agent.train_step()
-                    if loss is not None:
-                        episode_loss_sum += loss
-                        episode_loss_count += 1
+                # GPU-optimized batch training - train less frequently but with larger batches
+                if len(experience_batch) >= training_step_interval:
+                    # Store all experiences in batch
+                    for exp in experience_batch:
+                        self.fusion_agent.store_experience(
+                            exp['state'], exp['action'], exp['reward'], exp['next_state'], exp['done']
+                        )
+                    
+                    # Intensive training session with multiple steps
+                    if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
+                        # Multiple training steps for better GPU utilization
+                        training_steps = min(len(experience_batch) // 4, gpu_training_steps)  # Configurable training steps
+                        
+                        batch_loss = 0
+                        for _ in range(training_steps):
+                            loss = self.fusion_agent.train_step()
+                            if loss is not None:
+                                batch_loss += loss
+                        
+                        if training_steps > 0:
+                            avg_batch_loss = batch_loss / training_steps
+                            episode_loss_sum += avg_batch_loss
+                            episode_loss_count += 1
+                    
+                    experience_batch.clear()  # Clear batch for next collection
                 
                 # Track Q-values for sample states
                 with torch.no_grad():
@@ -644,9 +705,29 @@ class FusionTrainingPipeline:
                 episode_correct += (prediction == true_label)
                 episode_samples += 1
                 
-                # More frequent memory cleanup
-                if i % 100 == 0:
+                # GPU-optimized memory cleanup
+                if i % (training_step_interval * 4) == 0:  # Less frequent cleanup for GPU efficiency
                     cleanup_memory()
+            
+            # Process any remaining experiences in final batch
+            if experience_batch:
+                for exp in experience_batch:
+                    self.fusion_agent.store_experience(
+                        exp['state'], exp['action'], exp['reward'], exp['next_state'], exp['done']
+                    )
+                
+                # Final intensive training for remaining experiences
+                if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
+                    training_steps = min(len(experience_batch) // 2, 8)
+                    batch_loss = 0
+                    for _ in range(training_steps):
+                        loss = self.fusion_agent.train_step()
+                        if loss is not None:
+                            batch_loss += loss
+                    
+                    if training_steps > 0:
+                        episode_loss_sum += batch_loss / training_steps
+                        episode_loss_count += 1
             
             # End episode
             self.fusion_agent.end_episode()
@@ -1158,9 +1239,10 @@ def main(config: DictConfig):
     ALPHA_STEPS = 21
     FUSION_LR = 0.015
     FUSION_EPSILON = 0.7
-    BUFFER_SIZE = 200000
-    FUSION_BATCH_SIZE = 512
-    TARGET_UPDATE_FREQ = 50
+    # GPU-optimized parameters
+    BUFFER_SIZE = 500000 if device.type == 'cuda' else 200000  # Larger buffer for GPU
+    FUSION_BATCH_SIZE = 4096 if device.type == 'cuda' else 512  # Much larger batch for GPU
+    TARGET_UPDATE_FREQ = 25 if device.type == 'cuda' else 50   # More frequent updates for GPU
 
     
     # Set random seeds
@@ -1222,9 +1304,9 @@ def main(config: DictConfig):
         alpha_steps=config_dict.get('alpha_steps', 21),           # Use config or default
         lr=config_dict.get('fusion_lr', 0.015),                  # Use config or default
         epsilon=config_dict.get('fusion_epsilon', 0.7),          # Use config or default
-        buffer_size=config_dict.get('fusion_buffer_size', 200000), # Use config or default
-        batch_size=config_dict.get('fusion_batch_size', 512),    # Use config or default
-        target_update_freq=config_dict.get('fusion_target_update', 50), # Use config or default
+        buffer_size=config_dict.get('fusion_buffer_size', BUFFER_SIZE), # Use optimized buffer size
+        batch_size=config_dict.get('fusion_batch_size', FUSION_BATCH_SIZE), # Use optimized batch size
+        target_update_freq=config_dict.get('fusion_target_update', TARGET_UPDATE_FREQ), # Use optimized update freq
         config_dict=config_dict
     )
     
