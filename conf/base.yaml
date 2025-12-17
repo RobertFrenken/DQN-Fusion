@@ -22,10 +22,10 @@ fusion_epsilon: 0.7            # Higher exploration initially
 fusion_epsilon_decay: 0.998    # Slower decay
 fusion_min_epsilon: 0.15       # Higher minimum exploration
 
-# A100-optimized Q-network training parameters (auto-detected)
+# Pipeline parallelism for continuous GPU utilization
 fusion_buffer_size: 750000     # A100-optimized buffer (auto-adjusts: 750K/1M based on memory)
 fusion_batch_size: 6144        # A100-optimized batches (auto-adjusts: 6K-8K based on memory)  
-fusion_target_update: 20       # A100-optimized frequent updates
-episode_sample_size: 16000     # Larger episodes for A100 processing
-training_step_interval: 64     # Larger batches before intensive training
-gpu_training_steps: 16         # More intensive training steps for A100 efficiency
+fusion_target_update: 15       # More frequent updates for continuous training
+episode_sample_size: 20000     # Larger episodes to support pipeline processing
+training_step_interval: 16     # Smaller intervals for pipeline efficiency
+gpu_training_steps: 24         # Increased training steps for pipeline parallelism
