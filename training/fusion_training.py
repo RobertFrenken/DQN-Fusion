@@ -226,6 +226,7 @@ class GPUStatePreprocessor:
     
     def __init__(self, device: str):
         self.device = torch.device(device)
+        self.async_stream = torch.cuda.Stream() if torch.cuda.is_available() else None
     
     def batch_normalize_states(self, anomaly_scores, gat_probs):
         """GPU-accelerated batch state normalization."""
@@ -244,6 +245,14 @@ class GPUStatePreprocessor:
         ], dim=1)  # [batch_size, 4]
         
         return states.cpu().numpy()  # Return as numpy for compatibility
+    
+    def async_batch_normalize_states(self, anomaly_scores, gat_probs):
+        """Asynchronous GPU state normalization for continuous processing."""
+        if self.async_stream is None:
+            return self.batch_normalize_states(anomaly_scores, gat_probs)
+        
+        with torch.cuda.stream(self.async_stream):
+            return self.batch_normalize_states(anomaly_scores, gat_probs)
 
 class FusionTrainingPipeline:
     """Complete pipeline for training the fusion agent."""
@@ -252,6 +261,9 @@ class FusionTrainingPipeline:
         self.device = torch.device(device)
         self.num_ids = num_ids
         self.embedding_dim = embedding_dim
+        
+        # A100-specific GPU optimization
+        self.gpu_info = self._detect_gpu_capabilities()
         
         # Models (will be loaded)
         self.autoencoder = None
@@ -267,6 +279,9 @@ class FusionTrainingPipeline:
         self.gpu_preprocessor = GPUStatePreprocessor(str(device))
         
         print(f"✓ Fusion Training Pipeline initialized on {device}")
+        if self.gpu_info:
+            print(f"  GPU: {self.gpu_info['name']} ({self.gpu_info['memory_gb']:.1f}GB)")
+            print(f"  Optimized batch size: {self.gpu_info['optimal_batch_size']}")
 
     def load_pretrained_models(self, autoencoder_path: str, classifier_path: str):
         """
@@ -425,11 +440,16 @@ class FusionTrainingPipeline:
         # Enhanced state dimension and GPU optimization parameters
         state_dim = config_dict.get('state_dimension', 4) if config_dict else 4
         
-        # GPU-optimized training parameters
-        if self.device.type == 'cuda':
-            # Large batch sizes for GPU efficiency
-            batch_size = max(batch_size, 4096)  # Minimum 4K batch for GPU
-            buffer_size = max(buffer_size, 500000)  # Larger buffer for GPU training
+        # GPU-optimized training parameters based on detected capabilities
+        if self.device.type == 'cuda' and self.gpu_info:
+            # Use GPU-specific optimal parameters
+            batch_size = max(batch_size, self.gpu_info['optimal_batch_size'])
+            buffer_size = max(buffer_size, self.gpu_info['buffer_size'])
+            print(f"  Using parameters: batch={batch_size}, buffer={buffer_size}")
+        elif self.device.type == 'cuda':
+            # Fallback for unknown GPUs
+            batch_size = max(batch_size, 4096)
+            buffer_size = max(buffer_size, 500000)
             
         self.fusion_agent = EnhancedDQNFusionAgent(
             alpha_steps=alpha_steps,
@@ -617,15 +637,22 @@ class FusionTrainingPipeline:
             # Curriculum-based sampling
             shuffled_data = self._sample_by_curriculum(episode, episodes, current_episode_size)
             
-            # GPU-optimized batch processing for Q-network training
-            training_step_interval = config_dict.get('training_step_interval', 32 if self.device.type == 'cuda' else 8)
-            gpu_training_steps = config_dict.get('gpu_training_steps', 8 if self.device.type == 'cuda' else 4)
+            # A100-optimized asynchronous batch processing
+            if self.gpu_info:
+                training_step_interval = min(config_dict.get('training_step_interval', 64), 128)
+                gpu_training_steps = self.gpu_info['training_steps']
+            else:
+                training_step_interval = config_dict.get('training_step_interval', 32 if self.device.type == 'cuda' else 8)
+                gpu_training_steps = config_dict.get('gpu_training_steps', 8 if self.device.type == 'cuda' else 4)
+            
             experience_batch = []  # Collect experiences for batch processing
+            state_cache = []      # Cache states for GPU batch processing
             
             # Process samples with sequential next_states
             for i, (anomaly_score, gat_prob, true_label) in enumerate(shuffled_data):
-                # Current state
+                # GPU-optimized state processing with caching
                 current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+                state_cache.append((anomaly_score, gat_prob))  # Cache for batch processing
                 
                 # Select action (fusion weight)
                 alpha, action_idx, _ = self.fusion_agent.select_action(
@@ -668,31 +695,48 @@ class FusionTrainingPipeline:
                     'done': done
                 })
                 
-                # GPU-optimized batch training - train less frequently but with larger batches
+                # A100-optimized intensive training sessions
                 if len(experience_batch) >= training_step_interval:
-                    # Store all experiences in batch
+                    # Batch store all experiences for efficiency
                     for exp in experience_batch:
                         self.fusion_agent.store_experience(
                             exp['state'], exp['action'], exp['reward'], exp['next_state'], exp['done']
                         )
                     
-                    # Intensive training session with multiple steps
+                    # Intensive multi-step training for continuous GPU utilization
                     if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
-                        # Multiple training steps for better GPU utilization
-                        training_steps = min(len(experience_batch) // 4, gpu_training_steps)  # Configurable training steps
+                        # A100-specific intensive training
+                        intensive_steps = gpu_training_steps * 2  # Double for A100 efficiency
+                        
+                        # Pre-warm GPU with larger initial batch
+                        if len(self.fusion_agent.replay_buffer) > self.fusion_agent.batch_size * 3:
+                            intensive_steps = intensive_steps * 2  # Quadruple training when buffer is full
                         
                         batch_loss = 0
-                        for _ in range(training_steps):
+                        successful_steps = 0
+                        
+                        # Continuous training loop to keep GPU busy
+                        for step in range(intensive_steps):
                             loss = self.fusion_agent.train_step()
                             if loss is not None:
                                 batch_loss += loss
+                                successful_steps += 1
+                            
+                            # Early stopping if buffer becomes too small
+                            if len(self.fusion_agent.replay_buffer) < self.fusion_agent.batch_size:
+                                break
                         
-                        if training_steps > 0:
-                            avg_batch_loss = batch_loss / training_steps
+                        if successful_steps > 0:
+                            avg_batch_loss = batch_loss / successful_steps
                             episode_loss_sum += avg_batch_loss
                             episode_loss_count += 1
+                        
+                        # Force target network update for A100 efficiency
+                        if step % 4 == 0:  # More frequent updates
+                            self.fusion_agent.update_target_network()
                     
                     experience_batch.clear()  # Clear batch for next collection
+                    state_cache.clear()       # Clear state cache
                 
                 # Track Q-values for sample states
                 with torch.no_grad():
@@ -705,28 +749,43 @@ class FusionTrainingPipeline:
                 episode_correct += (prediction == true_label)
                 episode_samples += 1
                 
-                # GPU-optimized memory cleanup
-                if i % (training_step_interval * 4) == 0:  # Less frequent cleanup for GPU efficiency
+                # A100-optimized memory management
+                if i % (training_step_interval * 6) == 0:  # Even less frequent cleanup for A100
                     cleanup_memory()
+                    
+                    # A100-specific memory optimization
+                    if self.gpu_info and torch.cuda.is_available():
+                        torch.cuda.synchronize()  # Ensure GPU operations complete
+                        if torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated() < 0.7:
+                            torch.cuda.empty_cache()  # Only clear cache if utilization is low
             
-            # Process any remaining experiences in final batch
+            # Final intensive processing for A100 efficiency
             if experience_batch:
+                # Store remaining experiences
                 for exp in experience_batch:
                     self.fusion_agent.store_experience(
                         exp['state'], exp['action'], exp['reward'], exp['next_state'], exp['done']
                     )
                 
-                # Final intensive training for remaining experiences
+                # Extended final training session for A100
                 if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
-                    training_steps = min(len(experience_batch) // 2, 8)
+                    # Extended training to fully utilize GPU before episode end
+                    final_intensive_steps = gpu_training_steps * 3  # Triple final training
                     batch_loss = 0
-                    for _ in range(training_steps):
+                    successful_steps = 0
+                    
+                    for _ in range(final_intensive_steps):
                         loss = self.fusion_agent.train_step()
                         if loss is not None:
                             batch_loss += loss
+                            successful_steps += 1
+                        
+                        # Continue until buffer is well utilized
+                        if len(self.fusion_agent.replay_buffer) < self.fusion_agent.batch_size * 2:
+                            break
                     
-                    if training_steps > 0:
-                        episode_loss_sum += batch_loss / training_steps
+                    if successful_steps > 0:
+                        episode_loss_sum += batch_loss / successful_steps
                         episode_loss_count += 1
             
             # End episode
@@ -1159,9 +1218,10 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
     """Create optimized data loaders for fusion training."""
     if torch.cuda.is_available() and device == 'cuda':
         batch_size = 8192
-        num_workers = 12
+        # Optimized for 8-core allocation: use 6 workers (leave 2 for main process)
+        num_workers = 6  
         pin_memory = True
-        prefetch_factor = 4
+        prefetch_factor = 3  # Reduced to match worker count
         persistent_workers = True
     else:
         batch_size = min(batch_size, 1024)
@@ -1239,10 +1299,10 @@ def main(config: DictConfig):
     ALPHA_STEPS = 21
     FUSION_LR = 0.015
     FUSION_EPSILON = 0.7
-    # GPU-optimized parameters
-    BUFFER_SIZE = 500000 if device.type == 'cuda' else 200000  # Larger buffer for GPU
-    FUSION_BATCH_SIZE = 4096 if device.type == 'cuda' else 512  # Much larger batch for GPU
-    TARGET_UPDATE_FREQ = 25 if device.type == 'cuda' else 50   # More frequent updates for GPU
+    # A100-optimized parameters (will be overridden by GPU detection)
+    BUFFER_SIZE = 750000 if device.type == 'cuda' else 200000  # A100-optimized buffer
+    FUSION_BATCH_SIZE = 6144 if device.type == 'cuda' else 512  # A100-optimized batch size
+    TARGET_UPDATE_FREQ = 20 if device.type == 'cuda' else 50   # More frequent updates for A100
 
     
     # Set random seeds
