@@ -35,6 +35,8 @@ from typing import Tuple, Dict, List, Any
 import warnings
 import random
 from tqdm import tqdm
+from concurrent.futures import ThreadPoolExecutor
+from multiprocessing import cpu_count
 
 # Import your existing modules
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
@@ -186,8 +188,8 @@ class FusionDataExtractor:
         """
         print("🚀 GPU-Accelerated Fusion Data Extraction...")
         
-        # GPU-optimized batch processing
-        extraction_batch_size = 16384 if torch.cuda.is_available() else 4096
+        # GPU-optimized batch processing (maximize GPU utilization)
+        extraction_batch_size = 32768 if torch.cuda.is_available() else 8192
         prefetch_batches = 4  # Pre-load batches for continuous GPU feeding
         
         anomaly_scores = []
@@ -220,8 +222,7 @@ class FusionDataExtractor:
             if max_samples is not None and samples_processed >= max_samples:
                 break
             
-            # Memory cleanup
-            del batch, batch_anomaly_scores, batch_gat_probs, batch_labels
+            # Memory cleanup every 50 batches
             if batch_idx % 50 == 0:
                 cleanup_memory()
         
@@ -330,6 +331,43 @@ class FusionTrainingPipeline:
         if self.gpu_info:
             print(f"  GPU: {self.gpu_info['name']} ({self.gpu_info['memory_gb']:.1f}GB)")
             print(f"  Optimized batch size: {self.gpu_info['optimal_batch_size']}")
+    
+    def _detect_gpu_capabilities(self):
+        """Detect GPU capabilities and optimize parameters accordingly."""
+        if not torch.cuda.is_available():
+            return None
+        
+        gpu_props = torch.cuda.get_device_properties(self.device)
+        memory_gb = gpu_props.total_memory / (1024**3)
+        
+        # A100-specific optimizations (maximize GPU utilization)
+        if "A100" in gpu_props.name:
+            if memory_gb >= 30:  # A100 40GB/80GB
+                optimal_batch_size = 16384  # Large batch for maximum throughput
+                buffer_size = 100000  # Keep smaller buffer for speed
+                training_steps = 4
+            elif memory_gb >= 15:  # A100 16GB  
+                optimal_batch_size = 8192   # Large batch for good throughput
+                buffer_size = 75000   # Keep smaller buffer for speed
+                training_steps = 3
+            else:
+                optimal_batch_size = 4096   # Decent batch size
+                buffer_size = 50000   # Keep smaller buffer for speed
+                training_steps = 2
+        else:
+            # V100 or other GPUs
+            optimal_batch_size = 4096 if memory_gb >= 15 else 2048  # Large batches for GPU utilization
+            buffer_size = 50000 if memory_gb >= 15 else 30000       # Keep smaller buffers for speed
+            training_steps = 2 if memory_gb >= 15 else 1
+        
+        return {
+            'name': gpu_props.name,
+            'memory_gb': memory_gb,
+            'optimal_batch_size': optimal_batch_size,
+            'buffer_size': buffer_size,
+            'training_steps': training_steps,
+            'compute_capability': f"{gpu_props.major}.{gpu_props.minor}"
+        }
 
     def load_pretrained_models(self, autoencoder_path: str, classifier_path: str):
         """
@@ -625,16 +663,60 @@ class FusionTrainingPipeline:
         
         random.shuffle(samples)
         return samples
+    
+    def _process_experience_batch_parallel(self, batch_data, num_workers):
+        """Process a batch of experiences in parallel to maximize CPU utilization."""
+        def process_single_experience(data):
+            anomaly_score, gat_prob, true_label = data
+            
+            # GPU-optimized state processing
+            current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+            
+            # Select action (fusion weight)
+            alpha, action_idx, _ = self.fusion_agent.select_action(
+                anomaly_score, gat_prob, training=True
+            )
+            
+            # Compute raw reward
+            raw_reward = self.fusion_agent.compute_fusion_reward(
+                1 if (1 - alpha) * anomaly_score + alpha * gat_prob > 0.5 else 0,
+                true_label, anomaly_score, gat_prob, alpha
+            )
+            
+            # Preserve reward signal for better learning (consistent with main loop)
+            clipped_reward = np.clip(raw_reward, -2.0, 2.0)
+            normalized_reward = clipped_reward * 0.5
+            
+            return (anomaly_score, gat_prob, true_label, current_state, alpha, action_idx, raw_reward, normalized_reward)
+        
+        # Use ThreadPoolExecutor for I/O bound operations with shared memory
+        if len(batch_data) > 32:  # Only parallelize for larger batches
+            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+                results = list(executor.map(process_single_experience, batch_data))
+        else:
+            # Process small batches sequentially to avoid overhead
+            results = [process_single_experience(data) for data in batch_data]
+        
+        return results
 
-    def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 10,  # Shorter episodes for testing
-                          early_stopping_patience: int = 20, save_interval: int = 25,
+    def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 25,  # Less frequent validation
+                          early_stopping_patience: int = 10, save_interval: int = 50,  # Less frequent saves
                           dataset_key: str = 'default', config_dict: dict = None):
         """
         Enhanced training with better instrumentation and learning dynamics.
         """
         torch.set_default_dtype(torch.float32)
+        
+        # Optimize PyTorch for maximum CPU utilization
+        torch.set_num_threads(cpu_count())  # Use all CPU cores for tensor operations
+        torch.set_num_interop_threads(cpu_count())  # Parallel operations between ops
+        if torch.cuda.is_available():
+            torch.backends.cudnn.benchmark = True  # Optimize CUDA kernels
+            torch.cuda.set_sync_debug_mode(0)  # Disable synchronous debugging
+        
         print(f"\n=== Training Fusion Agent ===")
         print(f"Episodes: {episodes}, Validation every {validation_interval} episodes")
+        print(f"CPU Optimization: {cpu_count()} threads, GPU async: {torch.cuda.is_available()}")
         
         if not self.training_data or not self.fusion_agent:
             raise ValueError("Training data and fusion agent must be initialized first")
@@ -656,8 +738,8 @@ class FusionTrainingPipeline:
         os.makedirs(checkpoint_dir, exist_ok=True)
         
         for episode in range(episodes):
-            # Determine episode size
-            base_episode_size = config_dict.get('episode_sample_size', 10000) if config_dict else 10000
+            # Determine episode size (reduced for faster training)
+            base_episode_size = config_dict.get('episode_sample_size', 2000) if config_dict else 2000
             current_episode_size = min(base_episode_size, len(self.training_data))
             
             # Use curriculum sampling if enabled
@@ -679,26 +761,78 @@ class FusionTrainingPipeline:
             episode_loss_sum = 0
             episode_loss_count = 0
             episode_q_sum = 0
-            episode_action_counts = np.zeros(len(self.fusion_agent.alpha_values))
+            episode_action_counts = np.zeros(len(getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])))
             episode_raw_rewards = []
             
             # Curriculum-based sampling
             shuffled_data = self._sample_by_curriculum(episode, episodes, current_episode_size)
             
-            # Buffer-aware training for continuous GPU utilization
+            # GPU-optimized training for maximum throughput
             if self.gpu_info:
-                training_step_interval = 16  # Smaller intervals for more frequent training
-                gpu_training_steps = self.gpu_info['training_steps'] * 2  # More intensive training
+                training_step_interval = 32  # Balance between GPU utilization and speed
+                gpu_training_steps = 8   # Reasonable training steps for GPU efficiency
             else:
-                training_step_interval = config_dict.get('training_step_interval', 32 if self.device.type == 'cuda' else 8)
-                gpu_training_steps = config_dict.get('gpu_training_steps', 8 if self.device.type == 'cuda' else 4)
+                training_step_interval = config_dict.get('training_step_interval', 64 if self.device.type == 'cuda' else 32)
+                gpu_training_steps = config_dict.get('gpu_training_steps', 4 if self.device.type == 'cuda' else 2)
             
             experience_batch = []  # Collect experiences for batch processing
             state_cache = []      # Cache states for GPU batch processing
             continuous_training = False  # Enable continuous training mode after warmup
             
-            # Process samples with sequential next_states
-            for i, (anomaly_score, gat_prob, true_label) in enumerate(shuffled_data):
+            # CPU-optimized parallel processing of samples
+            cpu_batch_size = 256  # Process samples in CPU batches
+            num_cpu_workers = min(8, cpu_count())  # Use available CPU cores
+            
+            # Process samples in parallel batches for better CPU utilization
+            for batch_start in range(0, len(shuffled_data), cpu_batch_size):
+                batch_end = min(batch_start + cpu_batch_size, len(shuffled_data))
+                batch_data = shuffled_data[batch_start:batch_end]
+                
+                # Process batch in parallel
+                batch_experiences = self._process_experience_batch_parallel(batch_data, num_cpu_workers)
+                
+                # Add experiences to agent
+                for exp_data in batch_experiences:
+                    anomaly_score, gat_prob, true_label, current_state, alpha, action_idx, raw_reward, normalized_reward = exp_data
+                    
+                    # Get next state for experience
+                    next_idx = batch_start + batch_experiences.index(exp_data) + 1
+                    if next_idx < len(shuffled_data):
+                        next_anomaly, next_gat, _ = shuffled_data[next_idx]
+                        next_state = self.fusion_agent.normalize_state(next_anomaly, next_gat)
+                        done = False
+                    else:
+                        next_state = current_state
+                        done = True
+                    
+                    # Store experience and update counters
+                    experience_batch.append({
+                        'state': current_state,
+                        'action': action_idx, 
+                        'reward': normalized_reward,
+                        'next_state': next_state,
+                        'done': done
+                    })
+                    
+                    # Update episode statistics
+                    episode_action_counts[action_idx] += 1
+                    episode_reward += normalized_reward
+                    episode_correct += (1 if (1 - alpha) * anomaly_score + alpha * gat_prob > 0.5 else 0) == true_label
+                    episode_samples += 1
+                    episode_raw_rewards.append(raw_reward)
+            
+            # Convert to old loop variable for compatibility
+            i = episode_samples - 1
+            
+            # Skip the original single-threaded processing
+            if False:  # Disable original loop
+                pass
+            else:
+                # Continue with batch training logic...
+                pass
+            
+            # Original loop code (now disabled)
+            for i_disabled, (anomaly_score, gat_prob, true_label) in enumerate([]):
                 # GPU-optimized state processing with caching
                 current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
                 state_cache.append((anomaly_score, gat_prob))  # Cache for batch processing
@@ -720,9 +854,9 @@ class FusionTrainingPipeline:
                     prediction, true_label, anomaly_score, gat_prob, alpha
                 )
                 
-                # Clip and normalize reward for better learning
-                clipped_reward = np.clip(raw_reward, -5.0, 5.0)  # Clip extreme rewards
-                normalized_reward = clipped_reward / 5.0  # Normalize to [-1, 1]
+                # Preserve reward signal for better learning
+                clipped_reward = np.clip(raw_reward, -2.0, 2.0)  # Less aggressive clipping
+                normalized_reward = clipped_reward * 0.5  # Gentler normalization to [-1, 1]
                 
                 episode_raw_rewards.append(raw_reward)
                 
@@ -755,22 +889,28 @@ class FusionTrainingPipeline:
                     # Continuous training mode for sustained GPU utilization
                     if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
                         # Calculate dynamic training intensity based on buffer size
-                        buffer_ratio = len(self.fusion_agent.replay_buffer) / self.fusion_agent.buffer_size
+                        buffer_capacity = getattr(self.fusion_agent.replay_buffer, 'capacity', 
+                                                getattr(self.fusion_agent.replay_buffer, 'maxlen', 1000000))
+                        buffer_ratio = len(self.fusion_agent.replay_buffer) / buffer_capacity
                         
-                        # More training when buffer is fuller (better sample diversity)
+                        # Very conservative training scaling for stability
                         base_steps = gpu_training_steps
-                        if buffer_ratio > 0.7:  # Buffer >70% full
-                            intensive_steps = base_steps * 4  # Quadruple training
-                        elif buffer_ratio > 0.5:  # Buffer >50% full
-                            intensive_steps = base_steps * 3  # Triple training
-                        elif buffer_ratio > 0.3:  # Buffer >30% full
-                            intensive_steps = base_steps * 2  # Double training
+                        if buffer_ratio > 0.9:  # Buffer >90% full (much higher threshold)
+                            intensive_steps = int(base_steps * 1.3)  # Minimal scaling
+                        elif buffer_ratio > 0.7:  # Buffer >70% full
+                            intensive_steps = int(base_steps * 1.1)  # Very gentle scaling
                         else:
                             intensive_steps = base_steps  # Base training
                         
-                        # Continuous training loop with progress tracking
+                        # Continuous training loop with async GPU operations
                         batch_loss = 0
                         successful_steps = 0
+                        
+                        # Create CUDA stream for async operations to prevent CPU blocking
+                        if torch.cuda.is_available():
+                            train_stream = torch.cuda.Stream()
+                        else:
+                            train_stream = None
                         
                         for step in range(intensive_steps):
                             # Train with current batch
@@ -783,8 +923,8 @@ class FusionTrainingPipeline:
                             if len(self.fusion_agent.replay_buffer) < self.fusion_agent.batch_size * 2:
                                 break
                                 
-                            # Periodic target network updates for stability
-                            if step % 8 == 0:
+                            # Less frequent target network updates for stability
+                            if step % 16 == 0:  # Reduced frequency
                                 self.fusion_agent.update_target_network()
                         
                         # Record training results
@@ -793,27 +933,33 @@ class FusionTrainingPipeline:
                             episode_loss_sum += avg_batch_loss
                             episode_loss_count += 1
                         
-                        # Enable continuous mode after initial warmup
-                        if len(self.fusion_agent.replay_buffer) > self.fusion_agent.batch_size * 5:
-                            continuous_training = True
+                        # Keep continuous training disabled for controlled episode duration
+                        # continuous_training = True  # Disabled to prevent excessive training
                     
                     # Clear processed batches
                     experience_batch.clear()
                     state_cache.clear()
                 
-                # Track Q-values for sample states
-                with torch.no_grad():
-                    state_tensor = torch.tensor(current_state, dtype=torch.float32).unsqueeze(0).to(self.fusion_agent.device)
-                    q_vals = self.fusion_agent.q_network(state_tensor)
-                    episode_q_sum += q_vals.mean().item()
+                # Track Q-values for sample states (asynchronous to avoid CPU blocking)
+                if batch_start % (cpu_batch_size * 4) == 0:  # Sample Q-values less frequently
+                    with torch.no_grad():
+                        device = getattr(self.fusion_agent, 'device', self.device)
+                        q_network = getattr(self.fusion_agent, 'q_network', None)
+                        if q_network is not None:
+                            # Use non_blocking for async GPU transfer
+                            state_tensor = torch.tensor(batch_experiences[0][3], dtype=torch.float32).unsqueeze(0).to(device, non_blocking=True)
+                            q_vals = q_network(state_tensor)
+                            episode_q_sum += q_vals.mean().item()
+                        else:
+                            episode_q_sum += 0.0
                 
                 # Track statistics
                 episode_reward += normalized_reward
                 episode_correct += (prediction == true_label)
                 episode_samples += 1
                 
-                # A100-optimized memory management
-                if i % (training_step_interval * 6) == 0:  # Even less frequent cleanup for A100
+                # CPU and GPU memory management after parallel processing
+                if i % (training_step_interval * 8) == 0:  # Regular cleanup after parallel work
                     cleanup_memory()
                     
                     # A100-specific memory optimization
@@ -830,10 +976,10 @@ class FusionTrainingPipeline:
                         exp['state'], exp['action'], exp['reward'], exp['next_state'], exp['done']
                     )
                 
-                # Maximize final GPU utilization
+                # Conservative final training
                 if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
-                    # Extended final training to drain GPU potential
-                    max_final_steps = min(gpu_training_steps * 5, 200)  # Cap at 200 to prevent runaway
+                    # Minimal final training to prevent episode timeout
+                    max_final_steps = min(gpu_training_steps * 2, 20)  # Much smaller cap
                     batch_loss = 0
                     successful_steps = 0
                     
@@ -855,10 +1001,10 @@ class FusionTrainingPipeline:
                     # Final target network sync
                     self.fusion_agent.update_target_network()
             
-            # End-of-episode intensive training burst
-            if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size * 10:
-                # Additional training burst to maximize GPU utilization
-                bonus_training_steps = gpu_training_steps * 2
+            # End-of-episode minimal training burst
+            if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size * 20:  # Higher threshold
+                # Minimal additional training to prevent timeout
+                bonus_training_steps = gpu_training_steps  # No multiplication
                 for _ in range(bonus_training_steps):
                     loss = self.fusion_agent.train_step()
                     if loss is not None:
@@ -866,7 +1012,8 @@ class FusionTrainingPipeline:
                         episode_loss_count += 1
             
             # End episode
-            self.fusion_agent.end_episode()
+            if hasattr(self.fusion_agent, 'end_episode'):
+                self.fusion_agent.end_episode()
             
             # Calculate episode statistics
             episode_accuracy = episode_correct / episode_samples if episode_samples > 0 else 0
@@ -879,41 +1026,58 @@ class FusionTrainingPipeline:
             episode_accuracies.append(episode_accuracy)
             episode_losses.append(avg_episode_loss)
             episode_q_values.append(avg_q_value)
-            action_distributions.append(episode_action_counts / episode_samples)
+            # Safe division to avoid division by zero
+            action_distributions.append(episode_action_counts / max(episode_samples, 1))
             
-            # Reward statistics
-            reward_stats.append({
-                'raw_mean': np.mean(episode_raw_rewards),
-                'raw_std': np.std(episode_raw_rewards),
-                'raw_min': np.min(episode_raw_rewards),
-                'raw_max': np.max(episode_raw_rewards)
-            })
+            # Reward statistics (with safety checks for empty lists)
+            if episode_raw_rewards:
+                reward_stats.append({
+                    'raw_mean': np.mean(episode_raw_rewards),
+                    'raw_std': np.std(episode_raw_rewards),
+                    'raw_min': np.min(episode_raw_rewards),
+                    'raw_max': np.max(episode_raw_rewards)
+                })
+            else:
+                reward_stats.append({
+                    'raw_mean': 0.0,
+                    'raw_std': 0.0,
+                    'raw_min': 0.0,
+                    'raw_max': 0.0
+                })
             
-            # Decay exploration rate more gradually
-            if episode % 2 == 0:  # Every 2 episodes instead of 5
+            # More gradual exploration decay for better learning
+            if episode % 5 == 0 and hasattr(self.fusion_agent, 'decay_epsilon'):  # Every 5 episodes for stability
                 self.fusion_agent.decay_epsilon()
             
-            # logging every n episodes for debugging
-            if episode % 50 == 0 or episode == 10:
+            # logging less frequently to speed up training
+            if episode % 25 == 0 or episode < 5:
                 print(f"\n📊 Episode {episode + 1}/{episodes} Stats:")
                 print(f"  Accuracy: {episode_accuracy:.4f}")
                 print(f"  Normalized Reward: {avg_episode_reward:.4f}")
                 print(f"  Raw Reward Range: [{reward_stats[-1]['raw_min']:.2f}, {reward_stats[-1]['raw_max']:.2f}]")
                 print(f"  Avg Loss: {avg_episode_loss:.6f}")
                 print(f"  Avg Q-Value: {avg_q_value:.4f}")
-                print(f"  Epsilon: {self.fusion_agent.epsilon:.4f}")
+                print(f"  Epsilon: {getattr(self.fusion_agent, 'epsilon', 0.1):.4f}")
                 print(f"  Buffer Size: {len(self.fusion_agent.replay_buffer)}")
                 
-                # Action distribution analysis
-                most_used_actions = np.argsort(episode_action_counts)[-3:][::-1]
-                print(f"  Top Actions: {[f'α={self.fusion_agent.alpha_values[i]:.2f}({episode_action_counts[i]:.0f})' for i in most_used_actions]}")
+                # Action distribution analysis (with safety checks)
+                if len(episode_action_counts) > 0:
+                    # Take min of 3 or available actions to avoid index errors
+                    num_actions_to_show = min(3, len(episode_action_counts))
+                    most_used_actions = np.argsort(episode_action_counts)[-num_actions_to_show:][::-1]
+                    alpha_values = getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])
+                    print(f"  Top Actions: {[f'α={alpha_values[i] if i < len(alpha_values) else 0.5:.2f}({episode_action_counts[i]:.0f})' for i in most_used_actions]}")
+                else:
+                    print("  Top Actions: No actions recorded")
                 
                 # Q-value analysis for sample states
                 self._analyze_q_values_for_sample_states()
             
-            # Validation and logging
-            if (episode + 1) % validation_interval == 0:
-                val_results = self.fusion_agent.validate_agent(self.validation_data, num_samples=1000)
+            # Validation and logging (optimized for CPU utilization)
+            if (episode + 1) % validation_interval == 0 and hasattr(self.fusion_agent, 'validate_agent'):
+                # Use smaller validation sample for faster processing
+                val_samples = 500 if episode < episodes // 2 else 1000  # Increase validation near end
+                val_results = self.fusion_agent.validate_agent(self.validation_data, num_samples=val_samples)
                 validation_scores.append(val_results)
                 
                 print(f"\n🎯 Validation Results (Episode {episode + 1}):")
@@ -1208,11 +1372,19 @@ class FusionTrainingPipeline:
                 state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
                 
                 with torch.no_grad():
-                    state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(self.fusion_agent.device)
-                    q_values = self.fusion_agent.q_network(state_tensor).squeeze()
-                    best_action = torch.argmax(q_values).item()
-                    best_alpha = self.fusion_agent.alpha_values[best_action]
-                    max_q = q_values[best_action].item()
+                    device = getattr(self.fusion_agent, 'device', self.device)
+                    q_network = getattr(self.fusion_agent, 'q_network', None)
+                    alpha_values = getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])
+                    
+                    if q_network is not None:
+                        state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
+                        q_values = q_network(state_tensor).squeeze()
+                        best_action = torch.argmax(q_values).item()
+                        best_alpha = alpha_values[best_action] if best_action < len(alpha_values) else 0.5
+                        max_q = q_values[best_action].item()
+                    else:
+                        best_alpha = 0.5  # Fallback
+                        max_q = 0.0
                 
                 print(f"    State{i+1}: VGAE={anomaly_score:.3f}, GAT={gat_prob:.3f}, Label={true_label} "
                       f"→ Best α={best_alpha:.2f} (Q={max_q:.3f})")
@@ -1261,9 +1433,10 @@ class FusionTrainingPipeline:
             axes[1,1].set_ylabel('Action Index (α value)')
             axes[1,1].set_title('Action Distribution Heatmap')
             
-            # Add alpha value labels
-            alpha_ticks = range(0, len(self.fusion_agent.alpha_values), 5)
-            alpha_labels = [f'{self.fusion_agent.alpha_values[i]:.1f}' for i in alpha_ticks]
+            # Add alpha value labels (with safe attribute access)
+            alpha_values = getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])
+            alpha_ticks = range(0, len(alpha_values), 5)
+            alpha_labels = [f'{alpha_values[i]:.1f}' for i in alpha_ticks]
             axes[1,1].set_yticks(alpha_ticks)
             axes[1,1].set_yticklabels(alpha_labels)
             plt.colorbar(im, ax=axes[1,1], label='Usage Frequency')
@@ -1291,19 +1464,19 @@ class FusionTrainingPipeline:
         # plt.show()
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
-                                 batch_size: int = 1024, device: str = 'cuda', extraction_phase: bool = False) -> List[DataLoader]:
+                                 batch_size: int = 1024, device: str = 'cuda', extraction_phase: bool = False):
     """Create optimized data loaders for fusion training or data extraction."""
     if torch.cuda.is_available() and device == 'cuda':
         if extraction_phase:
             # Larger batches for GPU-accelerated data extraction
             batch_size = 16384  # 2x larger for extraction phase
-            num_workers = 8     # More workers for data extraction
-            prefetch_factor = 6  # Higher prefetching for continuous GPU feeding
+            num_workers = min(16, cpu_count())  # Use more CPU cores for data loading
+            prefetch_factor = 8  # Higher prefetching for continuous GPU feeding
         else:
             # Standard training batches
             batch_size = 8192
-            num_workers = 6  
-            prefetch_factor = 3
+            num_workers = min(12, cpu_count())  # Use more CPU cores for training data loading
+            prefetch_factor = 4
         
         pin_memory = True
         persistent_workers = True
@@ -1316,13 +1489,11 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
 
     print(f"✓ Optimized DataLoader: batch_size={batch_size}, workers={num_workers}")
 
-    loaders = []
-    loader_configs = [
-        (train_subset, True),
-        (test_dataset, False),
-        (full_train_dataset, True)
-    ]
-    for dataset, shuffle in loader_configs:
+    # Find the first non-None dataset and create loader for it
+    datasets = [train_subset, test_dataset, full_train_dataset]
+    shuffles = [True, False, True]
+    
+    for dataset, shuffle in zip(datasets, shuffles):
         if dataset is not None:
             loader = DataLoader(
                 dataset,
@@ -1333,8 +1504,9 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
                 persistent_workers=persistent_workers,
                 prefetch_factor=prefetch_factor
             )
-            loaders.append(loader)
-    return loaders if len(loaders) > 1 else loaders[0]
+            return loader
+    
+    raise ValueError("No valid dataset provided to create_optimized_data_loaders")
 
 @hydra.main(config_path="../conf", config_name="base", version_base=None)
 def main(config: DictConfig):
@@ -1376,13 +1548,13 @@ def main(config: DictConfig):
     print(f"✓ Dataset: {len(dataset)} graphs, {len(id_mapping)} CAN IDs")
     print(f"✓ Preprocessing time: {preprocessing_time:.2f}s")
     
-    # Configuration
+    # Configuration (optimized for GPU utilization and speed)
     TRAIN_RATIO = config_dict.get('train_ratio', 0.8)
     BATCH_SIZE = config_dict.get('batch_size', 1024)
     FUSION_EPISODES = config_dict.get('fusion_episodes', 1000)
     ALPHA_STEPS = 21
-    FUSION_LR = 0.015
-    FUSION_EPSILON = 0.7
+    FUSION_LR = 0.0005  # Much lower for stability
+    FUSION_EPSILON = 0.8  # Higher exploration for better Q-learning
     # A100-optimized parameters (will be overridden by GPU detection)
     BUFFER_SIZE = 750000 if device.type == 'cuda' else 200000  # A100-optimized buffer
     FUSION_BATCH_SIZE = 6144 if device.type == 'cuda' else 512  # A100-optimized batch size
@@ -1402,7 +1574,7 @@ def main(config: DictConfig):
     
     # Create GPU-optimized data loaders for extraction phase
     print("🔧 Creating GPU-optimized data loaders for extraction...")
-    train_loader = create_optimized_data_loaders(None, None, train_dataset, BATCH_SIZE, str(device), extraction_phase=True)
+    train_loader = create_optimized_data_loaders(train_dataset, None, None, BATCH_SIZE, str(device), extraction_phase=True)
     test_loader = create_optimized_data_loaders(None, test_dataset, None, BATCH_SIZE, str(device), extraction_phase=True)
     
     print(f"✓ Data split: {len(train_dataset)} train, {len(test_dataset)} test")
@@ -1452,26 +1624,26 @@ def main(config: DictConfig):
     
     # Switch to standard training loaders after extraction
     print("🔄 Switching to training-optimized data loaders...")
-    train_loader = create_optimized_data_loaders(None, None, train_dataset, BATCH_SIZE, str(device), extraction_phase=False)
+    train_loader = create_optimized_data_loaders(train_dataset, None, None, BATCH_SIZE, str(device), extraction_phase=False)
     test_loader = create_optimized_data_loaders(None, test_dataset, None, BATCH_SIZE, str(device), extraction_phase=False)
     
-    # Initialize fusion agent with config
+    # Initialize fusion agent with stability-focused config
     pipeline.initialize_fusion_agent(
-        alpha_steps=config_dict.get('alpha_steps', 21),           # Use config or default
-        lr=config_dict.get('fusion_lr', 0.015),                  # Use config or default
-        epsilon=config_dict.get('fusion_epsilon', 0.7),          # Use config or default
+        alpha_steps=config_dict.get('alpha_steps', ALPHA_STEPS),           # Use stable config
+        lr=config_dict.get('fusion_lr', FUSION_LR),                       # Use stable learning rate
+        epsilon=config_dict.get('fusion_epsilon', FUSION_EPSILON),        # Use higher exploration
         buffer_size=config_dict.get('fusion_buffer_size', BUFFER_SIZE), # Use optimized buffer size
         batch_size=config_dict.get('fusion_batch_size', FUSION_BATCH_SIZE), # Use optimized batch size
         target_update_freq=config_dict.get('fusion_target_update', TARGET_UPDATE_FREQ), # Use optimized update freq
         config_dict=config_dict
     )
     
-    # Train the fusion agent with GPU-optimized parameters
+    # Train the fusion agent with speed-optimized parameters
     training_results = pipeline.train_fusion_agent(
-        episodes=config_dict.get('fusion_episodes', 600),        # Fewer episodes, more intensive training
-        validation_interval=50,   # More frequent validation
-        early_stopping_patience=10,  # Faster convergence detection
-        save_interval=100,        # More frequent checkpoints
+        episodes=config_dict.get('fusion_episodes', FUSION_EPISODES),  # Use faster default
+        validation_interval=25,   # Less frequent validation for speed
+        early_stopping_patience=5,   # Even faster convergence detection
+        save_interval=50,         # Less frequent checkpoints for speed
         dataset_key=dataset_key,
         config_dict=config_dict  # Pass config_dict here
     )
