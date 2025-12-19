@@ -82,6 +82,107 @@ FUSION_WEIGHTS = {
     'can_id_prediction': 0.25
 }
 
+# Publication-Ready Plotting Configuration
+PLOT_CONFIG = {
+    # Font settings
+    'font.size': 14,
+    'font.family': 'serif',
+    'font.serif': ['Times New Roman', 'DejaVu Serif'],
+    'axes.labelsize': 16,
+    'axes.titlesize': 18,
+    'xtick.labelsize': 14,
+    'ytick.labelsize': 14,
+    'legend.fontsize': 14,
+    
+    # Figure settings
+    'figure.dpi': 300,
+    'figure.figsize': [12, 8],
+    'savefig.dpi': 300,
+    'savefig.bbox': 'tight',
+    'savefig.pad_inches': 0.1,
+    
+    # Line and marker settings
+    'lines.linewidth': 2.5,
+    'lines.markersize': 8,
+    'patch.linewidth': 1.5,
+    
+    # Grid and axes
+    'axes.grid': True,
+    'grid.alpha': 0.3,
+    'grid.linewidth': 0.8,
+    'axes.axisbelow': True,
+    'axes.edgecolor': 'black',
+    'axes.linewidth': 1.2,
+    
+    # Colors (colorblind-friendly palette)
+    'axes.prop_cycle': plt.cycler('color', [
+        '#1f77b4',  # Blue
+        '#ff7f0e',  # Orange
+        '#2ca02c',  # Green
+        '#d62728',  # Red
+        '#9467bd',  # Purple
+        '#8c564b',  # Brown
+        '#e377c2',  # Pink
+        '#7f7f7f',  # Gray
+        '#bcbd22',  # Olive
+        '#17becf'   # Cyan
+    ]),
+    
+    # LaTeX rendering (optional - set to False if LaTeX not available)
+    'text.usetex': False,
+    'mathtext.fontset': 'stix',
+    
+    # Legend settings
+    'legend.frameon': True,
+    'legend.framealpha': 0.9,
+    'legend.fancybox': True,
+    'legend.shadow': False,
+    'legend.edgecolor': 'black',
+    'legend.facecolor': 'white'
+}
+
+# Color schemes for different plot types
+COLOR_SCHEMES = {
+    'training': {
+        'accuracy': '#1f77b4',
+        'reward': '#2ca02c', 
+        'loss': '#d62728',
+        'q_values': '#9467bd'
+    },
+    'validation': {
+        'primary': '#ff7f0e',
+        'secondary': '#8c564b'
+    },
+    'fusion_analysis': {
+        'normal': '#1f77b4',
+        'attack': '#d62728',
+        'adaptive': '#2ca02c'
+    },
+    'heatmap': 'viridis'
+}
+
+def apply_publication_style():
+    """Apply publication-ready matplotlib style."""
+    plt.rcParams.update(PLOT_CONFIG)
+    plt.style.use('default')  # Reset to default first
+    for key, value in PLOT_CONFIG.items():
+        if key in plt.rcParams:
+            plt.rcParams[key] = value
+
+def save_publication_figure(fig, filename, additional_formats=['pdf', 'svg']):
+    """Save figure in multiple publication-ready formats."""
+    base_path = filename.rsplit('.', 1)[0]
+    
+    # Save PNG (default)
+    fig.savefig(f"{base_path}.png", dpi=300, bbox_inches='tight', pad_inches=0.1)
+    
+    # Save additional formats
+    for fmt in additional_formats:
+        try:
+            fig.savefig(f"{base_path}.{fmt}", bbox_inches='tight', pad_inches=0.1)
+        except Exception as e:
+            print(f"Warning: Could not save {fmt} format: {e}")
+
 class FusionDataExtractor:
     """Extract anomaly scores and GAT probabilities for fusion training."""
     
@@ -700,7 +801,7 @@ class FusionTrainingPipeline:
         return results
 
     def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 25,  # Less frequent validation
-                          early_stopping_patience: int = 10, save_interval: int = 50,  # Less frequent saves
+                          early_stopping_patience: int = 50, save_interval: int = 50,  # Much longer patience
                           dataset_key: str = 'default', config_dict: dict = None):
         """
         Enhanced training with better instrumentation and learning dynamics.
@@ -788,12 +889,37 @@ class FusionTrainingPipeline:
                 batch_end = min(batch_start + cpu_batch_size, len(shuffled_data))
                 batch_data = shuffled_data[batch_start:batch_end]
                 
-                # Process batch in parallel
-                batch_experiences = self._process_experience_batch_parallel(batch_data, num_cpu_workers)
+                # Process batch in parallel (with validation)
+                if len(batch_data) > 0:
+                    batch_experiences = self._process_experience_batch_parallel(batch_data, num_cpu_workers)
+                    
+                    # Validate batch_experiences structure
+                    if not batch_experiences:
+                        print(f"Warning: Empty batch_experiences for batch {batch_start}-{batch_end}")
+                        continue
+                else:
+                    batch_experiences = []
                 
                 # Add experiences to agent
                 for exp_data in batch_experiences:
-                    anomaly_score, gat_prob, true_label, current_state, alpha, action_idx, raw_reward, normalized_reward = exp_data
+                    # Safely unpack experience data with error handling
+                    try:
+                        anomaly_score, gat_prob, true_label, current_state, alpha, action_idx, raw_reward, normalized_reward = exp_data
+                        
+                        # Ensure scalar values (convert arrays to scalars if needed)
+                        if hasattr(anomaly_score, 'item'):
+                            anomaly_score = anomaly_score.item()
+                        if hasattr(gat_prob, 'item'):
+                            gat_prob = gat_prob.item()
+                        if hasattr(true_label, 'item'):
+                            true_label = true_label.item()
+                        if hasattr(alpha, 'item'):
+                            alpha = alpha.item()
+                            
+                    except (ValueError, TypeError) as e:
+                        print(f"Error unpacking experience data: {e}")
+                        print(f"Experience data shape/type: {[type(x) for x in exp_data]}")
+                        continue
                     
                     # Get next state for experience
                     next_idx = batch_start + batch_experiences.index(exp_data) + 1
@@ -913,7 +1039,7 @@ class FusionTrainingPipeline:
                             train_stream = None
                         
                         for step in range(intensive_steps):
-                            # Train with current batch
+                            # Train with current batch (with stability controls)
                             loss = self.fusion_agent.train_step()
                             if loss is not None:
                                 batch_loss += loss
@@ -923,8 +1049,9 @@ class FusionTrainingPipeline:
                             if len(self.fusion_agent.replay_buffer) < self.fusion_agent.batch_size * 2:
                                 break
                                 
-                            # Less frequent target network updates for stability
-                            if step % 16 == 0:  # Reduced frequency
+                            # Less frequent target updates for stability in later episodes
+                            update_freq = 24 if episode > 250 else 16  # Slower updates when converged
+                            if step % update_freq == 0:  # Adaptive frequency
                                 self.fusion_agent.update_target_network()
                         
                         # Record training results
@@ -1048,6 +1175,14 @@ class FusionTrainingPipeline:
                     'raw_max': 0.0
                 })
             
+            # Adaptive learning rate decay for stability in later episodes
+            if episode > 200 and episode_accuracy > 0.995:  # High performance phase
+                # Reduce learning rate for fine-tuning stability
+                if hasattr(self.fusion_agent, 'optimizer'):
+                    for param_group in self.fusion_agent.optimizer.param_groups:
+                        if param_group['lr'] > 0.0001:  # Don't go too low
+                            param_group['lr'] *= 0.98  # Gradual decay
+            
             # More gradual exploration decay for better learning
             if episode % 5 == 0 and hasattr(self.fusion_agent, 'decay_epsilon'):  # Every 5 episodes for stability
                 self.fusion_agent.decay_epsilon()
@@ -1062,6 +1197,15 @@ class FusionTrainingPipeline:
                 print(f"  Avg Q-Value: {avg_q_value:.6f} (Sum: {episode_q_sum:.3f}, Samples: {episode_samples})")
                 print(f"  Epsilon: {getattr(self.fusion_agent, 'epsilon', 0.1):.4f}")
                 print(f"  Buffer Size: {len(self.fusion_agent.replay_buffer)}")
+                
+                # Early convergence detection for stability
+                if episode > 250 and episode_accuracy > 0.9975 and avg_episode_loss < 0.001:
+                    print(f"\n🎯 Early convergence detected at episode {episode+1}")
+                    print(f"  High accuracy: {episode_accuracy:.6f}")
+                    print(f"  Low loss: {avg_episode_loss:.6f}")
+                    # Reduce training intensity for stability
+                    if hasattr(self.fusion_agent, 'epsilon') and self.fusion_agent.epsilon > 0.05:
+                        self.fusion_agent.epsilon *= 0.95  # Faster epsilon decay
                 
                 # Action distribution analysis (with safety checks)
                 if len(episode_action_counts) > 0:
@@ -1088,18 +1232,27 @@ class FusionTrainingPipeline:
                 print(f"  Validation Reward: {val_results['avg_reward']:.4f}")
                 print(f"  Avg Alpha: {val_results['avg_alpha']:.4f} ± {val_results['alpha_std']:.4f}")
                 
-                # Early stopping check
+                # More lenient early stopping - allow for continued learning
                 current_val_score = val_results['accuracy']
-                if current_val_score > best_validation_score:
+                
+                # Only consider it an improvement if it's meaningfully better
+                improvement_threshold = 0.0001  # 0.01% improvement threshold
+                if current_val_score > best_validation_score + improvement_threshold:
                     best_validation_score = current_val_score
                     patience_counter = 0
                     self.save_fusion_agent("saved_models/fusion_checkpoints", "best", dataset_key)
-                    print(f"  🏆 New best validation score!")
-                else:
+                    print(f"  🏆 New best validation score: {current_val_score:.6f}!")
+                elif current_val_score < best_validation_score - 0.001:  # Only count significant degradation
                     patience_counter += 1
+                    print(f"  ⚠️  Validation declined: {current_val_score:.6f} < {best_validation_score:.6f} (patience: {patience_counter}/{early_stopping_patience})")
+                else:
+                    # Small changes don't affect patience - model is still learning
+                    print(f"  ➖ Validation stable: {current_val_score:.6f} (patience unchanged: {patience_counter}/{early_stopping_patience})")
                 
                 if patience_counter >= early_stopping_patience:
                     print(f"\n🛑 Early stopping triggered after {patience_counter} validation cycles")
+                    print(f"   Best validation score achieved: {best_validation_score:.6f}")
+                    print(f"   Current validation score: {current_val_score:.6f}")
                     break
             
             # Periodic checkpoints
@@ -1236,57 +1389,62 @@ class FusionTrainingPipeline:
               f"(Accuracy: {best_method[1]['accuracy']:.4f})")
 
     def _plot_training_progress(self, accuracies: List, rewards: List, validation_scores: List):
-        """Plot training progress visualization."""
+        """Plot training progress visualization with publication-ready styling."""
+        apply_publication_style()
         plt.ioff()  # Turn off interactive mode
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
         
         episodes = range(1, len(accuracies) + 1)
+        colors = COLOR_SCHEMES['training']
         
         # Training accuracy
-        ax1.plot(episodes, accuracies, 'b-', linewidth=2, alpha=0.7)
-        ax1.set_xlabel('Episode')
+        ax1.plot(episodes, accuracies, color=colors['accuracy'], linewidth=2.5, alpha=0.8)
+        ax1.set_xlabel('Training Episode')
         ax1.set_ylabel('Training Accuracy')
-        ax1.set_title('Training Accuracy Over Episodes')
-        ax1.grid(True, alpha=0.3)
+        ax1.set_title('Training Accuracy Progression', fontweight='bold')
+        ax1.set_ylim([0, 1.02])
         
         # Training rewards
-        ax2.plot(episodes, rewards, 'g-', linewidth=2, alpha=0.7)
-        ax2.set_xlabel('Episode')
-        ax2.set_ylabel('Average Reward')
-        ax2.set_title('Training Rewards Over Episodes')
-        ax2.grid(True, alpha=0.3)
+        ax2.plot(episodes, rewards, color=colors['reward'], linewidth=2.5, alpha=0.8)
+        ax2.set_xlabel('Training Episode')
+        ax2.set_ylabel('Average Normalized Reward')
+        ax2.set_title('Training Reward Evolution', fontweight='bold')
         
         # Validation accuracy
         if validation_scores:
             val_episodes = [i * 100 for i in range(1, len(validation_scores) + 1)]
             val_accuracies = [score['accuracy'] for score in validation_scores]
-            ax3.plot(val_episodes, val_accuracies, 'r-', linewidth=2, marker='o')
-            ax3.set_xlabel('Episode')
+            ax3.plot(val_episodes, val_accuracies, color=COLOR_SCHEMES['validation']['primary'], 
+                    linewidth=2.5, marker='o', markersize=6, alpha=0.8)
+            ax3.set_xlabel('Training Episode')
             ax3.set_ylabel('Validation Accuracy')
-            ax3.set_title('Validation Accuracy')
-            ax3.grid(True, alpha=0.3)
+            ax3.set_title('Validation Performance', fontweight='bold')
+            ax3.set_ylim([0, 1.02])
         
         # Fusion weights used
         if validation_scores:
             val_alphas = [score['avg_alpha'] for score in validation_scores]
-            ax4.plot(val_episodes, val_alphas, 'm-', linewidth=2, marker='s')
-            ax4.axhline(y=0.5, color='k', linestyle='--', alpha=0.5, label='Balanced')
-            ax4.set_xlabel('Episode')
-            ax4.set_ylabel('Average Fusion Weight')
-            ax4.set_title('Learned Fusion Weights')
-            ax4.legend()
-            ax4.grid(True, alpha=0.3)
+            ax4.plot(val_episodes, val_alphas, color=colors['q_values'], 
+                    linewidth=2.5, marker='s', markersize=6, alpha=0.8, label='Learned α')
+            ax4.axhline(y=0.5, color='black', linestyle='--', alpha=0.7, linewidth=2, label='Balanced Fusion')
+            ax4.set_xlabel('Training Episode')
+            ax4.set_ylabel('Average Fusion Weight (α)')
+            ax4.set_title('Adaptive Fusion Strategy', fontweight='bold')
+            ax4.set_ylim([0, 1.02])
+            ax4.legend(loc='best')
         
         plt.tight_layout()
-        plt.savefig('images/fusion_training_progress.png', dpi=300, bbox_inches='tight')
-        # plt.show()
+        save_publication_figure(fig, 'images/fusion_training_progress.png')
+        plt.close(fig)
+        plt.ion()  # Turn interactive mode back on
 
     def _plot_fusion_analysis(self, anomaly_scores: List, gat_probs: List, 
                             labels: List, adaptive_alphas: List,
                             dataset_key: str):
-        """Plot detailed fusion analysis."""
+        """Plot detailed fusion analysis with publication-ready styling."""
+        apply_publication_style()
         plt.ioff()  # Turn off interactive mode
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(15, 10))
+        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
         
         # Convert to numpy arrays
         anomaly_scores = np.array(anomaly_scores)
@@ -1294,49 +1452,71 @@ class FusionTrainingPipeline:
         labels = np.array(labels)
         adaptive_alphas = np.array(adaptive_alphas)
         
+        colors = COLOR_SCHEMES['fusion_analysis']
+        
         # 1. State space visualization with adaptive weights
         scatter = ax1.scatter(anomaly_scores, gat_probs, c=adaptive_alphas, 
-                            cmap='viridis', alpha=0.6, s=20)
-        ax1.set_xlabel('Anomaly Score')
-        ax1.set_ylabel('GAT Probability')
-        ax1.set_title('Learned Fusion Policy\n(Color = Fusion Weight)')
-        plt.colorbar(scatter, ax=ax1, label='Fusion Weight (α)')
+                            cmap=COLOR_SCHEMES['heatmap'], alpha=0.7, s=30, edgecolors='black', linewidths=0.5)
+        ax1.set_xlabel('VGAE Anomaly Score')
+        ax1.set_ylabel('GAT Classification Probability')
+        ax1.set_title('Learned Fusion Policy Mapping', fontweight='bold')
+        ax1.set_xlim([0, 1])
+        ax1.set_ylim([0, 1])
+        cbar = plt.colorbar(scatter, ax=ax1, label='Fusion Weight (α)')
+        cbar.ax.tick_params(labelsize=12)
         
         # 2. Fusion weight distribution by class
         normal_alphas = adaptive_alphas[labels == 0]
         attack_alphas = adaptive_alphas[labels == 1]
         
-        ax2.hist([normal_alphas, attack_alphas], bins=20, alpha=0.7, 
-                label=['Normal', 'Attack'], color=['blue', 'red'])
+        ax2.hist([normal_alphas, attack_alphas], bins=25, alpha=0.8, 
+                label=['Normal Traffic', 'Attack Traffic'], 
+                color=[colors['normal'], colors['attack']], edgecolor='black', linewidth=0.8)
         ax2.set_xlabel('Fusion Weight (α)')
-        ax2.set_ylabel('Frequency')
-        ax2.set_title('Fusion Weight Distribution by Class')
-        ax2.legend()
-        ax2.grid(True, alpha=0.3)
+        ax2.set_ylabel('Sample Frequency')
+        ax2.set_title('Fusion Strategy Distribution by Traffic Type', fontweight='bold')
+        ax2.legend(loc='best')
+        ax2.set_xlim([0, 1])
         
         # 3. Model agreement analysis
         model_diff = np.abs(anomaly_scores - gat_probs)
-        ax3.scatter(model_diff, adaptive_alphas, alpha=0.6, s=20)
-        ax3.set_xlabel('Model Disagreement |VGAE - GAT|')
+        scatter2 = ax3.scatter(model_diff, adaptive_alphas, alpha=0.6, s=25, 
+                              c=labels, cmap='RdYlBu_r', edgecolors='black', linewidths=0.3)
+        ax3.set_xlabel('Model Disagreement |VGAE Score - GAT Probability|')
         ax3.set_ylabel('Fusion Weight (α)')
-        ax3.set_title('Fusion Strategy vs Model Agreement')
-        ax3.grid(True, alpha=0.3)
+        ax3.set_title('Fusion Strategy vs. Model Consensus', fontweight='bold')
+        ax3.set_xlim([0, 1])
+        ax3.set_ylim([0, 1])
+        
+        # Add trend line for model agreement
+        z = np.polyfit(model_diff, adaptive_alphas, 1)
+        p = np.poly1d(z)
+        ax3.plot(sorted(model_diff), p(sorted(model_diff)), "--", 
+                color='red', alpha=0.8, linewidth=2, label=f'Trend (slope={z[0]:.2f})')
+        ax3.legend(loc='best')
         
         # 4. Performance by confidence level
         confidence_levels = (anomaly_scores + gat_probs) / 2
         high_conf_mask = confidence_levels > 0.7
+        med_conf_mask = (confidence_levels >= 0.3) & (confidence_levels <= 0.7)
         low_conf_mask = confidence_levels < 0.3
         
-        ax4.boxplot([adaptive_alphas[high_conf_mask], adaptive_alphas[low_conf_mask]], 
-                   labels=['High Confidence', 'Low Confidence'])
+        box_data = [adaptive_alphas[high_conf_mask], adaptive_alphas[med_conf_mask], adaptive_alphas[low_conf_mask]]
+        box_labels = ['High\n(>0.7)', 'Medium\n(0.3-0.7)', 'Low\n(<0.3)']
+        
+        bp = ax4.boxplot(box_data, labels=box_labels, patch_artist=True, 
+                        boxprops=dict(facecolor=colors['adaptive'], alpha=0.7),
+                        medianprops=dict(color='black', linewidth=2))
+        ax4.set_xlabel('Model Confidence Level')
         ax4.set_ylabel('Fusion Weight (α)')
-        ax4.set_title('Fusion Weights by Confidence Level')
-        ax4.grid(True, alpha=0.3)
+        ax4.set_title('Fusion Strategy by Confidence Level', fontweight='bold')
+        ax4.set_ylim([0, 1])
         
         plt.tight_layout()
-        filename = f'images/fusion_analysis_{dataset_key}.png'
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
-        # plt.show()
+        filename = f'images/fusion_analysis_{dataset_key}'
+        save_publication_figure(fig, filename + '.png')
+        plt.close(fig)
+        plt.ion()  # Turn interactive mode back on
 
     def save_fusion_agent(self, save_folder: str, suffix: str = "final", dataset_key: str = "default"):
         """Save the trained fusion agent."""
@@ -1394,77 +1574,89 @@ class FusionTrainingPipeline:
 
     def _plot_enhanced_training_progress(self, accuracies, rewards, losses, q_values, 
                                        action_distributions, reward_stats, validation_scores, dataset_key):
-        """Enhanced training progress visualization."""
+        """Enhanced training progress visualization with publication-ready styling."""
+        apply_publication_style()
         plt.ioff()  # Turn off interactive mode
-        fig, axes = plt.subplots(2, 3, figsize=(20, 12))
+        fig, axes = plt.subplots(2, 3, figsize=(24, 16))
         episodes = range(1, len(accuracies) + 1)
+        colors = COLOR_SCHEMES['training']
         
         # Training accuracy
-        axes[0,0].plot(episodes, accuracies, 'b-', linewidth=2, alpha=0.7)
-        axes[0,0].set_xlabel('Episode')
+        axes[0,0].plot(episodes, accuracies, color=colors['accuracy'], linewidth=3, alpha=0.8)
+        axes[0,0].set_xlabel('Training Episode')
         axes[0,0].set_ylabel('Training Accuracy')
-        axes[0,0].set_title('Training Accuracy Over Episodes')
-        axes[0,0].grid(True, alpha=0.3)
+        axes[0,0].set_title('Training Accuracy Progression', fontweight='bold')
+        axes[0,0].set_ylim([0, 1.02])
         
         # Training rewards (normalized)
-        axes[0,1].plot(episodes, rewards, 'g-', linewidth=2, alpha=0.7)
-        axes[0,1].set_xlabel('Episode')
+        axes[0,1].plot(episodes, rewards, color=colors['reward'], linewidth=3, alpha=0.8)
+        axes[0,1].set_xlabel('Training Episode')
         axes[0,1].set_ylabel('Normalized Reward')
-        axes[0,1].set_title('Training Rewards (Normalized)')
-        axes[0,1].grid(True, alpha=0.3)
+        axes[0,1].set_title('Training Reward Evolution', fontweight='bold')
         
         # Training losses
-        axes[0,2].plot(episodes, losses, 'r-', linewidth=2, alpha=0.7)
-        axes[0,2].set_xlabel('Episode')
-        axes[0,2].set_ylabel('Average Loss')
-        axes[0,2].set_title('Training Loss Over Episodes')
-        axes[0,2].grid(True, alpha=0.3)
+        axes[0,2].plot(episodes, losses, color=colors['loss'], linewidth=3, alpha=0.8)
+        axes[0,2].set_xlabel('Training Episode')
+        axes[0,2].set_ylabel('Average Loss (log scale)')
+        axes[0,2].set_title('Training Loss Convergence', fontweight='bold')
         axes[0,2].set_yscale('log')  # Log scale for loss
         
         # Q-values
-        axes[1,0].plot(episodes, q_values, 'm-', linewidth=2, alpha=0.7)
-        axes[1,0].set_xlabel('Episode')
+        axes[1,0].plot(episodes, q_values, color=colors['q_values'], linewidth=3, alpha=0.8)
+        axes[1,0].set_xlabel('Training Episode')
         axes[1,0].set_ylabel('Average Q-Value')
-        axes[1,0].set_title('Q-Values Over Episodes')
-        axes[1,0].grid(True, alpha=0.3)
+        axes[1,0].set_title('Q-Value Learning Progress', fontweight='bold')
         
         # Action distribution heatmap
         if action_distributions:
             action_matrix = np.array(action_distributions).T
-            im = axes[1,1].imshow(action_matrix, aspect='auto', cmap='viridis', origin='lower')
-            axes[1,1].set_xlabel('Episode')
-            axes[1,1].set_ylabel('Action Index (α value)')
-            axes[1,1].set_title('Action Distribution Heatmap')
+            im = axes[1,1].imshow(action_matrix, aspect='auto', cmap=COLOR_SCHEMES['heatmap'], 
+                                origin='lower', interpolation='bilinear')
+            axes[1,1].set_xlabel('Training Episode')
+            axes[1,1].set_ylabel('Fusion Weight (α)')
+            axes[1,1].set_title('Action Selection Evolution', fontweight='bold')
             
             # Add alpha value labels (with safe attribute access)
             alpha_values = getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])
-            alpha_ticks = range(0, len(alpha_values), 5)
-            alpha_labels = [f'{alpha_values[i]:.1f}' for i in alpha_ticks]
+            alpha_ticks = range(0, len(alpha_values), max(1, len(alpha_values)//5))
+            alpha_labels = [f'{alpha_values[i]:.2f}' for i in alpha_ticks if i < len(alpha_values)]
             axes[1,1].set_yticks(alpha_ticks)
             axes[1,1].set_yticklabels(alpha_labels)
-            plt.colorbar(im, ax=axes[1,1], label='Usage Frequency')
+            cbar = plt.colorbar(im, ax=axes[1,1], label='Selection Frequency')
+            cbar.ax.tick_params(labelsize=12)
         
-        # Raw reward statistics
+        # Raw reward statistics with enhanced visualization
         if reward_stats:
             raw_means = [rs['raw_mean'] for rs in reward_stats]
             raw_stds = [rs['raw_std'] for rs in reward_stats]
-            axes[1,2].plot(episodes, raw_means, 'orange', linewidth=2, label='Mean')
+            
+            # Plot mean with confidence interval
+            axes[1,2].plot(episodes, raw_means, color='#ff7f0e', linewidth=3, 
+                          alpha=0.9, label='Mean Reward')
             axes[1,2].fill_between(episodes, 
                                  np.array(raw_means) - np.array(raw_stds),
                                  np.array(raw_means) + np.array(raw_stds),
-                                 alpha=0.3, color='orange')
-            axes[1,2].set_xlabel('Episode')
-            axes[1,2].set_ylabel('Raw Reward')
-            axes[1,2].set_title('Raw Reward Statistics')
-            axes[1,2].legend()
-            axes[1,2].grid(True, alpha=0.3)
+                                 alpha=0.4, color='#ff7f0e', label='±1 Std Dev')
+            
+            # Add running average
+            window_size = min(50, len(raw_means)//10)
+            if window_size > 0:
+                running_avg = np.convolve(raw_means, np.ones(window_size)/window_size, mode='valid')
+                running_episodes = episodes[window_size-1:]
+                axes[1,2].plot(running_episodes, running_avg, color='#d62728', 
+                              linewidth=2, alpha=0.9, linestyle='--', label=f'Running Avg ({window_size})')
+            
+            axes[1,2].set_xlabel('Training Episode')
+            axes[1,2].set_ylabel('Raw Reward Value')
+            axes[1,2].set_title('Raw Reward Statistics & Trends', fontweight='bold')
+            axes[1,2].legend(loc='best')
+            axes[1,2].axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
         
         plt.tight_layout()
-        filename = f'images/enhanced_fusion_training_progress_{dataset_key}.png'
-        plt.savefig(filename, dpi=300, bbox_inches='tight')
+        filename = f'images/enhanced_fusion_training_progress_{dataset_key}'
+        save_publication_figure(fig, filename + '.png')
         plt.close(fig)
         plt.ion()  # Turn interactive mode back on
-        # plt.show()
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
                                  batch_size: int = 1024, device: str = 'cuda', extraction_phase: bool = False):
@@ -1641,11 +1833,11 @@ def main(config: DictConfig):
         config_dict=config_dict
     )
     
-    # Train the fusion agent with speed-optimized parameters
+    # Train the fusion agent with patience for continued learning
     training_results = pipeline.train_fusion_agent(
         episodes=config_dict.get('fusion_episodes', FUSION_EPISODES),  # Use faster default
         validation_interval=25,   # Less frequent validation for speed
-        early_stopping_patience=15,   # Even faster convergence detection
+        early_stopping_patience=75,   # Much longer patience - continue learning!
         save_interval=50,         # Less frequent checkpoints for speed
         dataset_key=dataset_key,
         config_dict=config_dict  # Pass config_dict here
