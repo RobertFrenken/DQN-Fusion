@@ -940,16 +940,19 @@ class FusionTrainingPipeline:
                     experience_batch.clear()
                     state_cache.clear()
                 
-                # Track Q-values for sample states (asynchronous to avoid CPU blocking)
-                if batch_start % (cpu_batch_size * 4) == 0:  # Sample Q-values less frequently
+                # Track Q-values for sample states (proper sampling)
+                if batch_experiences and batch_start % (cpu_batch_size * 2) == 0:  # More frequent sampling
                     with torch.no_grad():
                         device = getattr(self.fusion_agent, 'device', self.device)
                         q_network = getattr(self.fusion_agent, 'q_network', None)
-                        if q_network is not None:
-                            # Use non_blocking for async GPU transfer
-                            state_tensor = torch.tensor(batch_experiences[0][3], dtype=torch.float32).unsqueeze(0).to(device, non_blocking=True)
+                        if q_network is not None and len(batch_experiences) > 0:
+                            # Sample from middle of batch for more representative Q-values
+                            mid_idx = len(batch_experiences) // 2
+                            sample_state = batch_experiences[mid_idx][3]  # Get state from experience
+                            state_tensor = torch.tensor(sample_state, dtype=torch.float32).unsqueeze(0).to(device, non_blocking=True)
                             q_vals = q_network(state_tensor)
-                            episode_q_sum += q_vals.mean().item()
+                            max_q_val = q_vals.max().item()  # Get max Q-value (more meaningful)
+                            episode_q_sum += max_q_val
                         else:
                             episode_q_sum += 0.0
                 
@@ -1056,7 +1059,7 @@ class FusionTrainingPipeline:
                 print(f"  Normalized Reward: {avg_episode_reward:.4f}")
                 print(f"  Raw Reward Range: [{reward_stats[-1]['raw_min']:.2f}, {reward_stats[-1]['raw_max']:.2f}]")
                 print(f"  Avg Loss: {avg_episode_loss:.6f}")
-                print(f"  Avg Q-Value: {avg_q_value:.4f}")
+                print(f"  Avg Q-Value: {avg_q_value:.6f} (Sum: {episode_q_sum:.3f}, Samples: {episode_samples})")
                 print(f"  Epsilon: {getattr(self.fusion_agent, 'epsilon', 0.1):.4f}")
                 print(f"  Buffer Size: {len(self.fusion_agent.replay_buffer)}")
                 
@@ -1642,7 +1645,7 @@ def main(config: DictConfig):
     training_results = pipeline.train_fusion_agent(
         episodes=config_dict.get('fusion_episodes', FUSION_EPISODES),  # Use faster default
         validation_interval=25,   # Less frequent validation for speed
-        early_stopping_patience=5,   # Even faster convergence detection
+        early_stopping_patience=15,   # Even faster convergence detection
         save_interval=50,         # Less frequent checkpoints for speed
         dataset_key=dataset_key,
         config_dict=config_dict  # Pass config_dict here
