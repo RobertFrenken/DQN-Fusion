@@ -18,9 +18,9 @@ max_train_samples: 150000      # 4x increase (adjust per dataset)
 max_val_samples: 30000         # 4x increase  
 alpha_steps: 21                # More granular actions: 0.0, 0.033, 0.067, ..., 1.0
 fusion_lr: 0.001               # Higher LR for faster learning
-fusion_epsilon: 0.8            # Higher exploration initially
-fusion_epsilon_decay: 0.99    # Slower decay
-fusion_min_epsilon: 0.15       # Higher minimum exploration
+fusion_epsilon: 0.9            # Higher exploration initially
+fusion_epsilon_decay: 0.995    # Slower decay
+fusion_min_epsilon: 0.2       # Higher minimum exploration
 
 # Pipeline parallelism for continuous GPU utilization
 fusion_buffer_size: 100000     # A100-optimized buffer (auto-adjusts: 750K/1M based on memory)

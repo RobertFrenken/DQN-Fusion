@@ -1,7 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=fusion-set_04-opt # job name
-#SBATCH --output=%x-%j.out
-#SBATCH --time=12:00:00    # Reduced time with optimizations (was 25:00:00)
+#SBATCH --time=8:00:00    # Reduced time with optimizations (was 25:00:00)
 #SBATCH --nodes=1          # Node count
 #SBATCH --ntasks-per-node=1 # total number of tasks per node
 #SBATCH --cpus-per-task=8  # Optimized: 8 cores (was 16) - sufficient for GPU job
@@ -43,7 +42,7 @@ echo "CUDA Version: $(nvcc --version | grep release)"
 echo "=========================="
 
 # Run optimized fusion training
-python training/fusion_training.py root_folder='set_04' fusion_episodes=800
+python training/fusion_training.py root_folder='set_04' fusion_episodes=1200
 
 end_time=$(date +%s)
 elapsed=$(( end_time - start_time ))
