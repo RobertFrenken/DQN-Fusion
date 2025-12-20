@@ -862,6 +862,7 @@ class FusionTrainingPipeline:
             episode_loss_sum = 0
             episode_loss_count = 0
             episode_q_sum = 0
+            episode_q_count = 0  # Track Q-value sample count separately
             episode_action_counts = np.zeros(len(getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])))
             episode_raw_rewards = []
             
@@ -901,7 +902,7 @@ class FusionTrainingPipeline:
                     batch_experiences = []
                 
                 # Add experiences to agent
-                for exp_data in batch_experiences:
+                for exp_idx, exp_data in enumerate(batch_experiences):
                     # Safely unpack experience data with error handling
                     try:
                         anomaly_score, gat_prob, true_label, current_state, alpha, action_idx, raw_reward, normalized_reward = exp_data
@@ -922,7 +923,7 @@ class FusionTrainingPipeline:
                         continue
                     
                     # Get next state for experience
-                    next_idx = batch_start + batch_experiences.index(exp_data) + 1
+                    next_idx = batch_start + exp_idx + 1
                     if next_idx < len(shuffled_data):
                         next_anomaly, next_gat, _ = shuffled_data[next_idx]
                         next_state = self.fusion_agent.normalize_state(next_anomaly, next_gat)
@@ -1067,21 +1068,28 @@ class FusionTrainingPipeline:
                     experience_batch.clear()
                     state_cache.clear()
                 
-                # Track Q-values for sample states (proper sampling)
-                if batch_experiences and batch_start % (cpu_batch_size * 2) == 0:  # More frequent sampling
+                # Track Q-values for sample states (more frequent sampling)
+                if batch_experiences and batch_start % cpu_batch_size == 0:  # Sample every batch
                     with torch.no_grad():
                         device = getattr(self.fusion_agent, 'device', self.device)
                         q_network = getattr(self.fusion_agent, 'q_network', None)
                         if q_network is not None and len(batch_experiences) > 0:
-                            # Sample from middle of batch for more representative Q-values
-                            mid_idx = len(batch_experiences) // 2
-                            sample_state = batch_experiences[mid_idx][3]  # Get state from experience
-                            state_tensor = torch.tensor(sample_state, dtype=torch.float32).unsqueeze(0).to(device, non_blocking=True)
-                            q_vals = q_network(state_tensor)
-                            max_q_val = q_vals.max().item()  # Get max Q-value (more meaningful)
-                            episode_q_sum += max_q_val
-                        else:
-                            episode_q_sum += 0.0
+                            # Sample multiple states from batch for better representation
+                            sample_indices = [0, len(batch_experiences)//2, len(batch_experiences)-1]
+                            batch_q_values = []
+                            
+                            for idx in sample_indices:
+                                if idx < len(batch_experiences):
+                                    sample_state = batch_experiences[idx][3]  # Get state from experience
+                                    state_tensor = torch.tensor(sample_state, dtype=torch.float32).unsqueeze(0).to(device, non_blocking=True)
+                                    q_vals = q_network(state_tensor)
+                                    # Use mean Q-value instead of max for better representation
+                                    mean_q_val = q_vals.mean().item()
+                                    batch_q_values.append(mean_q_val)
+                            
+                            if batch_q_values:
+                                episode_q_sum += sum(batch_q_values)
+                                episode_q_count += len(batch_q_values)
                 
                 # Track statistics
                 episode_reward += normalized_reward
@@ -1149,7 +1157,7 @@ class FusionTrainingPipeline:
             episode_accuracy = episode_correct / episode_samples if episode_samples > 0 else 0
             avg_episode_reward = episode_reward / episode_samples if episode_samples > 0 else 0
             avg_episode_loss = episode_loss_sum / episode_loss_count if episode_loss_count > 0 else 0
-            avg_q_value = episode_q_sum / episode_samples if episode_samples > 0 else 0
+            avg_q_value = episode_q_sum / episode_q_count if episode_q_count > 0 else 0.0  # Correct Q-value averaging
             
             # Store episode stats
             episode_rewards.append(avg_episode_reward)
@@ -1194,7 +1202,7 @@ class FusionTrainingPipeline:
                 print(f"  Normalized Reward: {avg_episode_reward:.4f}")
                 print(f"  Raw Reward Range: [{reward_stats[-1]['raw_min']:.2f}, {reward_stats[-1]['raw_max']:.2f}]")
                 print(f"  Avg Loss: {avg_episode_loss:.6f}")
-                print(f"  Avg Q-Value: {avg_q_value:.6f} (Sum: {episode_q_sum:.3f}, Samples: {episode_samples})")
+                print(f"  Avg Q-Value: {avg_q_value:.6f} (Sum: {episode_q_sum:.3f}, Q-Samples: {episode_q_count})")
                 print(f"  Epsilon: {getattr(self.fusion_agent, 'epsilon', 0.1):.4f}")
                 print(f"  Buffer Size: {len(self.fusion_agent.replay_buffer)}")
                 
@@ -1419,7 +1427,11 @@ class FusionTrainingPipeline:
             ax3.set_xlabel('Training Episode')
             ax3.set_ylabel('Validation Accuracy')
             ax3.set_title('Validation Performance', fontweight='bold')
-            ax3.set_ylim([0, 1.02])
+            # Auto-scale validation accuracy to show data range better
+            if val_accuracies:
+                y_min = max(0, min(val_accuracies) - 0.01)
+                y_max = min(1.0, max(val_accuracies) + 0.01)
+                ax3.set_ylim([y_min, y_max])
         
         # Fusion weights used
         if validation_scores:
@@ -1430,7 +1442,6 @@ class FusionTrainingPipeline:
             ax4.set_xlabel('Training Episode')
             ax4.set_ylabel('Average Fusion Weight (α)')
             ax4.set_title('Adaptive Fusion Strategy', fontweight='bold')
-            ax4.set_ylim([0, 1.02])
             ax4.legend(loc='best')
         
         plt.tight_layout()
@@ -1460,40 +1471,110 @@ class FusionTrainingPipeline:
         ax1.set_xlabel('VGAE Anomaly Score')
         ax1.set_ylabel('GAT Classification Probability')
         ax1.set_title('Learned Fusion Policy Mapping', fontweight='bold')
-        ax1.set_xlim([0, 1])
-        ax1.set_ylim([0, 1])
+        # Auto-scale to show data range better
+        x_margin = (anomaly_scores.max() - anomaly_scores.min()) * 0.05
+        y_margin = (gat_probs.max() - gat_probs.min()) * 0.05
+        ax1.set_xlim([max(0, anomaly_scores.min() - x_margin), min(1, anomaly_scores.max() + x_margin)])
+        ax1.set_ylim([max(0, gat_probs.min() - y_margin), min(1, gat_probs.max() + y_margin)])
         cbar = plt.colorbar(scatter, ax=ax1, label='Fusion Weight (α)')
         cbar.ax.tick_params(labelsize=12)
         
-        # 2. Fusion weight distribution by class
+        # 2. Fusion weight distribution by class with dual axes
         normal_alphas = adaptive_alphas[labels == 0]
         attack_alphas = adaptive_alphas[labels == 1]
         
-        ax2.hist([normal_alphas, attack_alphas], bins=25, alpha=0.8, 
-                label=['Normal Traffic', 'Attack Traffic'], 
-                color=[colors['normal'], colors['attack']], edgecolor='black', linewidth=0.8)
-        ax2.set_xlabel('Fusion Weight (α)')
-        ax2.set_ylabel('Sample Frequency')
-        ax2.set_title('Fusion Strategy Distribution by Traffic Type', fontweight='bold')
-        ax2.legend(loc='best')
-        ax2.set_xlim([0, 1])
+        # Primary axis - raw counts
+        bins = 25
+        n_normal, bins_normal, _ = ax2.hist(normal_alphas, bins=bins, alpha=0.7, 
+                                           color=colors['normal'], edgecolor='black', linewidth=0.8,
+                                           label='Normal (Count)', histtype='bar')
+        n_attack, bins_attack, _ = ax2.hist(attack_alphas, bins=bins, alpha=0.7,
+                                           color=colors['attack'], edgecolor='black', linewidth=0.8,
+                                           label='Attack (Count)', histtype='bar')
         
-        # 3. Model agreement analysis
+        ax2.set_xlabel('Fusion Weight (α)')
+        ax2.set_ylabel('Raw Sample Count', color='black')
+        ax2.set_xlim([0, 1])
+        ax2.tick_params(axis='y', labelcolor='black')
+        
+        # Secondary axis - proportional distribution
+        ax2_twin = ax2.twinx()
+        
+        # Calculate bin centers for line plots
+        bin_centers = (bins_normal[:-1] + bins_normal[1:]) / 2
+        
+        # Normalize by class size for proportional view
+        normal_prop = n_normal / len(normal_alphas) if len(normal_alphas) > 0 else n_normal
+        attack_prop = n_attack / len(attack_alphas) if len(attack_alphas) > 0 else n_attack
+        
+        # Plot as lines on secondary axis
+        ax2_twin.plot(bin_centers, normal_prop, color=colors['normal'], linewidth=3, 
+                     linestyle='-', marker='o', markersize=4, alpha=0.9, label='Normal (Proportion)')
+        ax2_twin.plot(bin_centers, attack_prop, color=colors['attack'], linewidth=3,
+                     linestyle='-', marker='s', markersize=4, alpha=0.9, label='Attack (Proportion)')
+        
+        ax2_twin.set_ylabel('Proportional Distribution', color='gray')
+        ax2_twin.tick_params(axis='y', labelcolor='gray')
+        
+        # Combined legend
+        lines1, labels1 = ax2.get_legend_handles_labels()
+        lines2, labels2 = ax2_twin.get_legend_handles_labels()
+        ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+        
+        ax2.set_title('Fusion Strategy: Raw vs. Proportional Distribution', fontweight='bold')
+        
+        # 3. Model agreement analysis with improved visualization
         model_diff = np.abs(anomaly_scores - gat_probs)
-        scatter2 = ax3.scatter(model_diff, adaptive_alphas, alpha=0.6, s=25, 
-                              c=labels, cmap='RdYlBu_r', edgecolors='black', linewidths=0.3)
+        
+        # Add small jitter to fusion weights to reduce overplotting
+        jitter_amount = 0.01
+        jittered_alphas = adaptive_alphas + np.random.normal(0, jitter_amount, len(adaptive_alphas))
+        
+        # Separate by class for clearer visualization
+        normal_mask = labels == 0
+        attack_mask = labels == 1
+        
+        # Plot normal traffic
+        scatter_normal = ax3.scatter(model_diff[normal_mask], jittered_alphas[normal_mask], 
+                                   alpha=0.6, s=20, c=colors['normal'], 
+                                   edgecolors='white', linewidths=0.5, label='Normal Traffic')
+        
+        # Plot attack traffic  
+        scatter_attack = ax3.scatter(model_diff[attack_mask], jittered_alphas[attack_mask],
+                                   alpha=0.8, s=25, c=colors['attack'], 
+                                   edgecolors='white', linewidths=0.5, label='Attack Traffic')
+        
+        # Add trend lines for each class
+        if len(model_diff[normal_mask]) > 10:
+            z_normal = np.polyfit(model_diff[normal_mask], adaptive_alphas[normal_mask], 1)
+            p_normal = np.poly1d(z_normal)
+            x_trend = np.linspace(0, 1, 100)
+            ax3.plot(x_trend, p_normal(x_trend), color=colors['normal'], 
+                    linestyle='--', alpha=0.8, linewidth=2)
+        
+        if len(model_diff[attack_mask]) > 10:
+            z_attack = np.polyfit(model_diff[attack_mask], adaptive_alphas[attack_mask], 1)
+            p_attack = np.poly1d(z_attack)
+            ax3.plot(x_trend, p_attack(x_trend), color=colors['attack'], 
+                    linestyle='--', alpha=0.8, linewidth=2)
+        
+        # Add horizontal lines for key fusion weights
+        key_alphas = [0.0, 0.25, 0.5, 0.75, 1.0]
+        for alpha_val in key_alphas:
+            ax3.axhline(y=alpha_val, color='gray', alpha=0.2, linewidth=0.5, linestyle=':')
+        
         ax3.set_xlabel('Model Disagreement |VGAE Score - GAT Probability|')
         ax3.set_ylabel('Fusion Weight (α)')
         ax3.set_title('Fusion Strategy vs. Model Consensus', fontweight='bold')
         ax3.set_xlim([0, 1])
         ax3.set_ylim([0, 1])
-        
-        # Add trend line for model agreement
-        z = np.polyfit(model_diff, adaptive_alphas, 1)
-        p = np.poly1d(z)
-        ax3.plot(sorted(model_diff), p(sorted(model_diff)), "--", 
-                color='red', alpha=0.8, linewidth=2, label=f'Trend (slope={z[0]:.2f})')
         ax3.legend(loc='best')
+        
+        # Add text box with interpretation
+        textstr = 'Low disagreement → Models agree\nHigh disagreement → Models conflict'
+        props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
+        ax3.text(0.02, 0.98, textstr, transform=ax3.transAxes, fontsize=10,
+                verticalalignment='top', bbox=props)
         
         # 4. Performance by confidence level
         confidence_levels = (anomaly_scores + gat_probs) / 2
@@ -1586,7 +1667,11 @@ class FusionTrainingPipeline:
         axes[0,0].set_xlabel('Training Episode')
         axes[0,0].set_ylabel('Training Accuracy')
         axes[0,0].set_title('Training Accuracy Progression', fontweight='bold')
-        axes[0,0].set_ylim([0, 1.02])
+        # Auto-scale to show data range better
+        if accuracies:
+            y_min = max(0, min(accuracies) - 0.01)
+            y_max = min(1.0, max(accuracies) + 0.01)
+            axes[0,0].set_ylim([y_min, y_max])
         
         # Training rewards (normalized)
         axes[0,1].plot(episodes, rewards, color=colors['reward'], linewidth=3, alpha=0.8)
@@ -1594,8 +1679,11 @@ class FusionTrainingPipeline:
         axes[0,1].set_ylabel('Normalized Reward')
         axes[0,1].set_title('Training Reward Evolution', fontweight='bold')
         
-        # Training losses
-        axes[0,2].plot(episodes, losses, color=colors['loss'], linewidth=3, alpha=0.8)
+        # Training losses (skip first episode as loss isn't known yet)
+        if len(losses) > 1:
+            loss_episodes = episodes[1:]  # Skip first episode
+            loss_values = losses[1:]      # Skip first loss value
+            axes[0,2].plot(loss_episodes, loss_values, color=colors['loss'], linewidth=3, alpha=0.8)
         axes[0,2].set_xlabel('Training Episode')
         axes[0,2].set_ylabel('Average Loss (log scale)')
         axes[0,2].set_title('Training Loss Convergence', fontweight='bold')
@@ -1607,50 +1695,113 @@ class FusionTrainingPipeline:
         axes[1,0].set_ylabel('Average Q-Value')
         axes[1,0].set_title('Q-Value Learning Progress', fontweight='bold')
         
-        # Action distribution heatmap
+        # Action distribution heatmap with episode binning for better readability
         if action_distributions:
             action_matrix = np.array(action_distributions).T
-            im = axes[1,1].imshow(action_matrix, aspect='auto', cmap=COLOR_SCHEMES['heatmap'], 
-                                origin='lower', interpolation='bilinear')
-            axes[1,1].set_xlabel('Training Episode')
-            axes[1,1].set_ylabel('Fusion Weight (α)')
-            axes[1,1].set_title('Action Selection Evolution', fontweight='bold')
             
-            # Add alpha value labels (with safe attribute access)
+            # Bin episodes for better visualization
+            bin_size = 50
+            n_episodes = len(action_distributions)
+            n_bins = (n_episodes + bin_size - 1) // bin_size  # Ceiling division
+            
+            # Create binned action matrix
+            binned_matrix = np.zeros((action_matrix.shape[0], n_bins))
+            bin_labels = []
+            
+            for i in range(n_bins):
+                start_ep = i * bin_size
+                end_ep = min((i + 1) * bin_size, n_episodes)
+                
+                # Average action frequencies within each bin
+                if end_ep > start_ep:
+                    binned_matrix[:, i] = np.mean(action_matrix[:, start_ep:end_ep], axis=1)
+                    bin_labels.append(f'{start_ep+1}-{end_ep}')
+            
+            # Plot binned heatmap
+            im = axes[1,1].imshow(binned_matrix, aspect='auto', cmap=COLOR_SCHEMES['heatmap'], 
+                                origin='lower', interpolation='nearest')
+            axes[1,1].set_xlabel('Episode Bins')
+            axes[1,1].set_ylabel('Fusion Weight (α)')
+            axes[1,1].set_title(f'Action Selection Evolution (Binned by {bin_size})', fontweight='bold')
+            
+            # Add alpha value labels
             alpha_values = getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])
             alpha_ticks = range(0, len(alpha_values), max(1, len(alpha_values)//5))
             alpha_labels = [f'{alpha_values[i]:.2f}' for i in alpha_ticks if i < len(alpha_values)]
             axes[1,1].set_yticks(alpha_ticks)
             axes[1,1].set_yticklabels(alpha_labels)
-            cbar = plt.colorbar(im, ax=axes[1,1], label='Selection Frequency')
+            
+            # Set x-axis labels for bins (show every few bins to avoid crowding)
+            x_tick_interval = max(1, n_bins // 8)  # Show ~8 labels max
+            x_ticks = range(0, n_bins, x_tick_interval)
+            x_labels = [bin_labels[i] for i in x_ticks]
+            axes[1,1].set_xticks(x_ticks)
+            axes[1,1].set_xticklabels(x_labels, rotation=45, ha='right')
+            
+            cbar = plt.colorbar(im, ax=axes[1,1], label='Average Selection Frequency')
             cbar.ax.tick_params(labelsize=12)
         
-        # Raw reward statistics with enhanced visualization
-        if reward_stats:
-            raw_means = [rs['raw_mean'] for rs in reward_stats]
-            raw_stds = [rs['raw_std'] for rs in reward_stats]
+        # Exploration-Exploitation Balance Analysis
+        if validation_scores and hasattr(self.fusion_agent, 'epsilon'):
+            # Get epsilon values over time (stored during training)
+            epsilon_values = []
+            action_entropies = []
             
-            # Plot mean with confidence interval
-            axes[1,2].plot(episodes, raw_means, color='#ff7f0e', linewidth=3, 
-                          alpha=0.9, label='Mean Reward')
-            axes[1,2].fill_between(episodes, 
-                                 np.array(raw_means) - np.array(raw_stds),
-                                 np.array(raw_means) + np.array(raw_stds),
-                                 alpha=0.4, color='#ff7f0e', label='±1 Std Dev')
+            # Calculate action entropy for each episode (measure of exploration)
+            for action_dist in action_distributions:
+                # Normalize to get probabilities
+                action_probs = action_dist / (action_dist.sum() + 1e-8)  # Avoid division by zero
+                # Calculate entropy: -sum(p * log(p))
+                entropy = -np.sum(action_probs * np.log(action_probs + 1e-8))
+                action_entropies.append(entropy)
             
-            # Add running average
-            window_size = min(50, len(raw_means)//10)
-            if window_size > 0:
-                running_avg = np.convolve(raw_means, np.ones(window_size)/window_size, mode='valid')
-                running_episodes = episodes[window_size-1:]
-                axes[1,2].plot(running_episodes, running_avg, color='#d62728', 
-                              linewidth=2, alpha=0.9, linestyle='--', label=f'Running Avg ({window_size})')
+            # Estimate epsilon decay (if not directly available)
+            initial_epsilon = 0.8  # From config
+            epsilon_decay = 0.99   # From config
+            for ep in range(len(episodes)):
+                current_epsilon = max(0.15, initial_epsilon * (epsilon_decay ** (ep // 5)))  # Every 5 episodes
+                epsilon_values.append(current_epsilon)
             
+            # Primary axis - Epsilon decay
+            axes[1,2].plot(episodes, epsilon_values, color='#d62728', linewidth=3, 
+                          alpha=0.9, label='Exploration (ε)')
             axes[1,2].set_xlabel('Training Episode')
-            axes[1,2].set_ylabel('Raw Reward Value')
-            axes[1,2].set_title('Raw Reward Statistics & Trends', fontweight='bold')
-            axes[1,2].legend(loc='best')
-            axes[1,2].axhline(y=0, color='black', linestyle='-', alpha=0.3, linewidth=1)
+            axes[1,2].set_ylabel('Epsilon Value', color='#d62728')
+            axes[1,2].tick_params(axis='y', labelcolor='#d62728')
+            axes[1,2].set_ylim([0, 1])
+            
+            # Secondary axis - Action entropy
+            ax_twin = axes[1,2].twinx()
+            
+            # Smooth entropy for better visualization
+            window_size = min(25, len(action_entropies)//10)
+            if window_size > 0:
+                smoothed_entropy = np.convolve(action_entropies, np.ones(window_size)/window_size, mode='valid')
+                entropy_episodes = episodes[window_size-1:]
+                ax_twin.plot(entropy_episodes, smoothed_entropy, color='#ff7f0e', 
+                           linewidth=3, alpha=0.9, label='Action Entropy (Smoothed)')
+            
+            ax_twin.plot(episodes, action_entropies, color='#ff7f0e', linewidth=1, 
+                        alpha=0.3, label='Action Entropy (Raw)')
+            ax_twin.set_ylabel('Action Entropy (bits)', color='#ff7f0e')
+            ax_twin.tick_params(axis='y', labelcolor='#ff7f0e')
+            
+            # Add theoretical maximum entropy line
+            max_entropy = np.log(len(getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])))
+            ax_twin.axhline(y=max_entropy, color='#ff7f0e', linestyle='--', alpha=0.5, 
+                           label=f'Max Entropy ({max_entropy:.2f})')
+            
+            # Combined legend
+            lines1, labels1 = axes[1,2].get_legend_handles_labels()
+            lines2, labels2 = ax_twin.get_legend_handles_labels()
+            axes[1,2].legend(lines1 + lines2, labels1 + labels2, loc='center right')
+            
+            axes[1,2].set_title('Exploration-Exploitation Balance', fontweight='bold')
+            
+            # Add phase annotations
+            axes[1,2].axvline(x=200, color='gray', linestyle=':', alpha=0.7)
+            axes[1,2].text(200, 0.9, 'Transition\nPhase', ha='center', va='top', 
+                          fontsize=10, alpha=0.7)
         
         plt.tight_layout()
         filename = f'images/enhanced_fusion_training_progress_{dataset_key}'
