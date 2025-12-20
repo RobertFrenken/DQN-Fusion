@@ -46,23 +46,6 @@ from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 
 warnings.filterwarnings('ignore', category=UserWarning)
-try:
-    from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
-except ImportError:
-    print("Warning: utils_logging not found, using fallback functions")
-    
-    def setup_gpu_optimization():
-        if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True
-    
-    def log_memory_usage(stage=""):
-        if torch.cuda.is_available():
-            memory_used = torch.cuda.memory_allocated() / 1024**3
-            print(f"{stage} GPU Memory: {memory_used:.2f} GB")
-    
-    def cleanup_memory():
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
 
 
@@ -353,75 +336,19 @@ class FusionDataExtractor:
         return anomaly_scores, gat_probabilities, labels
     
     def _process_batch_parallel(self, batch_list):
-        """Process multiple batches in parallel for maximum GPU utilization."""
+        """Process multiple batches efficiently."""
         if not batch_list:
             return []
         
-        parallel_results = []
-        
-        # Process all batches simultaneously using GPU tensor operations
+        results = []
         with torch.no_grad():
-            # Combine batches for more efficient GPU processing
-            if len(batch_list) > 1:
-                # Process batches with GPU streams for parallelism
-                for batch in batch_list:
-                    # Simultaneous computation of both scores
-                    anomaly_scores = self.compute_anomaly_scores(batch)
-                    gat_probs = self.compute_gat_probabilities(batch) 
-                    labels = batch.y.cpu().tolist()
-                    
-                    parallel_results.append((
-                        anomaly_scores.tolist(),
-                        gat_probs.tolist(), 
-                        labels
-                    ))
-            else:
-                # Single batch processing
-                batch = batch_list[0]
+            for batch in batch_list:
                 anomaly_scores = self.compute_anomaly_scores(batch)
-                gat_probs = self.compute_gat_probabilities(batch)
+                gat_probs = self.compute_gat_probabilities(batch) 
                 labels = batch.y.cpu().tolist()
-                
-                parallel_results.append((
-                    anomaly_scores.tolist(),
-                    gat_probs.tolist(),
-                    labels
-                ))
-        
-        return parallel_results
+                results.append((anomaly_scores.tolist(), gat_probs.tolist(), labels))
+        return results
 
-class GPUStatePreprocessor:
-    """GPU-accelerated state preprocessing for batch operations."""
-    
-    def __init__(self, device: str):
-        self.device = torch.device(device)
-        self.async_stream = torch.cuda.Stream() if torch.cuda.is_available() else None
-    
-    def batch_normalize_states(self, anomaly_scores, gat_probs):
-        """GPU-accelerated batch state normalization."""
-        if not isinstance(anomaly_scores, torch.Tensor):
-            anomaly_scores = torch.tensor(anomaly_scores, dtype=torch.float32, device=self.device)
-        if not isinstance(gat_probs, torch.Tensor):
-            gat_probs = torch.tensor(gat_probs, dtype=torch.float32, device=self.device)
-        
-        # Batch compute features on GPU
-        disagreement = torch.abs(anomaly_scores - gat_probs)
-        avg_confidence = (anomaly_scores + gat_probs) / 2.0
-        
-        # Stack into batch of normalized states
-        states = torch.stack([
-            anomaly_scores, gat_probs, disagreement, avg_confidence
-        ], dim=1)  # [batch_size, 4]
-        
-        return states.cpu().numpy()  # Return as numpy for compatibility
-    
-    def async_batch_normalize_states(self, anomaly_scores, gat_probs):
-        """Asynchronous GPU state normalization for continuous processing."""
-        if self.async_stream is None:
-            return self.batch_normalize_states(anomaly_scores, gat_probs)
-        
-        with torch.cuda.stream(self.async_stream):
-            return self.batch_normalize_states(anomaly_scores, gat_probs)
 
 class FusionTrainingPipeline:
     """Complete pipeline for training the fusion agent."""
@@ -430,8 +357,6 @@ class FusionTrainingPipeline:
         self.device = torch.device(device)
         self.num_ids = num_ids
         self.embedding_dim = embedding_dim
-        
-        # A100-specific GPU optimization
         self.gpu_info = self._detect_gpu_capabilities()
         
         # Models (will be loaded)
@@ -443,9 +368,6 @@ class FusionTrainingPipeline:
         # Training data
         self.training_data = None
         self.validation_data = None
-        
-        # GPU state preprocessor
-        self.gpu_preprocessor = GPUStatePreprocessor(str(device))
         
         print(f"✓ Fusion Training Pipeline initialized on {device}")
         if self.gpu_info:
@@ -625,50 +547,23 @@ class FusionTrainingPipeline:
                                epsilon: float = 0.3, buffer_size: int = 100000,
                                batch_size: int = 2048, target_update_freq: int = 100,
                                config_dict: dict = None):
-        """Initialize fusion agent with curriculum learning support."""
-        self.curriculum_enabled = False
-        self.curriculum_config = {}
+        """Initialize fusion agent."""
+        state_dim = 4  # anomaly_score, gat_prob, disagreement, avg_confidence
         
-        # Extract curriculum learning config
-        if config_dict:
-            self.curriculum_enabled = config_dict.get('curriculum_learning', False)
-            if self.curriculum_enabled:
-                self.curriculum_config = {
-                    'phases': config_dict.get('curriculum_phases', 3),
-                    'disagreement_threshold': config_dict.get('curriculum_disagreement_threshold', 0.3),
-                    'confidence_threshold': config_dict.get('curriculum_confidence_threshold', 0.2),
-                    'phase_1_episodes': config_dict.get('curriculum_phase_1_episodes', 300),
-                    'phase_2_episodes': config_dict.get('curriculum_phase_2_episodes', 400),
-                    'phase_3_episodes': config_dict.get('curriculum_phase_3_episodes', 300)
-                }
-                print(f"✓ Curriculum Learning enabled: {self.curriculum_config}")
-        
-        # Enhanced state dimension and GPU optimization parameters
-        state_dim = config_dict.get('state_dimension', 4) if config_dict else 4
-        
-        # GPU-optimized training parameters based on detected capabilities
+        # GPU optimization
         if self.device.type == 'cuda' and self.gpu_info:
-            # Use GPU-specific optimal parameters
             batch_size = max(batch_size, self.gpu_info['optimal_batch_size'])
             buffer_size = max(buffer_size, self.gpu_info['buffer_size'])
-            print(f"  Using parameters: batch={batch_size}, buffer={buffer_size}")
         elif self.device.type == 'cuda':
-            # Fallback for unknown GPUs
             batch_size = max(batch_size, 4096)
             buffer_size = max(buffer_size, 500000)
             
         self.fusion_agent = EnhancedDQNFusionAgent(
-            alpha_steps=alpha_steps,
-            lr=lr,
-            gamma=0.95,
-            epsilon=epsilon,
+            alpha_steps=alpha_steps, lr=lr, gamma=0.95, epsilon=epsilon,
             epsilon_decay=config_dict.get('fusion_epsilon_decay', 0.995) if config_dict else 0.995,
             min_epsilon=config_dict.get('fusion_min_epsilon', 0.1) if config_dict else 0.1,
-            buffer_size=buffer_size,
-            batch_size=batch_size,
-            target_update_freq=target_update_freq,
-            device=str(self.device),
-            state_dim=state_dim  # Pass enhanced state dimension
+            buffer_size=buffer_size, batch_size=batch_size, target_update_freq=target_update_freq,
+            device=str(self.device), state_dim=state_dim
         )
         
         print(f"✓ Fusion Agent initialized with {state_dim}D state space")
@@ -785,39 +680,22 @@ class FusionTrainingPipeline:
         return samples
     
     def _process_experience_batch_parallel(self, batch_data, num_workers):
-        """Process a batch of experiences in parallel to maximize CPU utilization."""
-        def process_single_experience(data):
+        """Process experiences with simple parallelization."""
+        def process_experience(data):
             anomaly_score, gat_prob, true_label = data
-            
-            # GPU-optimized state processing
             current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
-            
-            # Select action (fusion weight)
-            alpha, action_idx, _ = self.fusion_agent.select_action(
-                anomaly_score, gat_prob, training=True
-            )
-            
-            # Compute raw reward
+            alpha, action_idx, _ = self.fusion_agent.select_action(anomaly_score, gat_prob, training=True)
             raw_reward = self.fusion_agent.compute_fusion_reward(
                 1 if (1 - alpha) * anomaly_score + alpha * gat_prob > 0.5 else 0,
                 true_label, anomaly_score, gat_prob, alpha
             )
-            
-            # Preserve reward signal for better learning (consistent with main loop)
-            clipped_reward = np.clip(raw_reward, -2.0, 2.0)
-            normalized_reward = clipped_reward * 0.5
-            
+            normalized_reward = np.clip(raw_reward * 0.5, -1.0, 1.0)
             return (anomaly_score, gat_prob, true_label, current_state, alpha, action_idx, raw_reward, normalized_reward)
         
-        # Use ThreadPoolExecutor for I/O bound operations with shared memory
-        if len(batch_data) > 32:  # Only parallelize for larger batches
+        if len(batch_data) > 32:
             with ThreadPoolExecutor(max_workers=num_workers) as executor:
-                results = list(executor.map(process_single_experience, batch_data))
-        else:
-            # Process small batches sequentially to avoid overhead
-            results = [process_single_experience(data) for data in batch_data]
-        
-        return results
+                return list(executor.map(process_experience, batch_data))
+        return [process_experience(data) for data in batch_data]
 
     def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 25,  # Less frequent validation
                           early_stopping_patience: int = 50, save_interval: int = 50,  # Much longer patience
@@ -885,8 +763,7 @@ class FusionTrainingPipeline:
             episode_action_counts = np.zeros(len(getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])))
             episode_raw_rewards = []
             
-            # Curriculum-based sampling
-            shuffled_data = self._sample_by_curriculum(episode, episodes, current_episode_size)
+
             
             # GPU-optimized training for maximum throughput
             if self.gpu_info:
