@@ -1355,10 +1355,21 @@ class FusionTrainingPipeline:
     def _plot_fusion_analysis(self, anomaly_scores: List, gat_probs: List, 
                             labels: List, adaptive_alphas: List,
                             dataset_key: str):
-        """Plot detailed fusion analysis with publication-ready styling."""
-        apply_publication_style()
-        plt.ioff()  # Turn off interactive mode
-        fig, ((ax1, ax2), (ax3, ax4)) = plt.subplots(2, 2, figsize=(16, 12))
+        """Add fusion analysis plots to the existing training progress figure."""
+        # Check if we have the figure from training progress
+        if not hasattr(self, '_current_fig') or not hasattr(self, '_current_axes'):
+            # Fallback: create new figure if training plots weren't called first
+            apply_publication_style()
+            plt.ioff()
+            fig, axes = plt.subplots(2, 4, figsize=(32, 16))
+            # Hide first 5 subplots if training wasn't called
+            for i in range(2):
+                for j in range(4):
+                    if i == 0 or (i == 1 and j == 0):
+                        axes[i,j].set_visible(False)
+        else:
+            fig = self._current_fig
+            axes = self._current_axes
         
         # Convert to numpy arrays
         anomaly_scores = np.array(anomaly_scores)
@@ -1368,174 +1379,101 @@ class FusionTrainingPipeline:
         
         colors = COLOR_SCHEMES['fusion_analysis']
         
-        # 1. State space visualization with contour plot (scientific paper style)
-        # Create a grid for contour interpolation
+        # Row 2, Col 2: State space visualization - simplified scatter plot
         x_min, x_max = max(0, anomaly_scores.min() - 0.02), min(1, anomaly_scores.max() + 0.02)
         y_min, y_max = max(0, gat_probs.min() - 0.02), min(1, gat_probs.max() + 0.02)
         
-        # Create meshgrid for contour
-        xi = np.linspace(x_min, x_max, 50)
-        yi = np.linspace(y_min, y_max, 50)
-        Xi, Yi = np.meshgrid(xi, yi)
+        scatter = axes[1,1].scatter(anomaly_scores, gat_probs, c=adaptive_alphas, 
+                                  cmap=COLOR_SCHEMES['contour'], s=12, alpha=0.7, 
+                                  edgecolors='white', linewidths=0.1)
         
-        # Interpolate fusion weights onto grid
-        from scipy.interpolate import griddata
-        points = np.column_stack((anomaly_scores, gat_probs))
+        axes[1,1].set_xlabel('VGAE Anomaly Score')
+        axes[1,1].set_ylabel('GAT Classification Probability')
+        axes[1,1].set_title('Learned Fusion Policy', fontweight='bold')
+        axes[1,1].set_xlim([x_min, x_max])
+        axes[1,1].set_ylim([y_min, y_max])
         
-        # Use griddata for smooth interpolation
-        try:
-            Zi = griddata(points, adaptive_alphas, (Xi, Yi), method='cubic', fill_value=0.5)
-        except:
-            # Fallback to linear if cubic fails
-            Zi = griddata(points, adaptive_alphas, (Xi, Yi), method='linear', fill_value=0.5)
-        
-        # Create contour plot with clean styling
-        contour_levels = np.linspace(0, 1, 11)  # 10 levels from 0 to 1
-        contour_filled = ax1.contourf(Xi, Yi, Zi, levels=contour_levels, 
-                                     cmap=COLOR_SCHEMES['contour'], alpha=0.8, extend='both')
-        
-        # Add contour lines for better definition
-        contour_lines = ax1.contour(Xi, Yi, Zi, levels=contour_levels[::2], 
-                                   colors='white', linewidths=0.5, alpha=0.7)
-        
-        # Overlay scatter points with minimal styling
-        scatter = ax1.scatter(anomaly_scores, gat_probs, c=adaptive_alphas, 
-                            cmap=COLOR_SCHEMES['contour'], s=8, alpha=0.6, 
-                            edgecolors='white', linewidths=0.2)
-        
-        ax1.set_xlabel('VGAE Anomaly Score')
-        ax1.set_ylabel('GAT Classification Probability')
-        ax1.set_title('Learned Fusion Policy', fontweight='normal')
-        ax1.set_xlim([x_min, x_max])
-        ax1.set_ylim([y_min, y_max])
-        
-        # Clean colorbar
-        cbar = plt.colorbar(contour_filled, ax=ax1, shrink=0.8, aspect=15)
-        cbar.set_label('Fusion Weight (α)', rotation=270, labelpad=15)
+        cbar = plt.colorbar(scatter, ax=axes[1,1], shrink=0.8)
+        cbar.set_label('Fusion Weight (α)', rotation=270, labelpad=15, fontsize=10)
         cbar.ax.tick_params(labelsize=9)
         
-        # Add contour labels for key levels
-        ax1.clabel(contour_lines, inline=True, fontsize=8, fmt='%.1f', colors='white')
-        
-        # 2. Fusion weight distribution by class with dual axes
+        # Row 2, Col 3: Fusion weight distribution by class
         normal_alphas = adaptive_alphas[labels == 0]
         attack_alphas = adaptive_alphas[labels == 1]
         
-        # Primary axis - raw counts
         bins = 25
-        n_normal, bins_normal, _ = ax2.hist(normal_alphas, bins=bins, alpha=0.7, 
-                                           color=colors['normal'], edgecolor='black', linewidth=0.8,
-                                           label='Normal (Count)', histtype='bar')
-        n_attack, bins_attack, _ = ax2.hist(attack_alphas, bins=bins, alpha=0.7,
-                                           color=colors['attack'], edgecolor='black', linewidth=0.8,
-                                           label='Attack (Count)', histtype='bar')
+        n_normal, bins_normal, _ = axes[1,2].hist(normal_alphas, bins=bins, alpha=0.7, 
+                                               color=colors['normal'], edgecolor='black', linewidth=0.8,
+                                               label='Normal (Count)', histtype='bar')
+        n_attack, bins_attack, _ = axes[1,2].hist(attack_alphas, bins=bins, alpha=0.7,
+                                               color=colors['attack'], edgecolor='black', linewidth=0.8,
+                                               label='Attack (Count)', histtype='bar')
         
-        ax2.set_xlabel('Fusion Weight (α)')
-        ax2.set_ylabel('Raw Sample Count', color='black')
-        ax2.set_xlim([0, 1])
-        ax2.tick_params(axis='y', labelcolor='black')
+        axes[1,2].set_xlabel('Fusion Weight (α)')
+        axes[1,2].set_ylabel('Raw Sample Count', color='black')
+        axes[1,2].set_xlim([0, 1])
+        axes[1,2].tick_params(axis='y', labelcolor='black')
         
         # Secondary axis - proportional distribution
-        ax2_twin = ax2.twinx()
+        ax2_twin = axes[1,2].twinx()
         
-        # Calculate bin centers for line plots
         bin_centers = (bins_normal[:-1] + bins_normal[1:]) / 2
-        
-        # Normalize by class size for proportional view
         normal_prop = n_normal / len(normal_alphas) if len(normal_alphas) > 0 else n_normal
         attack_prop = n_attack / len(attack_alphas) if len(attack_alphas) > 0 else n_attack
         
-        # Plot as lines on secondary axis
-        ax2_twin.plot(bin_centers, normal_prop, color=colors['normal'], linewidth=3, 
-                     linestyle='-', marker='o', markersize=4, alpha=0.9, label='Normal (Proportion)')
-        ax2_twin.plot(bin_centers, attack_prop, color=colors['attack'], linewidth=3,
-                     linestyle='-', marker='s', markersize=4, alpha=0.9, label='Attack (Proportion)')
+        ax2_twin.plot(bin_centers, normal_prop, color=colors['normal'], linewidth=1.5, 
+                     linestyle='-', marker='o', markersize=2, alpha=0.9, label='Normal (Proportion)')
+        ax2_twin.plot(bin_centers, attack_prop, color=colors['attack'], linewidth=1.5,
+                     linestyle='-', marker='s', markersize=2, alpha=0.9, label='Attack (Proportion)')
         
         ax2_twin.set_ylabel('Proportional Distribution', color='gray')
         ax2_twin.tick_params(axis='y', labelcolor='gray')
         
-        # Combined legend
-        lines1, labels1 = ax2.get_legend_handles_labels()
+        lines1, labels1 = axes[1,2].get_legend_handles_labels()
         lines2, labels2 = ax2_twin.get_legend_handles_labels()
-        ax2.legend(lines1 + lines2, labels1 + labels2, loc='upper right')
+        axes[1,2].legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=9)
+        axes[1,2].set_title('Fusion Strategy Distribution', fontweight='bold')
         
-        ax2.set_title('Fusion Strategy Distribution', fontweight='normal')
-        
-        # 3. Model agreement analysis with improved visualization
+        # Row 2, Col 4: Model agreement analysis - simplified
         model_diff = np.abs(anomaly_scores - gat_probs)
-        
-        # Add small jitter to fusion weights to reduce overplotting
         jitter_amount = 0.01
         jittered_alphas = adaptive_alphas + np.random.normal(0, jitter_amount, len(adaptive_alphas))
         
-        # Separate by class for clearer visualization
         normal_mask = labels == 0
         attack_mask = labels == 1
         
-        # Plot normal traffic
-        scatter_normal = ax3.scatter(model_diff[normal_mask], jittered_alphas[normal_mask], 
-                                   alpha=0.6, s=20, c=colors['normal'], 
-                                   edgecolors='white', linewidths=0.5, label='Normal Traffic')
+        axes[1,3].scatter(model_diff[normal_mask], jittered_alphas[normal_mask], 
+                         alpha=0.6, s=12, c=colors['normal'], 
+                         edgecolors='white', linewidths=0.3, label='Normal Traffic')
         
-        # Plot attack traffic  
-        scatter_attack = ax3.scatter(model_diff[attack_mask], jittered_alphas[attack_mask],
-                                   alpha=0.8, s=25, c=colors['attack'], 
-                                   edgecolors='white', linewidths=0.5, label='Attack Traffic')
+        axes[1,3].scatter(model_diff[attack_mask], jittered_alphas[attack_mask],
+                         alpha=0.8, s=15, c=colors['attack'], 
+                         edgecolors='white', linewidths=0.3, label='Attack Traffic')
         
-        # Add trend lines for each class
-        if len(model_diff[normal_mask]) > 10:
-            z_normal = np.polyfit(model_diff[normal_mask], adaptive_alphas[normal_mask], 1)
-            p_normal = np.poly1d(z_normal)
-            x_trend = np.linspace(0, 1, 100)
-            ax3.plot(x_trend, p_normal(x_trend), color=colors['normal'], 
-                    linestyle='--', alpha=0.8, linewidth=2)
-        
-        if len(model_diff[attack_mask]) > 10:
-            z_attack = np.polyfit(model_diff[attack_mask], adaptive_alphas[attack_mask], 1)
-            p_attack = np.poly1d(z_attack)
-            ax3.plot(x_trend, p_attack(x_trend), color=colors['attack'], 
-                    linestyle='--', alpha=0.8, linewidth=2)
-        
-        # Add horizontal lines for key fusion weights
+        # Add horizontal reference lines
         key_alphas = [0.0, 0.25, 0.5, 0.75, 1.0]
         for alpha_val in key_alphas:
-            ax3.axhline(y=alpha_val, color='gray', alpha=0.2, linewidth=0.5, linestyle=':')
+            axes[1,3].axhline(y=alpha_val, color='gray', alpha=0.2, linewidth=0.5, linestyle=':')
         
-        ax3.set_xlabel('Model Disagreement |VGAE Score - GAT Probability|')
-        ax3.set_ylabel('Fusion Weight (α)')
-        ax3.set_title('Strategy vs. Model Agreement', fontweight='normal')
-        ax3.set_xlim([0, 1])
-        ax3.set_ylim([0, 1])
-        ax3.legend(loc='best')
+        axes[1,3].set_xlabel('Model Disagreement |VGAE Score - GAT Probability|')
+        axes[1,3].set_ylabel('Fusion Weight (α)')
+        axes[1,3].set_title('Strategy vs. Model Agreement', fontweight='bold')
+        axes[1,3].set_xlim([0, 1])
+        axes[1,3].set_ylim([0, 1])
+        axes[1,3].legend(loc='best', fontsize=9)
         
-        # Add text box with interpretation
+        # Add interpretation text
         textstr = 'Low disagreement → Models agree\nHigh disagreement → Models conflict'
         props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
-        ax3.text(0.02, 0.98, textstr, transform=ax3.transAxes, fontsize=10,
-                verticalalignment='top', bbox=props)
+        axes[1,3].text(0.02, 0.98, textstr, transform=axes[1,3].transAxes, fontsize=9,
+                      verticalalignment='top', bbox=props)
         
-        # 4. Performance by confidence level
-        confidence_levels = (anomaly_scores + gat_probs) / 2
-        high_conf_mask = confidence_levels > 0.7
-        med_conf_mask = (confidence_levels >= 0.3) & (confidence_levels <= 0.7)
-        low_conf_mask = confidence_levels < 0.3
-        
-        box_data = [adaptive_alphas[high_conf_mask], adaptive_alphas[med_conf_mask], adaptive_alphas[low_conf_mask]]
-        box_labels = ['High\n(>0.7)', 'Medium\n(0.3-0.7)', 'Low\n(<0.3)']
-        
-        bp = ax4.boxplot(box_data, labels=box_labels, patch_artist=True, 
-                        boxprops=dict(facecolor=colors['adaptive'], alpha=0.7),
-                        medianprops=dict(color='black', linewidth=2))
-        ax4.set_xlabel('Model Confidence Level')
-        ax4.set_ylabel('Fusion Weight (α)')
-        ax4.set_title('Strategy by Confidence Level', fontweight='normal')
-        ax4.set_ylim([0, 1])
-        
+        # Update the saved figure
         plt.tight_layout()
-        filename = f'images/fusion_analysis_{dataset_key}'
+        filename = f'images/complete_fusion_training_analysis_{dataset_key}'
         save_publication_figure(fig, filename + '.png')
         plt.close(fig)
-        plt.ion()  # Turn interactive mode back on
+        plt.ion()
 
     def save_fusion_agent(self, save_folder: str, suffix: str = "final", dataset_key: str = "default"):
         """Save the trained fusion agent."""
@@ -1596,156 +1534,123 @@ class FusionTrainingPipeline:
         """Enhanced training progress visualization with publication-ready styling."""
         apply_publication_style()
         plt.ioff()  # Turn off interactive mode
-        fig, axes = plt.subplots(2, 3, figsize=(24, 16))
+        fig, axes = plt.subplots(2, 4, figsize=(32, 16))  # Single 2x4 layout for all plots
         episodes = range(1, len(accuracies) + 1)
         colors = COLOR_SCHEMES['training']
         
-        # Training accuracy
-        axes[0,0].plot(episodes, accuracies, color=colors['accuracy'], linewidth=3, alpha=0.8)
+        # Row 1, Col 1: Training accuracy
+        axes[0,0].plot(episodes, accuracies, color=colors['accuracy'], linewidth=1.5, alpha=0.8)
         axes[0,0].set_xlabel('Training Episode')
         axes[0,0].set_ylabel('Training Accuracy')
         axes[0,0].set_title('Training Accuracy Progression', fontweight='bold')
-        # Auto-scale to show data range better
         if accuracies:
             y_min = max(0, min(accuracies) - 0.01)
             y_max = min(1.0, max(accuracies) + 0.01)
             axes[0,0].set_ylim([y_min, y_max])
         
-        # Training rewards (normalized)
-        axes[0,1].plot(episodes, rewards, color=colors['reward'], linewidth=3, alpha=0.8)
+        # Row 1, Col 2: Training rewards
+        axes[0,1].plot(episodes, rewards, color=colors['reward'], linewidth=1.5, alpha=0.8)
         axes[0,1].set_xlabel('Training Episode')
         axes[0,1].set_ylabel('Normalized Reward')
         axes[0,1].set_title('Training Reward Evolution', fontweight='bold')
         
-        # Training losses (skip first episode as loss isn't known yet)
+        # Row 1, Col 3: Training losses
         if len(losses) > 1:
-            loss_episodes = episodes[1:]  # Skip first episode
-            loss_values = losses[1:]      # Skip first loss value
-            axes[0,2].plot(loss_episodes, loss_values, color=colors['loss'], linewidth=3, alpha=0.8)
+            loss_episodes = episodes[1:]
+            loss_values = losses[1:]
+            axes[0,2].plot(loss_episodes, loss_values, color=colors['loss'], linewidth=1.5, alpha=0.8)
         axes[0,2].set_xlabel('Training Episode')
         axes[0,2].set_ylabel('Average Loss (log scale)')
         axes[0,2].set_title('Training Loss Convergence', fontweight='bold')
-        axes[0,2].set_yscale('log')  # Log scale for loss
+        axes[0,2].set_yscale('log')
         
-        # Q-values
-        axes[1,0].plot(episodes, q_values, color=colors['q_values'], linewidth=3, alpha=0.8)
-        axes[1,0].set_xlabel('Training Episode')
-        axes[1,0].set_ylabel('Average Q-Value')
-        axes[1,0].set_title('Q-Value Learning Progress', fontweight='bold')
-        
-        # Action distribution heatmap with episode binning for better readability
+        # Row 1, Col 4: Action distribution heatmap
         if action_distributions:
             action_matrix = np.array(action_distributions).T
-            
-            # Bin episodes for better visualization
             bin_size = 50
             n_episodes = len(action_distributions)
-            n_bins = (n_episodes + bin_size - 1) // bin_size  # Ceiling division
+            n_bins = (n_episodes + bin_size - 1) // bin_size
             
-            # Create binned action matrix
             binned_matrix = np.zeros((action_matrix.shape[0], n_bins))
             bin_labels = []
             
             for i in range(n_bins):
                 start_ep = i * bin_size
                 end_ep = min((i + 1) * bin_size, n_episodes)
-                
-                # Average action frequencies within each bin
                 if end_ep > start_ep:
                     binned_matrix[:, i] = np.mean(action_matrix[:, start_ep:end_ep], axis=1)
                     bin_labels.append(f'{start_ep+1}-{end_ep}')
             
-            # Plot binned heatmap
-            im = axes[1,1].imshow(binned_matrix, aspect='auto', cmap=COLOR_SCHEMES['heatmap'], 
+            im = axes[0,3].imshow(binned_matrix, aspect='auto', cmap=COLOR_SCHEMES['heatmap'], 
                                 origin='lower', interpolation='nearest')
-            axes[1,1].set_xlabel('Episode Bins')
-            axes[1,1].set_ylabel('Fusion Weight (α)')
-            axes[1,1].set_title(f'Action Selection Evolution (Binned by {bin_size})', fontweight='bold')
+            axes[0,3].set_xlabel('Episode Bins')
+            axes[0,3].set_ylabel('Fusion Weight (α)')
+            axes[0,3].set_title(f'Action Selection Evolution', fontweight='bold')
             
-            # Add alpha value labels
             alpha_values = getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])
             alpha_ticks = range(0, len(alpha_values), max(1, len(alpha_values)//5))
             alpha_labels = [f'{alpha_values[i]:.2f}' for i in alpha_ticks if i < len(alpha_values)]
-            axes[1,1].set_yticks(alpha_ticks)
-            axes[1,1].set_yticklabels(alpha_labels)
+            axes[0,3].set_yticks(alpha_ticks)
+            axes[0,3].set_yticklabels(alpha_labels)
             
-            # Set x-axis labels for bins (show every few bins to avoid crowding)
-            x_tick_interval = max(1, n_bins // 8)  # Show ~8 labels max
+            x_tick_interval = max(1, n_bins // 6)  # Fewer labels for smaller subplot
             x_ticks = range(0, n_bins, x_tick_interval)
             x_labels = [bin_labels[i] for i in x_ticks]
-            axes[1,1].set_xticks(x_ticks)
-            axes[1,1].set_xticklabels(x_labels, rotation=45, ha='right')
+            axes[0,3].set_xticks(x_ticks)
+            axes[0,3].set_xticklabels(x_labels, rotation=45, ha='right', fontsize=9)
             
-            cbar = plt.colorbar(im, ax=axes[1,1], label='Average Selection Frequency')
-            cbar.ax.tick_params(labelsize=12)
+            cbar = plt.colorbar(im, ax=axes[0,3], shrink=0.8)
+            cbar.set_label('Selection Frequency', fontsize=10)
+            cbar.ax.tick_params(labelsize=9)
         
-        # Exploration-Exploitation Balance Analysis
+        # Row 2, Col 1: Exploration-Exploitation Balance
         if validation_scores and hasattr(self.fusion_agent, 'epsilon'):
-            # Get epsilon values over time (stored during training)
             epsilon_values = []
             action_entropies = []
             
-            # Calculate action entropy for each episode (measure of exploration)
             for action_dist in action_distributions:
-                # Normalize to get probabilities
-                action_probs = action_dist / (action_dist.sum() + 1e-8)  # Avoid division by zero
-                # Calculate entropy: -sum(p * log(p))
+                action_probs = action_dist / (action_dist.sum() + 1e-8)
                 entropy = -np.sum(action_probs * np.log(action_probs + 1e-8))
                 action_entropies.append(entropy)
             
-            # Estimate epsilon decay (if not directly available)
-            initial_epsilon = 0.8  # From config
-            epsilon_decay = 0.99   # From config
+            initial_epsilon = 0.8
+            epsilon_decay = 0.99
             for ep in range(len(episodes)):
-                current_epsilon = max(0.15, initial_epsilon * (epsilon_decay ** (ep // 5)))  # Every 5 episodes
+                current_epsilon = max(0.15, initial_epsilon * (epsilon_decay ** (ep // 5)))
                 epsilon_values.append(current_epsilon)
             
-            # Primary axis - Epsilon decay
-            axes[1,2].plot(episodes, epsilon_values, color='#d62728', linewidth=3, 
+            axes[1,0].plot(episodes, epsilon_values, color='#d62728', linewidth=1.5, 
                           alpha=0.9, label='Exploration (ε)')
-            axes[1,2].set_xlabel('Training Episode')
-            axes[1,2].set_ylabel('Epsilon Value', color='#d62728')
-            axes[1,2].tick_params(axis='y', labelcolor='#d62728')
-            axes[1,2].set_ylim([0, 1])
+            axes[1,0].set_xlabel('Training Episode')
+            axes[1,0].set_ylabel('Epsilon Value', color='#d62728')
+            axes[1,0].tick_params(axis='y', labelcolor='#d62728')
+            axes[1,0].set_ylim([0, 1])
             
-            # Secondary axis - Action entropy
-            ax_twin = axes[1,2].twinx()
-            
-            # Smooth entropy for better visualization
+            ax_twin = axes[1,0].twinx()
             window_size = min(25, len(action_entropies)//10)
             if window_size > 0:
                 smoothed_entropy = np.convolve(action_entropies, np.ones(window_size)/window_size, mode='valid')
                 entropy_episodes = episodes[window_size-1:]
                 ax_twin.plot(entropy_episodes, smoothed_entropy, color='#ff7f0e', 
-                           linewidth=3, alpha=0.9, label='Action Entropy (Smoothed)')
+                           linewidth=1.5, alpha=0.9, label='Action Entropy')
             
-            ax_twin.plot(episodes, action_entropies, color='#ff7f0e', linewidth=1, 
-                        alpha=0.3, label='Action Entropy (Raw)')
             ax_twin.set_ylabel('Action Entropy (bits)', color='#ff7f0e')
             ax_twin.tick_params(axis='y', labelcolor='#ff7f0e')
             
-            # Add theoretical maximum entropy line
-            max_entropy = np.log(len(getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])))
-            ax_twin.axhline(y=max_entropy, color='#ff7f0e', linestyle='--', alpha=0.5, 
-                           label=f'Max Entropy ({max_entropy:.2f})')
-            
-            # Combined legend
-            lines1, labels1 = axes[1,2].get_legend_handles_labels()
+            lines1, labels1 = axes[1,0].get_legend_handles_labels()
             lines2, labels2 = ax_twin.get_legend_handles_labels()
-            axes[1,2].legend(lines1 + lines2, labels1 + labels2, loc='center right')
-            
-            axes[1,2].set_title('Exploration-Exploitation Balance', fontweight='bold')
-            
-            # Add phase annotations
-            axes[1,2].axvline(x=200, color='gray', linestyle=':', alpha=0.7)
-            axes[1,2].text(200, 0.9, 'Transition\nPhase', ha='center', va='top', 
-                          fontsize=10, alpha=0.7)
+            axes[1,0].legend(lines1 + lines2, labels1 + labels2, loc='upper right', fontsize=9)
+            axes[1,0].set_title('Exploration-Exploitation Balance', fontweight='bold')
+        
+        # Store for fusion analysis plots
+        self._current_fig = fig
+        self._current_axes = axes
         
         plt.tight_layout()
-        filename = f'images/enhanced_fusion_training_progress_{dataset_key}'
+        filename = f'images/complete_fusion_training_analysis_{dataset_key}'
         save_publication_figure(fig, filename + '.png')
         plt.close(fig)
-        plt.ion()  # Turn interactive mode back on
+        plt.ion()
 
 def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda', extraction_phase: bool = False):
     """Dynamically calculate optimal resource allocation based on dataset size and available hardware."""
