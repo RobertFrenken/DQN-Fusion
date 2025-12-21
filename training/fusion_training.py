@@ -291,43 +291,39 @@ class FusionDataExtractor:
         """
         print("🚀 GPU-Accelerated Fusion Data Extraction...")
         
-        # GPU-optimized batch processing (maximize GPU utilization)
+        # GPU-optimized settings
         extraction_batch_size = 32768 if torch.cuda.is_available() else 8192
-        prefetch_batches = 4  # Pre-load batches for continuous GPU feeding
         
         anomaly_scores = []
         gat_probabilities = []
         labels = []
         
         samples_processed = 0
-        batch_accumulator = []  # Accumulate batches for parallel processing
         
-        # Process multiple batches in parallel for GPU efficiency
-        for batch_idx, batch in enumerate(tqdm(data_loader, desc="GPU-Accelerated Extraction")):
+        # Direct batch processing for better GPU/CPU utilization
+        for batch_idx, batch in enumerate(tqdm(data_loader, desc="GPU-Accelerated Extraction", disable=False)):
             batch = batch.to(self.device, non_blocking=True)
-            batch_accumulator.append(batch)
             
-            # Process accumulated batches in parallel when we have enough
-            if len(batch_accumulator) >= prefetch_batches or batch_idx == len(data_loader) - 1:
-                # Parallel batch processing for maximum GPU utilization
-                parallel_results = self._process_batch_parallel(batch_accumulator)
-                
-                # Unpack results from parallel processing
-                for batch_anomaly_scores, batch_gat_probs, batch_labels in parallel_results:
-                    anomaly_scores.extend(batch_anomaly_scores)
-                    gat_probabilities.extend(batch_gat_probs)
-                    labels.extend(batch_labels)
-                    samples_processed += len(batch_labels)
-                
-                batch_accumulator.clear()  # Clear for next parallel batch
+            # Process batch immediately without accumulation
+            batch_anomaly_scores = self.compute_anomaly_scores(batch)
+            batch_gat_probs = self.compute_gat_probabilities(batch) 
             
-            # Check if we've reached the sample limit
+            # Efficiently extract labels
+            batch_labels = [graph.y.item() for graph in Batch.to_data_list(batch)]
+            
+            # Convert to lists and extend
+            anomaly_scores.extend(batch_anomaly_scores.cpu().numpy().tolist())
+            gat_probabilities.extend(batch_gat_probs.cpu().numpy().tolist())
+            labels.extend(batch_labels)
+            samples_processed += len(batch_labels)
+            
+            # Check sample limit
             if max_samples is not None and samples_processed >= max_samples:
                 break
             
-            # Memory cleanup every 50 batches
-            if batch_idx % 50 == 0:
-                cleanup_memory()
+            # Memory cleanup every 100 batches
+            if batch_idx % 100 == 0 and batch_idx > 0:
+                torch.cuda.empty_cache()
         
         print(f"✅ GPU-Accelerated Extraction Complete: {len(anomaly_scores)} samples")
         print(f"  Normal samples: {sum(1 for l in labels if l == 0)}")
@@ -581,7 +577,7 @@ class FusionTrainingPipeline:
         return random.sample(self.training_data, min(episode_size, len(self.training_data)))
     
     def _process_experience_batch_parallel(self, batch_data, num_workers):
-        """Process experiences with simple parallelization."""
+        """Process experiences with optimized parallelization."""
         def process_experience(data):
             anomaly_score, gat_prob, true_label = data
             current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
@@ -593,8 +589,9 @@ class FusionTrainingPipeline:
             normalized_reward = np.clip(raw_reward * 0.5, -1.0, 1.0)
             return (anomaly_score, gat_prob, true_label, current_state, alpha, action_idx, raw_reward, normalized_reward)
         
-        if len(batch_data) > 32:
-            with ThreadPoolExecutor(max_workers=num_workers) as executor:
+        # Use parallel processing only for larger batches to avoid overhead
+        if len(batch_data) > 64:  # Increased threshold
+            with ThreadPoolExecutor(max_workers=min(num_workers, 16)) as executor:  # Limit max workers
                 return list(executor.map(process_experience, batch_data))
         return [process_experience(data) for data in batch_data]
 
@@ -890,12 +887,12 @@ class FusionTrainingPipeline:
                 episode_samples += 1
                 
                 # CPU and GPU memory management after parallel processing
-                if i % (training_step_interval * 8) == 0:  # Regular cleanup after parallel work
+                if i % (training_step_interval * 32) == 0:  # Much less frequent cleanup to avoid interrupting GPU
                     cleanup_memory()
                     
                     # A100-specific memory optimization
                     if self.gpu_info and torch.cuda.is_available():
-                        torch.cuda.synchronize()  # Ensure GPU operations complete
+                        # Remove blocking synchronize - it hurts GPU utilization
                         if torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated() < 0.7:
                             torch.cuda.empty_cache()  # Only clear cache if utilization is low
             
@@ -1584,20 +1581,20 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda', extract
             # More conservative for extraction (more memory overhead)
             target_batch = min(max_batch_from_gpu // 2, 16384)
             # Scale workers with dataset size but cap for stability
-            target_workers = min(16, max(4, int(cpu_count_available * 0.75)))
-            prefetch_factor = min(8, max(2, target_workers // 2))
+            target_workers = max(32, min(cpu_count_available - 2, int(cpu_count_available * 0.9)))
+            prefetch_factor = min(8, max(2, target_workers // 8))
         else:
             # Training phase
             target_batch = min(max_batch_from_gpu // 3, 8192)
-            target_workers = min(12, max(4, int(cpu_count_available * 0.6)))
-            prefetch_factor = min(6, max(2, target_workers // 3))
+            target_workers = max(24, min(cpu_count_available - 2, int(cpu_count_available * 0.8)))
+            prefetch_factor = min(6, max(2, target_workers // 8))
             
         # Adjust based on dataset size
-        if dataset_size < 100000:  # Small datasets
+        if dataset_size < 50000:  # Very small datasets
             target_batch = min(target_batch, 4096)
-            target_workers = min(target_workers, 8)
-        elif dataset_size > 500000:  # Large datasets - need more parallel loading
-            target_workers = min(target_workers + 4, cpu_count_available - 1)
+            target_workers = max(8, target_workers // 2)  # Don't go too low
+        elif dataset_size > 500000:  # Large datasets - need much more parallel loading
+            target_workers = min(cpu_count_available - 1, target_workers + 16)  # Add many more workers
             
         config = {
             'batch_size': target_batch,
@@ -1613,11 +1610,11 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda', extract
         
         target_batch = min(max_batch_from_memory, 2048)
         # Use most CPUs but leave some for system
-        target_workers = max(2, min(cpu_count_available - 1, 12))
+        target_workers = max(16, min(cpu_count_available - 1, int(cpu_count_available * 0.85)))
         
         # Scale with dataset size
         if dataset_size > 300000:
-            target_workers = min(target_workers + 2, cpu_count_available - 1)
+            target_workers = min(cpu_count_available - 1, target_workers + 8)  # Add more workers
             
         config = {
             'batch_size': target_batch,
@@ -1645,6 +1642,11 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
     # Get dynamic resource allocation
     config, cuda_available = calculate_dynamic_resources(dataset_size, device, extraction_phase)
     
+    # Debug output to understand resource allocation
+    print(f"🔍 Dataset analysis: size={dataset_size:,}, extraction_phase={extraction_phase}")
+    print(f"🎯 Calculated resources: workers={config['num_workers']}, batch={config['batch_size']}")
+    print(f"📊 CPU info: available={cpu_count()}, using={config['num_workers']} ({config['num_workers']/cpu_count()*100:.1f}%)")
+    
     # Override batch_size if explicitly provided and reasonable
     if batch_size != 1024:  # Non-default batch_size provided
         config['batch_size'] = min(batch_size, config['batch_size'])  # Don't exceed calculated max
@@ -1665,6 +1667,7 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
     for dataset, shuffle in zip(datasets, shuffles):
         if dataset is not None:
             try:
+                print(f"🔧 Attempting DataLoader creation with {config['num_workers']} workers...")
                 loader = DataLoader(
                     dataset,
                     batch_size=config['batch_size'],
@@ -1674,30 +1677,48 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
                     persistent_workers=config['persistent_workers'],
                     prefetch_factor=config['prefetch_factor']
                 )
-                print(f"✓ DataLoader created successfully with {config['num_workers']} workers")
+                # Test the loader to make sure it actually works
+                print(f"✅ Testing DataLoader with {config['num_workers']} workers...")
+                test_batch = next(iter(loader))
+                print(f"✅ DataLoader verified successfully with {config['num_workers']} workers!")
                 return loader
             except Exception as e:
-                print(f"⚠ DataLoader creation failed: {e}")
-                # Intelligent fallback - reduce most expensive parameters first
-                fallback_config = {
-                    'batch_size': config['batch_size'] // 2,
-                    'num_workers': max(2, config['num_workers'] // 2),
-                    'prefetch_factor': 2,
-                    'pin_memory': False,
-                    'persistent_workers': False
-                }
-                print(f"📉 Falling back to conservative settings: {fallback_config['num_workers']} workers, batch={fallback_config['batch_size']}")
+                import traceback
+                print(f"❌ DataLoader creation failed with {config['num_workers']} workers")
+                print(f"❌ Error type: {type(e).__name__}")
+                print(f"❌ Error message: {str(e)}")
+                print(f"❌ Full traceback:")
+                print(traceback.format_exc())
+                # Try progressive fallback strategy instead of just halving
+                fallback_attempts = [
+                    max(16, config['num_workers'] // 2),  # Try 50% first
+                    max(12, config['num_workers'] // 4),  # Then 25%
+                    max(8, config['num_workers'] // 8),   # Then 12.5%
+                    4  # Final fallback
+                ]
                 
-                loader = DataLoader(
-                    dataset,
-                    batch_size=fallback_config['batch_size'],
-                    shuffle=shuffle,
-                    pin_memory=fallback_config['pin_memory'],
-                    num_workers=fallback_config['num_workers'],
-                    persistent_workers=fallback_config['persistent_workers'],
-                    prefetch_factor=fallback_config['prefetch_factor']
-                )
-                return loader
+                for attempt, reduced_workers in enumerate(fallback_attempts, 1):
+                    try:
+                        print(f"🔄 Fallback attempt {attempt}: trying {reduced_workers} workers...")
+                        loader = DataLoader(
+                            dataset,
+                            batch_size=config['batch_size'],
+                            shuffle=shuffle,
+                            pin_memory=config['pin_memory'],
+                            num_workers=reduced_workers,
+                            persistent_workers=config['persistent_workers'],
+                            prefetch_factor=config['prefetch_factor']
+                        )
+                        # Test the fallback loader
+                        test_batch = next(iter(loader))
+                        print(f"✅ Fallback successful with {reduced_workers} workers")
+                        return loader
+                    except Exception as fallback_e:
+                        print(f"❌ Fallback attempt {attempt} failed with {reduced_workers} workers: {fallback_e}")
+                        continue
+                
+                # If all fallbacks fail, there's a deeper issue
+                raise RuntimeError(f"All DataLoader configurations failed for dataset of size {dataset_size}")
     
     raise ValueError("No valid dataset provided to create_optimized_data_loaders")
 
