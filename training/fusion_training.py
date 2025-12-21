@@ -569,115 +569,16 @@ class FusionTrainingPipeline:
         print(f"✓ Fusion Agent initialized with {state_dim}D state space")
 
     def _get_curriculum_phase(self, episode: int, total_episodes: int) -> dict:
-        """Determine current curriculum learning phase and sampling strategy."""
-        
-        if not self.curriculum_enabled:
-            return {'phase': 'natural', 'high_disagreement_prob': 0.2, 
-                   'extreme_confidence_prob': 0.2, 'balanced_prob': 0.6}
-        
-        config = self.curriculum_config
-        phase_1_end = config['phase_1_episodes']
-        phase_2_end = phase_1_end + config['phase_2_episodes']
-        
-        if episode < phase_1_end:
-            # Phase 1: Focus on extreme/difficult cases
-            return {
-                'phase': 'extreme_focus',
-                'high_disagreement_prob': 0.5,   # 50% high disagreement
-                'extreme_confidence_prob': 0.3,  # 30% extreme confidence  
-                'balanced_prob': 0.2              # 20% balanced
-            }
-        elif episode < phase_2_end:
-            # Phase 2: Mixed scenarios
-            return {
-                'phase': 'mixed_scenarios', 
-                'high_disagreement_prob': 0.3,   # 30% high disagreement
-                'extreme_confidence_prob': 0.25, # 25% extreme confidence
-                'balanced_prob': 0.45             # 45% balanced
-            }
-        else:
-            # Phase 3: Natural distribution
-            return {
-                'phase': 'natural_distribution',
-                'high_disagreement_prob': 0.15,  # 15% high disagreement  
-                'extreme_confidence_prob': 0.15, # 15% extreme confidence
-                'balanced_prob': 0.7              # 70% balanced
-            }
+        """Return default sampling strategy (simplified)."""
+        return {'phase': 'natural', 'high_disagreement_prob': 0.2, 
+               'extreme_confidence_prob': 0.2, 'balanced_prob': 0.6}
 
-    def _categorize_training_samples(self, training_data: List) -> dict:
-        """Categorize training samples for curriculum learning."""
-        
-        categories = {
-            'high_disagreement': [],
-            'extreme_confidence': [], 
-            'balanced': []
-        }
-        
-        disagreement_thresh = self.curriculum_config.get('disagreement_threshold', 0.3)
-        confidence_thresh = self.curriculum_config.get('confidence_threshold', 0.2)
-        
-        for anomaly_score, gat_prob, label in training_data:
-            disagreement = abs(anomaly_score - gat_prob)
-            avg_confidence = (anomaly_score + gat_prob) / 2.0
-            
-            if disagreement > disagreement_thresh:
-                categories['high_disagreement'].append((anomaly_score, gat_prob, label))
-            elif avg_confidence < confidence_thresh or avg_confidence > (1 - confidence_thresh):
-                categories['extreme_confidence'].append((anomaly_score, gat_prob, label))
-            else:
-                categories['balanced'].append((anomaly_score, gat_prob, label))
-        
-        return categories
+
 
     def _sample_by_curriculum(self, episode: int, total_episodes: int, episode_size: int) -> List:
-        """Sample training data based on curriculum learning phase."""
-        
-        if not self.curriculum_enabled:
-            return random.sample(self.training_data, min(episode_size, len(self.training_data)))
-        
-        # Get current curriculum phase
-        curriculum_phase = self._get_curriculum_phase(episode, total_episodes)
-        
-        # Categorize available samples  
-        categories = self._categorize_training_samples(self.training_data)
-        
-        # Sample according to curriculum probabilities
-        samples = []
-        n_high_disagreement = int(episode_size * curriculum_phase['high_disagreement_prob'])
-        n_extreme_confidence = int(episode_size * curriculum_phase['extreme_confidence_prob'])
-        n_balanced = episode_size - n_high_disagreement - n_extreme_confidence
-        
-        # Sample from each category
-        if categories['high_disagreement'] and n_high_disagreement > 0:
-            samples.extend(random.sample(
-                categories['high_disagreement'], 
-                min(n_high_disagreement, len(categories['high_disagreement']))
-            ))
-            
-        if categories['extreme_confidence'] and n_extreme_confidence > 0:
-            samples.extend(random.sample(
-                categories['extreme_confidence'],
-                min(n_extreme_confidence, len(categories['extreme_confidence']))
-            ))
-            
-        if categories['balanced'] and n_balanced > 0:
-            samples.extend(random.sample(
-                categories['balanced'],
-                min(n_balanced, len(categories['balanced']))
-            ))
-        
-        # Fill remaining spots with any available samples
-        remaining_needed = episode_size - len(samples)
-        if remaining_needed > 0:
-            all_remaining = [s for s in self.training_data if s not in samples]
-            if all_remaining:
-                samples.extend(random.sample(
-                    all_remaining, 
-                    min(remaining_needed, len(all_remaining))
-                ))
-        
-        random.shuffle(samples)
-        return samples
+        """Sample training data (simplified without curriculum learning)."""
+        # Simple random sampling without curriculum complexity
+        return random.sample(self.training_data, min(episode_size, len(self.training_data)))
     
     def _process_experience_batch_parallel(self, batch_data, num_workers):
         """Process experiences with simple parallelization."""
@@ -740,18 +641,14 @@ class FusionTrainingPipeline:
             base_episode_size = config_dict.get('episode_sample_size', 2000) if config_dict else 2000
             current_episode_size = min(base_episode_size, len(self.training_data))
             
-            # Use curriculum sampling if enabled
+            # Use simplified sampling
             shuffled_data = self._sample_by_curriculum(episode, episodes, current_episode_size)
             
-            # Print curriculum info
-            if self.curriculum_enabled and episode % 10 == 0:
-                phase_info = self._get_curriculum_phase(episode, episodes)
-                print(f"  Curriculum Phase: {phase_info['phase']}")
-                
-                # Count sample types in this episode
-                categories = self._categorize_training_samples(shuffled_data)
-                print(f"  Sample Distribution: {len(categories['high_disagreement'])} disagreement, "
-                      f"{len(categories['extreme_confidence'])} extreme, {len(categories['balanced'])} balanced")
+            # Print progress info
+            if episode % 10 == 0:
+                total_progress = episode / episodes
+                print(f"    Episode {episode:4d} - Total Progress: {total_progress:.1%}")
+
             
             episode_reward = 0
             episode_correct = 0
