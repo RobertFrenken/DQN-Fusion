@@ -487,6 +487,9 @@ class FusionTrainingPipeline:
         self.training_data = list(zip(train_anomaly_scores, train_gat_probs, train_labels))
         self.validation_data = list(zip(val_anomaly_scores, val_gat_probs, val_labels))
         
+        # Store test data for evaluation (avoid redundant extraction)
+        self.test_data = self.validation_data  # val_loader is actually test data in main()
+        
         print(f"✓ Fusion data prepared:")
         print(f"  Training samples: {len(self.training_data)}")
         print(f"  Validation samples: {len(self.validation_data)}")
@@ -1068,22 +1071,22 @@ class FusionTrainingPipeline:
             'best_validation_score': best_validation_score
         }
 
-    def evaluate_fusion_strategies(self, test_loader: DataLoader, dataset_key: str) -> Dict[str, Any]:
+    def evaluate_fusion_strategies(self, dataset_key: str) -> Dict[str, Any]:
         """
         Comprehensive evaluation comparing different fusion strategies.
         
-        Args:
-            test_loader: Test data loader
-            
         Returns:
             Dictionary with evaluation results for different strategies
         """
         print(f"\n=== Evaluating Fusion Strategies ===")
         
-        # Extract test data
-        test_anomaly_scores, test_gat_probs, test_labels = self.data_extractor.extract_fusion_data(
-            test_loader, max_samples=None
-        )
+        # Use already extracted test data (from prepare_fusion_data)
+        if not hasattr(self, 'test_data') or not self.test_data:
+            raise ValueError("No test data available. Run prepare_fusion_data() first.")
+            
+        test_anomaly_scores = [data[0] for data in self.test_data]
+        test_gat_probs = [data[1] for data in self.test_data]
+        test_labels = [data[2] for data in self.test_data]
         
         results = {}
         
@@ -1856,10 +1859,6 @@ def main(config: DictConfig):
         max_val_samples=sampling_config['max_val']
     )
     
-    # Switch to standard training loaders after extraction
-    print("🔄 Switching to training-optimized data loaders...")
-    train_loader = create_optimized_data_loaders(train_dataset, None, None, BATCH_SIZE, str(device), extraction_phase=False)
-    test_loader = create_optimized_data_loaders(None, test_dataset, None, BATCH_SIZE, str(device), extraction_phase=False)
     
     # Initialize fusion agent with stability-focused config
     pipeline.initialize_fusion_agent(
@@ -1884,7 +1883,7 @@ def main(config: DictConfig):
     
     # === Final Evaluation ===
     print(f"\n=== Final Evaluation and Comparison ===")
-    evaluation_results = pipeline.evaluate_fusion_strategies(test_loader, dataset_key)
+    evaluation_results = pipeline.evaluate_fusion_strategies(dataset_key)
     
     # === Save Final Model ===
     pipeline.save_fusion_agent("saved_models", "final", dataset_key)

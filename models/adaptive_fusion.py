@@ -9,41 +9,6 @@ import os
 import sys
 from collections import Counter
 
-def diagnose_fusion_agent(agent, states: np.ndarray, device: str = 'cpu', n_display: int = 5):
-    """
-    states: np.ndarray shape (N,2) columns = [anomaly_score, gat_prob] in the same scale used during training
-    Prints Q-values, action indices and alpha mapping statistics, returns hist (action_idx -> count).
-    """
-    agent.q_network.eval()
-    # ensure deterministic policy
-    prev_epsilon = getattr(agent, 'epsilon', None)
-    try:
-        agent.epsilon = 0.0
-    except Exception:
-        pass
-
-    with torch.no_grad():
-        states_t = torch.tensor(states, dtype=torch.float32).to(device)
-        q_vals = agent.q_network(states_t).cpu().numpy()
-        action_idxs = q_vals.argmax(axis=1)
-        alphas = agent.alpha_values[action_idxs]
-
-    print("=== Agent diagnose ===")
-    print(f"Sample states (first {n_display}):\n{states[:n_display]}")
-    print(f"Sample Q-values (first {n_display}):\n{q_vals[:n_display]}")
-    print(f"Sample chosen action idxs (first {n_display}): {action_idxs[:n_display]}")
-    print(f"Sample alphas (first {n_display}): {alphas[:n_display]}")
-    print(f"Alpha value range: min={agent.alpha_values.min():.3f} max={agent.alpha_values.max():.3f} steps={len(agent.alpha_values)}")
-    counts = Counter(action_idxs.tolist())
-    total = len(action_idxs)
-    top = counts.most_common(8)
-    print(f"Top actions (idx,count,frac): {[ (i,c, c/total) for i,c in top ]}")
-    # distribution summary over the state set
-    hist = {int(k): int(v) for k,v in counts.items()}
-    # restore epsilon
-    if prev_epsilon is not None:
-        agent.epsilon = prev_epsilon
-    return hist
 
 class QNetwork(nn.Module):
     """Q-network with batch normalization and dropout."""
