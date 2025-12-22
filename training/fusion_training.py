@@ -28,9 +28,8 @@ from torch.utils.data import random_split, Subset
 import time
 import hydra
 from omegaconf import DictConfig, OmegaConf
-from sklearn.metrics import confusion_matrix, classification_report, f1_score, precision_score, recall_score
+from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
 import matplotlib.pyplot as plt
-import seaborn as sns
 from typing import Tuple, Dict, List, Any
 import warnings
 import random
@@ -46,8 +45,6 @@ from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 
 warnings.filterwarnings('ignore', category=UserWarning)
-
-
 
 # Configuration Constants
 DATASET_PATHS = {
@@ -289,10 +286,7 @@ class FusionDataExtractor:
         Returns:
             Tuple of (anomaly_scores, gat_probabilities, labels)
         """
-        print("🚀 GPU-Accelerated Fusion Data Extraction...")
-        
-        # GPU-optimized settings
-        extraction_batch_size = 32768 if torch.cuda.is_available() else 8192
+        print("Fusion Data Extraction...")
         
         anomaly_scores = []
         gat_probabilities = []
@@ -377,26 +371,15 @@ class FusionTrainingPipeline:
         
         gpu_props = torch.cuda.get_device_properties(self.device)
         memory_gb = gpu_props.total_memory / (1024**3)
-        
-        # A100-specific optimizations (maximize GPU utilization)
-        if "A100" in gpu_props.name:
-            if memory_gb >= 30:  # A100 40GB/80GB
+
+        if memory_gb >= 30:  # A100 40GB/80GB
                 optimal_batch_size = 16384  # Large batch for maximum throughput
                 buffer_size = 100000  # Keep smaller buffer for speed
                 training_steps = 4
-            elif memory_gb >= 15:  # A100 16GB  
-                optimal_batch_size = 8192   # Large batch for good throughput
-                buffer_size = 75000   # Keep smaller buffer for speed
-                training_steps = 3
-            else:
-                optimal_batch_size = 4096   # Decent batch size
-                buffer_size = 50000   # Keep smaller buffer for speed
-                training_steps = 2
         else:
-            # V100 or other GPUs
-            optimal_batch_size = 4096 if memory_gb >= 15 else 2048  # Large batches for GPU utilization
-            buffer_size = 50000 if memory_gb >= 15 else 30000       # Keep smaller buffers for speed
-            training_steps = 2 if memory_gb >= 15 else 1
+            optimal_batch_size = 8192   # Large batch for good throughput
+            buffer_size = 75000   # Keep smaller buffer for speed
+            training_steps = 3
         
         return {
             'name': gpu_props.name,
@@ -991,8 +974,8 @@ class FusionTrainingPipeline:
             if episode % 5 == 0 and hasattr(self.fusion_agent, 'decay_epsilon'):  # Every 5 episodes for stability
                 self.fusion_agent.decay_epsilon()
             
-            # logging less frequently to speed up training
-            if episode % 25 == 0 or episode < 5:
+            # episode logging
+            if episode % 50 == 0 or episode < 3:
                 print(f"\n📊 Episode {episode + 1}/{episodes} Stats:")
                 print(f"  Accuracy: {episode_accuracy:.4f}")
                 print(f"  Normalized Reward: {avg_episode_reward:.4f}")
