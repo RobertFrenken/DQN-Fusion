@@ -541,7 +541,9 @@ class FusionTrainingPipeline:
             buffer_size = max(buffer_size, 500000)
             
         self.fusion_agent = EnhancedDQNFusionAgent(
-            alpha_steps=alpha_steps, lr=lr, gamma=0.95, epsilon=epsilon,
+            alpha_steps=alpha_steps, lr=lr, 
+            gamma=config_dict.get('fusion_gamma', 0.95) if config_dict else 0.95, 
+            epsilon=epsilon,
             epsilon_decay=config_dict.get('fusion_epsilon_decay', 0.995) if config_dict else 0.995,
             min_epsilon=config_dict.get('fusion_min_epsilon', 0.1) if config_dict else 0.1,
             buffer_size=buffer_size, batch_size=batch_size, target_update_freq=target_update_freq,
@@ -727,160 +729,7 @@ class FusionTrainingPipeline:
             # Convert to old loop variable for compatibility
             i = episode_samples - 1
             
-            # Skip the original single-threaded processing
-            if False:  # Disable original loop
-                pass
-            else:
-                # Continue with batch training logic...
-                pass
-            
-            # Original loop code (now disabled)
-            for i_disabled, (anomaly_score, gat_prob, true_label) in enumerate([]):
-                # GPU-optimized state processing with caching
-                current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
-                state_cache.append((anomaly_score, gat_prob))  # Cache for batch processing
-                
-                # Select action (fusion weight)
-                alpha, action_idx, _ = self.fusion_agent.select_action(
-                    anomaly_score, gat_prob, training=True
-                )
-                
-                # Track action distribution
-                episode_action_counts[action_idx] += 1
-                
-                # Make fused prediction
-                fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob
-                prediction = 1 if fused_score > 0.5 else 0
-                
-                # Compute raw reward
-                raw_reward = self.fusion_agent.compute_fusion_reward(
-                    prediction, true_label, anomaly_score, gat_prob, alpha
-                )
-                
-                # Preserve reward signal for better learning
-                clipped_reward = np.clip(raw_reward, -2.0, 2.0)  # Less aggressive clipping
-                normalized_reward = clipped_reward * 0.5  # Gentler normalization to [-1, 1]
-                
-                episode_raw_rewards.append(raw_reward)
-                
-                # Get next state (use next sample if available, else current)
-                if i + 1 < len(shuffled_data):
-                    next_anomaly, next_gat, _ = shuffled_data[i + 1]
-                    next_state = self.fusion_agent.normalize_state(next_anomaly, next_gat)
-                    done = False  # Not terminal, agent can bootstrap
-                else:
-                    next_state = current_state  # Terminal state
-                    done = True
-                
-                # Store experience for batch processing
-                experience_batch.append({
-                    'state': current_state,
-                    'action': action_idx, 
-                    'reward': normalized_reward,
-                    'next_state': next_state,
-                    'done': done
-                })
-                
-                # Pipeline parallelism: Train while collecting next batch
-                if len(experience_batch) >= training_step_interval or continuous_training:
-                    # Store current batch experiences
-                    for exp in experience_batch:
-                        self.fusion_agent.store_experience(
-                            exp['state'], exp['action'], exp['reward'], exp['next_state'], exp['done']
-                        )
-                    
-                    # Continuous training mode for sustained GPU utilization
-                    if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
-                        # Calculate dynamic training intensity based on buffer size
-                        buffer_capacity = getattr(self.fusion_agent.replay_buffer, 'capacity', 
-                                                getattr(self.fusion_agent.replay_buffer, 'maxlen', 1000000))
-                        buffer_ratio = len(self.fusion_agent.replay_buffer) / buffer_capacity
-                        
-                        # Very conservative training scaling for stability
-                        base_steps = gpu_training_steps
-                        if buffer_ratio > 0.9:  # Buffer >90% full (much higher threshold)
-                            intensive_steps = int(base_steps * 1.3)  # Minimal scaling
-                        elif buffer_ratio > 0.7:  # Buffer >70% full
-                            intensive_steps = int(base_steps * 1.1)  # Very gentle scaling
-                        else:
-                            intensive_steps = base_steps  # Base training
-                        
-                        # Continuous training loop with async GPU operations
-                        batch_loss = 0
-                        successful_steps = 0
-                        
-                        # Create CUDA stream for async operations to prevent CPU blocking
-                        if torch.cuda.is_available():
-                            train_stream = torch.cuda.Stream()
-                        else:
-                            train_stream = None
-                        
-                        for step in range(intensive_steps):
-                            # Train with current batch (with stability controls)
-                            loss = self.fusion_agent.train_step()
-                            if loss is not None:
-                                batch_loss += loss
-                                successful_steps += 1
-                            
-                            # Keep training as long as we have sufficient buffer
-                            if len(self.fusion_agent.replay_buffer) < self.fusion_agent.batch_size * 2:
-                                break
-                                
-                            # Less frequent target updates for stability in later episodes
-                            update_freq = 24 if episode > 250 else 16  # Slower updates when converged
-                            if step % update_freq == 0:  # Adaptive frequency
-                                self.fusion_agent.update_target_network()
-                        
-                        # Record training results
-                        if successful_steps > 0:
-                            avg_batch_loss = batch_loss / successful_steps
-                            episode_loss_sum += avg_batch_loss
-                            episode_loss_count += 1
-                        
-                        # Keep continuous training disabled for controlled episode duration
-                        # continuous_training = True  # Disabled to prevent excessive training
-                    
-                    # Clear processed batches
-                    experience_batch.clear()
-                    state_cache.clear()
-                
-                # Track Q-values for sample states (more frequent sampling)
-                if batch_experiences and batch_start % cpu_batch_size == 0:  # Sample every batch
-                    with torch.no_grad():
-                        device = getattr(self.fusion_agent, 'device', self.device)
-                        q_network = getattr(self.fusion_agent, 'q_network', None)
-                        if q_network is not None and len(batch_experiences) > 0:
-                            # Sample multiple states from batch for better representation
-                            sample_indices = [0, len(batch_experiences)//2, len(batch_experiences)-1]
-                            batch_q_values = []
-                            
-                            for idx in sample_indices:
-                                if idx < len(batch_experiences):
-                                    sample_state = batch_experiences[idx][3]  # Get state from experience
-                                    state_tensor = torch.tensor(sample_state, dtype=torch.float32).unsqueeze(0).to(device, non_blocking=True)
-                                    q_vals = q_network(state_tensor)
-                                    # Use mean Q-value instead of max for better representation
-                                    mean_q_val = q_vals.mean().item()
-                                    batch_q_values.append(mean_q_val)
-                            
-                            if batch_q_values:
-                                episode_q_sum += sum(batch_q_values)
-                                episode_q_count += len(batch_q_values)
-                
-                # Track statistics
-                episode_reward += normalized_reward
-                episode_correct += (prediction == true_label)
-                episode_samples += 1
-                
-                # CPU and GPU memory management after parallel processing
-                if i % (training_step_interval * 32) == 0:  # Much less frequent cleanup to avoid interrupting GPU
-                    cleanup_memory()
-                    
-                    # A100-specific memory optimization
-                    if self.gpu_info and torch.cuda.is_available():
-                        # Remove blocking synchronize - it hurts GPU utilization
-                        if torch.cuda.memory_allocated() / torch.cuda.max_memory_allocated() < 0.7:
-                            torch.cuda.empty_cache()  # Only clear cache if utilization is low
+            # All processing now handled by parallel batch processing above
             
             # Final GPU utilization boost
             if experience_batch:
@@ -890,10 +739,10 @@ class FusionTrainingPipeline:
                         exp['state'], exp['action'], exp['reward'], exp['next_state'], exp['done']
                     )
                 
-                # Conservative final training
+                # Aggressive final training to fully utilize buffer
                 if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
-                    # Minimal final training to prevent episode timeout
-                    max_final_steps = min(gpu_training_steps * 2, 20)  # Much smaller cap
+                    # Utilize full training potential
+                    max_final_steps = gpu_training_steps * 3  # Remove conservative cap
                     batch_loss = 0
                     successful_steps = 0
                     
@@ -971,7 +820,7 @@ class FusionTrainingPipeline:
                 if hasattr(self.fusion_agent, 'optimizer'):
                     for param_group in self.fusion_agent.optimizer.param_groups:
                         if param_group['lr'] > 0.0001:  # Don't go too low
-                            param_group['lr'] *= 0.98  # Gradual decay
+                            param_group['lr'] *= config_dict.get('lr_decay_factor', 0.98) if config_dict else 0.98
             
             # More gradual exploration decay for better learning
             if episode % 5 == 0 and hasattr(self.fusion_agent, 'decay_epsilon'):  # Every 5 episodes for stability
@@ -996,7 +845,8 @@ class FusionTrainingPipeline:
                     print(f"  Low loss: {avg_episode_loss:.6f}")
                     # Reduce training intensity for stability
                     if hasattr(self.fusion_agent, 'epsilon') and self.fusion_agent.epsilon > 0.05:
-                        self.fusion_agent.epsilon *= 0.95  # Faster epsilon decay
+                        decay_factor = config_dict.get('epsilon_fast_decay', 0.95) if config_dict else 0.95
+                        self.fusion_agent.epsilon *= decay_factor
                 
                 # Action distribution analysis (with safety checks)
                 if len(episode_action_counts) > 0:
@@ -1023,17 +873,16 @@ class FusionTrainingPipeline:
                 print(f"  Validation Reward: {val_results['avg_reward']:.4f}")
                 print(f"  Avg Alpha: {val_results['avg_alpha']:.4f} ± {val_results['alpha_std']:.4f}")
                 
-                # More lenient early stopping - allow for continued learning
+                # Aggressive early stopping - count any improvement
                 current_val_score = val_results['accuracy']
                 
-                # Only consider it an improvement if it's meaningfully better
-                improvement_threshold = 0.0001  # 0.01% improvement threshold
-                if current_val_score > best_validation_score + improvement_threshold:
+                # Any improvement counts
+                if current_val_score > best_validation_score:
                     best_validation_score = current_val_score
                     patience_counter = 0
                     self.save_fusion_agent("saved_models/fusion_checkpoints", "best", dataset_key)
                     print(f"  🏆 New best validation score: {current_val_score:.6f}!")
-                elif current_val_score < best_validation_score - 0.001:  # Only count significant degradation
+                elif current_val_score < best_validation_score - 0.005:  # Only count meaningful degradation
                     patience_counter += 1
                     print(f"  ⚠️  Validation declined: {current_val_score:.6f} < {best_validation_score:.6f} (patience: {patience_counter}/{early_stopping_patience})")
                 else:
@@ -1551,13 +1400,13 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
     
     # Calculate optimal batch size based on available memory
     if cuda_available:
-        # Reserve 20% of GPU memory for model parameters and overhead
-        available_gpu_memory = gpu_memory_gb * 0.8
+        # Use 95% of GPU memory for maximum throughput
+        available_gpu_memory = gpu_memory_gb * 0.95
         # GPU can handle larger batches due to parallel processing
-        max_batch_from_gpu = int(available_gpu_memory * 1024 / (memory_per_sample_mb * 4))  # 4x overhead for GPU ops
+        max_batch_from_gpu = int(available_gpu_memory * 1024 / (memory_per_sample_mb * 3))  # Reduced overhead factor
         
-        # Use aggressive settings for maximum throughput
-        target_batch = min(max_batch_from_gpu, 16384)  # Use full capacity, not divided by 2
+        # Remove artificial caps - let GPU memory be the limiting factor
+        target_batch = max_batch_from_gpu
         target_workers = max(16, min(cpu_count_available - 2, int(cpu_count_available * 0.9)))  # Use 90% of CPUs
         prefetch_factor = min(8, max(2, target_workers // 8))
             
@@ -1569,11 +1418,11 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
             'persistent_workers': True
         }
     else:
-        # CPU mode - scale with available resources
-        available_memory = memory_gb * 0.6  # Reserve 40% for system
+        # CPU mode - more aggressive memory usage
+        available_memory = memory_gb * 0.8  # Only reserve 20% for system
         max_batch_from_memory = int(available_memory * 1024 / memory_per_sample_mb)
         
-        target_batch = min(max_batch_from_memory, 2048)
+        target_batch = max_batch_from_memory  # Remove artificial 2048 cap
         # Use most CPUs but leave some for system
         target_workers = max(8, min(cpu_count_available - 1, int(cpu_count_available * 0.85)))
             
@@ -1650,12 +1499,12 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
                 print(f"❌ Error message: {str(e)}")
                 print(f"❌ Full traceback:")
                 print(traceback.format_exc())
-                # Try progressive fallback strategy instead of just halving
+                # Aggressive fallback strategy - only reduce if absolutely necessary
                 fallback_attempts = [
-                    max(16, config['num_workers'] // 2),  # Try 50% first
-                    max(12, config['num_workers'] // 4),  # Then 25%
-                    max(8, config['num_workers'] // 8),   # Then 12.5%
-                    4  # Final fallback
+                    max(24, int(config['num_workers'] * 0.8)),  # Try 80% first
+                    max(16, int(config['num_workers'] * 0.6)),  # Then 60%
+                    max(12, config['num_workers'] // 2),        # Then 50%
+                    8  # Final fallback
                 ]
                 
                 for attempt, reduced_workers in enumerate(fallback_attempts, 1):
@@ -1723,7 +1572,8 @@ def main(config: DictConfig):
     print(f"✓ ID mapping built in {io_mapping_time:.2f}s")
 
     start_time = time.time()
-    dataset = graph_creation(root_folder, id_mapping=id_mapping, window_size=100)
+    dataset = graph_creation(root_folder, id_mapping=id_mapping, 
+                           window_size=config_dict.get('window_size', 100))
     preprocessing_time = time.time() - start_time
     
     print(f"✓ Dataset: {len(dataset)} graphs, {len(id_mapping)} CAN IDs")
@@ -1736,10 +1586,10 @@ def main(config: DictConfig):
     ALPHA_STEPS = 21
     FUSION_LR = 0.0005  # Much lower for stability
     FUSION_EPSILON = 0.8  # Higher exploration for better Q-learning
-    # A100-optimized parameters (will be overridden by GPU detection)
-    BUFFER_SIZE = 750000 if device.type == 'cuda' else 200000  # A100-optimized buffer
-    FUSION_BATCH_SIZE = 6144 if device.type == 'cuda' else 512  # A100-optimized batch size
-    TARGET_UPDATE_FREQ = 20 if device.type == 'cuda' else 50   # More frequent updates for A100
+    # Dynamic parameters - will be set by GPU detection and resource calculation
+    BUFFER_SIZE = None  # Will be calculated dynamically
+    FUSION_BATCH_SIZE = None  # Will be calculated dynamically  
+    TARGET_UPDATE_FREQ = None  # Will be calculated dynamically
     
     # Enhanced exploration parameters
     FUSION_EPSILON = 0.9  # Higher initial exploration (was 0.8)
@@ -1786,31 +1636,28 @@ def main(config: DictConfig):
     # Dynamic sampling based on dataset size and available resources
     def calculate_optimal_sampling(dataset_size: int, device_type: str) -> Dict[str, int]:
         """Calculate optimal train/val sampling based on dataset characteristics."""
-        base_train_ratio = 0.4  # Use 40% of data for training fusion
-        base_val_ratio = 0.1    # Use 10% of data for validation
-        
-        # Adjust ratios based on dataset size
-        if dataset_size < 200000:  # Small datasets - use more data
-            train_ratio = min(0.8, base_train_ratio * 1.5)
-            val_ratio = min(0.2, base_val_ratio * 1.5)
-        elif dataset_size > 400000:  # Large datasets - can be more selective
-            train_ratio = base_train_ratio * 0.75
-            val_ratio = base_val_ratio * 0.75
-        else:  # Medium datasets
-            train_ratio = base_train_ratio
-            val_ratio = base_val_ratio
+        # Dynamic ratios based purely on dataset size and compute power
+        if dataset_size < 50000:  # Small datasets - use most data
+            train_ratio = 0.9
+            val_ratio = 0.3
+        elif dataset_size < 200000:  # Medium datasets
+            train_ratio = 0.7
+            val_ratio = 0.25
+        else:  # Large datasets
+            train_ratio = 0.5
+            val_ratio = 0.15
             
-        # Adjust for compute resources
-        if device_type == 'cpu':
-            train_ratio *= 0.5  # Use less data on CPU to keep training time reasonable
-            val_ratio *= 0.5
+        # Scale up for better hardware
+        if device_type == 'cuda':
+            train_ratio *= 1.5  # Use more data on GPU
+            val_ratio *= 1.2
             
         max_train = int(dataset_size * train_ratio)
         max_val = int(dataset_size * val_ratio)
         
-        # Reasonable bounds
-        max_train = max(10000, min(max_train, 200000))  # Between 10K and 200K
-        max_val = max(2000, min(max_val, 40000))        # Between 2K and 40K
+        # Remove artificial caps - let hardware determine limits
+        max_train = max(10000, max_train)  # Only minimum bound
+        max_val = max(2000, max_val)       # Only minimum bound
         
         return {'max_train': max_train, 'max_val': max_val}
     
@@ -1825,7 +1672,7 @@ def main(config: DictConfig):
     if torch.cuda.is_available():
         print("🚀 Pre-allocating GPU memory for accelerated extraction...")
         torch.cuda.empty_cache()  # Clear cache before large extraction
-        torch.cuda.set_per_process_memory_fraction(0.95)  # Use 95% of GPU memory
+        torch.cuda.set_per_process_memory_fraction(0.99)  # Use 99% of GPU memory
     
     pipeline.prepare_fusion_data(
         train_loader, 
