@@ -1342,12 +1342,6 @@ class FusionTrainingPipeline:
         axes[1,3].set_ylim([0, 1])
         axes[1,3].legend(loc='best', fontsize=9)
         
-        # Add interpretation text
-        textstr = 'Low disagreement → Models agree\nHigh disagreement → Models conflict'
-        props = dict(boxstyle='round', facecolor='wheat', alpha=0.5)
-        axes[1,3].text(0.02, 0.98, textstr, transform=axes[1,3].transAxes, fontsize=9,
-                      verticalalignment='top', bbox=props)
-        
         # Update the saved figure
         plt.tight_layout()
         filename = f'images/complete_fusion_training_analysis_{dataset_key}'
@@ -1532,9 +1526,8 @@ class FusionTrainingPipeline:
         plt.close(fig)
         plt.ion()
 
-def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda', extraction_phase: bool = False):
+def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
     """Dynamically calculate optimal resource allocation based on dataset size and available hardware."""
-    import psutil
     
     # Get system resources
     cpu_count_available = cpu_count()
@@ -1563,24 +1556,10 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda', extract
         # GPU can handle larger batches due to parallel processing
         max_batch_from_gpu = int(available_gpu_memory * 1024 / (memory_per_sample_mb * 4))  # 4x overhead for GPU ops
         
-        if extraction_phase:
-            # More conservative for extraction (more memory overhead)
-            target_batch = min(max_batch_from_gpu // 2, 16384)
-            # Scale workers with dataset size but cap for stability
-            target_workers = max(32, min(cpu_count_available - 2, int(cpu_count_available * 0.9)))
-            prefetch_factor = min(8, max(2, target_workers // 8))
-        else:
-            # Training phase
-            target_batch = min(max_batch_from_gpu // 3, 8192)
-            target_workers = max(24, min(cpu_count_available - 2, int(cpu_count_available * 0.8)))
-            prefetch_factor = min(6, max(2, target_workers // 8))
-            
-        # Adjust based on dataset size
-        if dataset_size < 50000:  # Very small datasets
-            target_batch = min(target_batch, 4096)
-            target_workers = max(8, target_workers // 2)  # Don't go too low
-        elif dataset_size > 500000:  # Large datasets - need much more parallel loading
-            target_workers = min(cpu_count_available - 1, target_workers + 16)  # Add many more workers
+        # Use aggressive settings for maximum throughput
+        target_batch = min(max_batch_from_gpu, 16384)  # Use full capacity, not divided by 2
+        target_workers = max(16, min(cpu_count_available - 2, int(cpu_count_available * 0.9)))  # Use 90% of CPUs
+        prefetch_factor = min(8, max(2, target_workers // 8))
             
         config = {
             'batch_size': target_batch,
@@ -1596,11 +1575,7 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda', extract
         
         target_batch = min(max_batch_from_memory, 2048)
         # Use most CPUs but leave some for system
-        target_workers = max(16, min(cpu_count_available - 1, int(cpu_count_available * 0.85)))
-        
-        # Scale with dataset size
-        if dataset_size > 300000:
-            target_workers = min(cpu_count_available - 1, target_workers + 8)  # Add more workers
+        target_workers = max(8, min(cpu_count_available - 1, int(cpu_count_available * 0.85)))
             
         config = {
             'batch_size': target_batch,
@@ -1616,7 +1591,7 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda', extract
     return config, cuda_available
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
-                                 batch_size: int = 1024, device: str = 'cuda', extraction_phase: bool = False):
+                                 batch_size: int = 1024, device: str = 'cuda'):
     """Create optimized data loaders with dynamic resource allocation."""
     # Find dataset to get size for dynamic allocation
     dataset = next((d for d in [train_subset, test_dataset, full_train_dataset] if d is not None), None)
@@ -1626,10 +1601,10 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
     dataset_size = len(dataset)
     
     # Get dynamic resource allocation
-    config, cuda_available = calculate_dynamic_resources(dataset_size, device, extraction_phase)
+    config, cuda_available = calculate_dynamic_resources(dataset_size, device)
     
     # Debug output to understand resource allocation
-    print(f"🔍 Dataset analysis: size={dataset_size:,}, extraction_phase={extraction_phase}")
+    print(f"🔍 Dataset analysis: size={dataset_size:,}")
     print(f"🎯 Calculated resources: workers={config['num_workers']}, batch={config['batch_size']}")
     print(f"📊 CPU info: available={cpu_count()}, using={config['num_workers']} ({config['num_workers']/cpu_count()*100:.1f}%)")
     
@@ -1637,14 +1612,14 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
     if batch_size != 1024:  # Non-default batch_size provided
         config['batch_size'] = min(batch_size, config['batch_size'])  # Don't exceed calculated max
     
-    print(f"✓ Dynamic DataLoader: batch_size={config['batch_size']}, workers={config['num_workers']}, extraction_phase={extraction_phase}")
+    print(f"✓ Dynamic DataLoader: batch_size={config['batch_size']}, workers={config['num_workers']}")
     print(f"✓ DataLoader config: pin_memory={config['pin_memory']}, prefetch_factor={config['prefetch_factor']}, persistent_workers={config['persistent_workers']}")
     print(f"✓ CUDA available: {cuda_available}, Device: {device}")
     
     # Clear GPU cache before creating DataLoader for large datasets
-    if cuda_available and extraction_phase:
+    if cuda_available:
         torch.cuda.empty_cache()
-        print(f"✓ GPU memory cleared for extraction phase")
+        print(f"✓ GPU memory cleared")
 
     # Find the first non-None dataset and create loader for it
     datasets = [train_subset, test_dataset, full_train_dataset]
@@ -1783,10 +1758,10 @@ def main(config: DictConfig):
     generator = torch.Generator().manual_seed(42)
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=generator)
     
-    # Create GPU-optimized data loaders for extraction phase
-    print("🔧 Creating GPU-optimized data loaders for extraction...")
-    train_loader = create_optimized_data_loaders(train_dataset, None, None, BATCH_SIZE, str(device), extraction_phase=True)
-    test_loader = create_optimized_data_loaders(None, test_dataset, None, BATCH_SIZE, str(device), extraction_phase=True)
+    # Create GPU-optimized data loaders
+    print("🔧 Creating GPU-optimized data loaders...")
+    train_loader = create_optimized_data_loaders(train_dataset, None, None, BATCH_SIZE, str(device))
+    test_loader = create_optimized_data_loaders(None, test_dataset, None, BATCH_SIZE, str(device))
     
     print(f"✓ Data split: {len(train_dataset)} train, {len(test_dataset)} test")
     
