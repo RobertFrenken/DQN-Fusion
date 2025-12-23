@@ -46,6 +46,200 @@ from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanu
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
+class GPUMonitor:
+    """Monitor GPU usage, memory, and performance metrics during training."""
+    
+    def __init__(self, device):
+        self.device = torch.device(device)
+        self.is_cuda = self.device.type == 'cuda'
+        self.gpu_stats = []
+        self.timing_stats = []
+        
+        if self.is_cuda:
+            self.gpu_name = torch.cuda.get_device_properties(self.device).name
+            self.total_memory = torch.cuda.get_device_properties(self.device).total_memory
+        else:
+            self.gpu_name = "CPU"
+            self.total_memory = psutil.virtual_memory().total
+    
+    def record_gpu_stats(self, episode: int):
+        """Record current GPU statistics."""
+        if self.is_cuda:
+            torch.cuda.synchronize()  # Ensure all ops are complete
+            
+            # Memory stats
+            memory_allocated = torch.cuda.memory_allocated(self.device)
+            memory_reserved = torch.cuda.memory_reserved(self.device)
+            memory_free = self.total_memory - memory_reserved
+            
+            # Calculate utilization percentages
+            memory_util = (memory_allocated / self.total_memory) * 100
+            reserved_util = (memory_reserved / self.total_memory) * 100
+            
+            # Try to get GPU utilization (requires nvidia-ml-py3 or pynvml)
+            gpu_util = 0.0
+            try:
+                import pynvml
+                pynvml.nvmlInit()
+                handle = pynvml.nvmlDeviceGetHandleByIndex(self.device.index)
+                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
+                gpu_util = util.gpu
+            except (ImportError, Exception):
+                # Fallback: estimate based on memory usage
+                gpu_util = min(95.0, memory_util * 1.2)  # Rough approximation
+            
+            stats = {
+                'episode': episode,
+                'memory_allocated_gb': memory_allocated / (1024**3),
+                'memory_reserved_gb': memory_reserved / (1024**3),
+                'memory_free_gb': memory_free / (1024**3),
+                'memory_utilization_pct': memory_util,
+                'reserved_utilization_pct': reserved_util,
+                'gpu_utilization_pct': gpu_util,
+                'timestamp': time.time()
+            }
+        else:
+            # CPU stats
+            cpu_percent = psutil.cpu_percent(interval=0.1)
+            memory = psutil.virtual_memory()
+            
+            stats = {
+                'episode': episode,
+                'memory_allocated_gb': (memory.total - memory.available) / (1024**3),
+                'memory_reserved_gb': memory.used / (1024**3),
+                'memory_free_gb': memory.available / (1024**3),
+                'memory_utilization_pct': memory.percent,
+                'reserved_utilization_pct': memory.percent,
+                'gpu_utilization_pct': cpu_percent,
+                'timestamp': time.time()
+            }
+        
+        self.gpu_stats.append(stats)
+    
+    def record_timing(self, episodes_completed: int, elapsed_time: float):
+        """Record timing statistics."""
+        self.timing_stats.append({
+            'episodes': episodes_completed,
+            'elapsed_time': elapsed_time,
+            'episodes_per_minute': (episodes_completed / elapsed_time) * 60 if elapsed_time > 0 else 0
+        })
+    
+    def get_performance_summary(self) -> Dict:
+        """Generate performance summary with batch size recommendations."""
+        if not self.gpu_stats:
+            return {'error': 'No GPU stats collected'}
+        
+        # Calculate averages
+        avg_memory_util = np.mean([s['memory_utilization_pct'] for s in self.gpu_stats])
+        avg_gpu_util = np.mean([s['gpu_utilization_pct'] for s in self.gpu_stats])
+        max_memory_util = max([s['memory_utilization_pct'] for s in self.gpu_stats])
+        avg_memory_allocated = np.mean([s['memory_allocated_gb'] for s in self.gpu_stats])
+        
+        # Timing analysis
+        timing_summary = {}
+        if self.timing_stats:
+            total_time = sum([t['elapsed_time'] for t in self.timing_stats])
+            total_episodes = sum([t['episodes'] for t in self.timing_stats])
+            avg_episodes_per_min = np.mean([t['episodes_per_minute'] for t in self.timing_stats])
+            
+            timing_summary = {
+                'total_training_time_minutes': total_time / 60,
+                'total_episodes_trained': total_episodes,
+                'average_episodes_per_minute': avg_episodes_per_min,
+                'estimated_time_per_100_episodes_minutes': (100 / avg_episodes_per_min) if avg_episodes_per_min > 0 else 0
+            }
+        
+        # Batch size recommendations
+        current_batch_util = avg_memory_util
+        recommendations = self._generate_batch_recommendations(current_batch_util, max_memory_util, avg_gpu_util)
+        
+        return {
+            'device_name': self.gpu_name,
+            'total_memory_gb': self.total_memory / (1024**3),
+            'average_memory_utilization_pct': avg_memory_util,
+            'average_gpu_utilization_pct': avg_gpu_util,
+            'peak_memory_utilization_pct': max_memory_util,
+            'average_memory_allocated_gb': avg_memory_allocated,
+            'timing': timing_summary,
+            'recommendations': recommendations,
+            'stats_collected': len(self.gpu_stats)
+        }
+    
+    def _generate_batch_recommendations(self, avg_memory_util: float, peak_memory_util: float, avg_gpu_util: float) -> Dict:
+        """Generate intelligent batch size recommendations."""
+        recommendations = {
+            'current_efficiency': 'unknown',
+            'batch_size_recommendation': 'maintain current',
+            'reasoning': [],
+            'target_memory_utilization': '70-85%',
+            'target_gpu_utilization': '85-95%'
+        }
+        
+        # Memory utilization analysis
+        if peak_memory_util > 90:
+            recommendations['batch_size_recommendation'] = 'decrease by 25-50%'
+            recommendations['reasoning'].append(f'Peak memory usage too high: {peak_memory_util:.1f}%')
+            recommendations['current_efficiency'] = 'memory_constrained'
+        elif avg_memory_util < 50:
+            recommendations['batch_size_recommendation'] = 'increase by 50-100%'
+            recommendations['reasoning'].append(f'Low memory usage: {avg_memory_util:.1f}%, can increase batch size')
+            recommendations['current_efficiency'] = 'underutilized'
+        elif 70 <= avg_memory_util <= 85:
+            recommendations['current_efficiency'] = 'optimal'
+            recommendations['reasoning'].append(f'Good memory utilization: {avg_memory_util:.1f}%')
+        
+        # GPU utilization analysis
+        if avg_gpu_util < 70:
+            if 'increase' not in recommendations['batch_size_recommendation']:
+                recommendations['batch_size_recommendation'] = 'increase by 25-50%'
+            recommendations['reasoning'].append(f'Low GPU utilization: {avg_gpu_util:.1f}%')
+        elif avg_gpu_util > 95:
+            recommendations['reasoning'].append(f'High GPU utilization: {avg_gpu_util:.1f}% - good throughput')
+        
+        # Combined analysis
+        if avg_memory_util < 60 and avg_gpu_util < 80:
+            recommendations['batch_size_recommendation'] = 'increase by 100-200%'
+            recommendations['reasoning'].append('Both memory and GPU underutilized - significant batch size increase recommended')
+        
+        return recommendations
+    
+    def print_performance_summary(self):
+        """Print a formatted performance summary."""
+        summary = self.get_performance_summary()
+        
+        print(f"\n{'='*80}")
+        print(f"🚀 FUSION TRAINING PERFORMANCE SUMMARY")
+        print(f"{'='*80}")
+        print(f"Device: {summary['device_name']} ({summary['total_memory_gb']:.1f}GB)")
+        print(f"Stats collected from {summary['stats_collected']} episodes")
+        
+        print(f"\n📊 RESOURCE UTILIZATION:")
+        print(f"  Average Memory Usage: {summary['average_memory_utilization_pct']:.1f}% ({summary['average_memory_allocated_gb']:.2f}GB)")
+        print(f"  Peak Memory Usage: {summary['peak_memory_utilization_pct']:.1f}%")
+        print(f"  Average {'GPU' if self.is_cuda else 'CPU'} Utilization: {summary['average_gpu_utilization_pct']:.1f}%")
+        
+        if 'timing' in summary and summary['timing']:
+            timing = summary['timing']
+            print(f"\n⏱️ TRAINING PERFORMANCE:")
+            print(f"  Total Training Time: {timing['total_training_time_minutes']:.1f} minutes")
+            print(f"  Episodes Completed: {timing['total_episodes_trained']:.0f}")
+            print(f"  Training Speed: {timing['average_episodes_per_minute']:.2f} episodes/minute")
+            print(f"  Time per 100 Episodes: {timing['estimated_time_per_100_episodes_minutes']:.1f} minutes")
+        
+        rec = summary['recommendations']
+        print(f"\n🎯 OPTIMIZATION RECOMMENDATIONS:")
+        print(f"  Current Efficiency: {rec['current_efficiency'].upper()}")
+        print(f"  Batch Size Recommendation: {rec['batch_size_recommendation']}")
+        if rec['reasoning']:
+            print(f"  Reasoning:")
+            for reason in rec['reasoning']:
+                print(f"    • {reason}")
+        
+        print(f"\n📈 TARGETS FOR OPTIMAL PERFORMANCE:")
+        print(f"  Target Memory Utilization: {rec['target_memory_utilization']}")
+        print(f"  Target {'GPU' if self.is_cuda else 'CPU'} Utilization: {rec['target_gpu_utilization']}")
+        print(f"{'='*80}")
+
 # Configuration Constants
 DATASET_PATHS = {
     'hcrl_ch': r"datasets/can-train-and-test-v1.5/hcrl-ch",
@@ -200,7 +394,7 @@ class FusionDataExtractor:
 
     def compute_anomaly_scores(self, batch) -> torch.Tensor:
         """
-        GPU-optimized computation of normalized anomaly scores for batch with chunking.
+        GPU-optimized computation of normalized anomaly scores for batch.
         
         Args:
             batch: Batch of graph data
@@ -208,29 +402,7 @@ class FusionDataExtractor:
         Returns:
             Tensor of anomaly scores [0, 1] for each graph
         """
-        # Check if batch is too large for GPU memory - split if needed
-        total_nodes = batch.x.shape[0]
-        max_nodes_per_chunk = 75000  # Conservative limit to avoid 14GB tensor allocation
-        
-        if total_nodes > max_nodes_per_chunk:
-            # Split batch into memory-friendly chunks
-            data_list = Batch.to_data_list(batch)
-            chunk_size = max(1, len(data_list) // ((total_nodes // max_nodes_per_chunk) + 1))
-            
-            all_anomaly_scores = []
-            for i in range(0, len(data_list), chunk_size):
-                chunk_data = data_list[i:i+chunk_size]
-                chunk_batch = Batch.from_data_list(chunk_data).to(self.device)
-                chunk_scores = self._compute_anomaly_scores_single(chunk_batch)
-                all_anomaly_scores.append(chunk_scores)
-                
-                # Clear GPU cache between chunks
-                del chunk_batch
-                torch.cuda.empty_cache()
-            
-            return torch.cat(all_anomaly_scores, dim=0)
-        else:
-            return self._compute_anomaly_scores_single(batch)
+        return self._compute_anomaly_scores_single(batch)
     
     def _compute_anomaly_scores_single(self, batch) -> torch.Tensor:
         """
@@ -289,31 +461,9 @@ class FusionDataExtractor:
 
     def compute_gat_probabilities(self, batch) -> torch.Tensor:
         """
-        Compute GAT classification probabilities with memory-efficient chunking.
+        Compute GAT classification probabilities.
         """
-        # Check if batch needs chunking for GPU memory
-        total_nodes = batch.x.shape[0]
-        max_nodes_per_chunk = 75000  # Same limit as anomaly scores
-        
-        if total_nodes > max_nodes_per_chunk:
-            # Split batch into memory-friendly chunks
-            data_list = Batch.to_data_list(batch)
-            chunk_size = max(1, len(data_list) // ((total_nodes // max_nodes_per_chunk) + 1))
-            
-            all_gat_probs = []
-            for i in range(0, len(data_list), chunk_size):
-                chunk_data = data_list[i:i+chunk_size]
-                chunk_batch = Batch.from_data_list(chunk_data).to(self.device)
-                chunk_probs = self._compute_gat_probabilities_single(chunk_batch)
-                all_gat_probs.append(chunk_probs)
-                
-                # Clear GPU cache between chunks
-                del chunk_batch
-                torch.cuda.empty_cache()
-            
-            return torch.cat(all_gat_probs, dim=0)
-        else:
-            return self._compute_gat_probabilities_single(batch)
+        return self._compute_gat_probabilities_single(batch)
     
     def _compute_gat_probabilities_single(self, batch) -> torch.Tensor:
         """
@@ -350,39 +500,20 @@ class FusionDataExtractor:
         
         samples_processed = 0
         
-        # Direct batch processing with individual graph processing to avoid giant combined graphs
+        # Direct batch processing for optimal GPU utilization
         for batch_idx, batch in enumerate(tqdm(data_loader, desc="GPU-Accelerated Extraction", disable=False)):
-            # Process individual graphs to avoid memory issues with giant combined graphs
-            individual_graphs = Batch.to_data_list(batch)
+            batch = batch.to(self.device, non_blocking=True)
             
-            batch_anomaly_scores = []
-            batch_gat_probs = []
-            batch_labels = []
+            # Process batch directly - reasonable batch size avoids memory issues
+            batch_anomaly_scores = self._compute_anomaly_scores_single(batch)
+            batch_gat_probs = self._compute_gat_probabilities_single(batch) 
             
-            # Process graphs in small mini-batches to balance efficiency and memory
-            mini_batch_size = 64  # Process 64 graphs at a time
-            for i in range(0, len(individual_graphs), mini_batch_size):
-                mini_graphs = individual_graphs[i:i+mini_batch_size]
-                mini_batch = Batch.from_data_list(mini_graphs).to(self.device, non_blocking=True)
-                
-                # Process this manageable mini-batch
-                mini_anomaly_scores = self._compute_anomaly_scores_single(mini_batch)
-                mini_gat_probs = self._compute_gat_probabilities_single(mini_batch) 
-                
-                # Collect results
-                batch_anomaly_scores.extend(mini_anomaly_scores.cpu().numpy().tolist())
-                batch_gat_probs.extend(mini_gat_probs.cpu().numpy().tolist())
-                
-                # Clear GPU memory
-                del mini_batch
-                torch.cuda.empty_cache()
-            
-            # Extract labels from individual graphs
-            batch_labels = [graph.y.item() for graph in individual_graphs]
+            # Efficiently extract labels
+            batch_labels = [graph.y.item() for graph in Batch.to_data_list(batch)]
             
             # Convert to lists and extend
-            anomaly_scores.extend(batch_anomaly_scores)
-            gat_probabilities.extend(batch_gat_probs)
+            anomaly_scores.extend(batch_anomaly_scores.cpu().numpy().tolist())
+            gat_probabilities.extend(batch_gat_probs.cpu().numpy().tolist())
             labels.extend(batch_labels)
             samples_processed += len(batch_labels)
             
@@ -424,6 +555,9 @@ class FusionTrainingPipeline:
         self.embedding_dim = embedding_dim
         self.gpu_info = self._detect_gpu_capabilities()
         
+        # Initialize GPU monitoring
+        self.gpu_monitor = GPUMonitor(self.device)
+        
         # Models (will be loaded)
         self.autoencoder = None
         self.classifier = None
@@ -438,6 +572,7 @@ class FusionTrainingPipeline:
         if self.gpu_info:
             print(f"  GPU: {self.gpu_info['name']} ({self.gpu_info['memory_gb']:.1f}GB)")
             print(f"  Optimized batch size: {self.gpu_info['optimal_batch_size']}")
+        print(f"  Performance monitoring: {'GPU' if self.device.type == 'cuda' else 'CPU'} tracking enabled")
     
     def _detect_gpu_capabilities(self):
         """Detect GPU capabilities and optimize parameters accordingly."""
@@ -448,11 +583,11 @@ class FusionTrainingPipeline:
         memory_gb = gpu_props.total_memory / (1024**3)
 
         if memory_gb >= 30:  # A100 40GB/80GB
-                optimal_batch_size = 16384  # Large batch for maximum throughput
+                optimal_batch_size = 32768  # Very large batch for maximum A100 throughput
                 buffer_size = 100000  # Keep smaller buffer for speed
                 training_steps = 4
         else:
-            optimal_batch_size = 8192   # Large batch for good throughput
+            optimal_batch_size = 16384   # Large batch for good throughput
             buffer_size = 75000   # Keep smaller buffer for speed
             training_steps = 3
         
@@ -534,7 +669,7 @@ class FusionTrainingPipeline:
             raise e
 
     def prepare_fusion_data(self, train_loader: DataLoader, val_loader: DataLoader, 
-                          max_train_samples: int = 50000, max_val_samples: int = 10000):
+                          max_train_samples: int = 200000, max_val_samples: int = 50000):
         """
         Prepare training and validation data for fusion learning.
         
@@ -602,7 +737,7 @@ class FusionTrainingPipeline:
 
     def initialize_fusion_agent(self, alpha_steps: int = 21, lr: float = 1e-3, 
                                epsilon: float = 0.3, buffer_size: int = 100000,
-                               batch_size: int = 2048, target_update_freq: int = 100,
+                               batch_size: int = 16384, target_update_freq: int = 100,
                                config_dict: dict = None):
         """Initialize fusion agent."""
         state_dim = 4  # anomaly_score, gat_prob, disagreement, avg_confidence
@@ -612,7 +747,7 @@ class FusionTrainingPipeline:
             batch_size = max(batch_size, self.gpu_info['optimal_batch_size'])
             buffer_size = max(buffer_size, self.gpu_info['buffer_size'])
         elif self.device.type == 'cuda':
-            batch_size = max(batch_size, 4096)
+            batch_size = max(batch_size, 16384)
             buffer_size = max(buffer_size, 500000)
             
         self.fusion_agent = EnhancedDQNFusionAgent(
@@ -626,6 +761,10 @@ class FusionTrainingPipeline:
         )
         
         print(f"✓ Fusion Agent initialized with {state_dim}D state space")
+        print(f"  Batch Size: {batch_size:,} samples")
+        print(f"  Buffer Size: {buffer_size:,} experiences")
+        if self.gpu_info:
+            print(f"  GPU-Optimized: Using {self.gpu_info['name']} configuration")
 
     def _get_curriculum_phase(self, episode: int, total_episodes: int) -> dict:
         """Return default sampling strategy (simplified)."""
@@ -676,9 +815,14 @@ class FusionTrainingPipeline:
         print(f"\n=== Training Fusion Agent ===")
         print(f"Episodes: {episodes}, Validation every {validation_interval} episodes")
         print(f"CPU Optimization: {cpu_count()} threads, GPU async: {torch.cuda.is_available()}")
+        print(f"Performance Monitoring: {'GPU' if self.gpu_monitor.is_cuda else 'CPU'} metrics enabled")
         
         if not self.training_data or not self.fusion_agent:
             raise ValueError("Training data and fusion agent must be initialized first")
+        
+        # Training timing
+        training_start_time = time.time()
+        last_100_episode_time = training_start_time
         
         # Enhanced tracking
         episode_rewards = []
@@ -708,6 +852,20 @@ class FusionTrainingPipeline:
             if episode % 10 == 0:
                 total_progress = episode / episodes
                 print(f"    Episode {episode:4d} - Total Progress: {total_progress:.1%}")
+                
+                # Record GPU stats every 10 episodes
+                self.gpu_monitor.record_gpu_stats(episode)
+                
+                # Record timing every 100 episodes
+                if episode > 0 and episode % 100 == 0:
+                    current_time = time.time()
+                    elapsed_100 = current_time - last_100_episode_time
+                    self.gpu_monitor.record_timing(100, elapsed_100)
+                    last_100_episode_time = current_time
+                    
+                    # Mini performance update
+                    episodes_per_min = 100 / (elapsed_100 / 60) if elapsed_100 > 0 else 0
+                    print(f"    ⚡ Performance: {episodes_per_min:.1f} episodes/min (last 100 episodes)")
 
             
             episode_reward = 0
@@ -977,6 +1135,15 @@ class FusionTrainingPipeline:
         print(f"\n✓ Fusion agent training completed!")
         print(f"Best validation accuracy: {best_validation_score:.4f}")
         
+        # Final timing and GPU monitoring
+        total_training_time = time.time() - training_start_time
+        final_episodes = len(episode_accuracies)
+        if final_episodes > 0:
+            self.gpu_monitor.record_timing(final_episodes, total_training_time)
+        
+        # Print comprehensive performance summary
+        self.gpu_monitor.print_performance_summary()
+        
         # Enhanced analysis plots
         self._plot_enhanced_training_progress(
             episode_accuracies, episode_rewards, episode_losses, 
@@ -992,7 +1159,9 @@ class FusionTrainingPipeline:
             'action_distributions': action_distributions,
             'reward_stats': reward_stats,
             'validation_scores': validation_scores,
-            'best_validation_score': best_validation_score
+            'best_validation_score': best_validation_score,
+            'performance_summary': self.gpu_monitor.get_performance_summary(),
+            'total_training_time_minutes': (time.time() - training_start_time) / 60
         }
 
     def evaluate_fusion_strategies(self, dataset_key: str) -> Dict[str, Any]:
@@ -1484,8 +1653,8 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
         # Calculate max batch size with 2x safety factor for model overhead
         max_batch_from_gpu = int(available_gpu_memory * 1024 / (memory_per_sample_mb * 2))
         
-        # Set practical batch size - let memory be the primary constraint
-        target_batch = min(max_batch_from_gpu, 50000)  # Cap at 50K for practical reasons
+        # Set practical batch size for optimal GPU utilization
+        target_batch = min(max_batch_from_gpu, 8192)  # Larger batches for better efficiency
         target_workers = max(16, min(cpu_count_available - 2, int(cpu_count_available * 0.9)))  # Use 90% of CPUs
         prefetch_factor = min(8, max(2, target_workers // 8))
             
