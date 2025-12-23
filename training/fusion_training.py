@@ -46,6 +46,38 @@ from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanu
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
+class CudaPrefetcher:
+    """Double-buffer batches to GPU to overlap H2D copy with compute."""
+    def __init__(self, loader: DataLoader, device: torch.device, prefetch_batches: int = 2):
+        self.loader = loader
+        self.device = device if isinstance(device, torch.device) else torch.device(device)
+        self.prefetch_batches = max(1, prefetch_batches)
+        self.iterator = iter(loader)
+        self.prefetch_stream = torch.cuda.Stream(device=self.device) if self.device.type == 'cuda' else None
+        self._queue = []
+        self._prefetch()
+
+    def _prefetch(self):
+        # Keep up to prefetch_batches ready (already moved to device if CUDA)
+        while len(self._queue) < self.prefetch_batches:
+            try:
+                batch = next(self.iterator)
+            except StopIteration:
+                break
+            if self.device.type == 'cuda':
+                # Pin memory is handled by DataLoader; move to device on a separate stream
+                with torch.cuda.stream(self.prefetch_stream):
+                    batch = batch.to(self.device, non_blocking=True)
+            self._queue.append(batch)
+
+    def next(self):
+        if not self._queue:
+            return None
+        if self.device.type == 'cuda':
+            torch.cuda.current_stream(self.device).wait_stream(self.prefetch_stream)
+        batch = self._queue.pop(0)
+        self._prefetch()
+        return batch
 class GPUMonitor:
     """Monitor GPU usage, memory, and performance metrics during training."""
     
@@ -494,41 +526,51 @@ class FusionDataExtractor:
         """
         print("Fusion Data Extraction...")
         
-        anomaly_scores = []
-        gat_probabilities = []
-        labels = []
-        
+        anomaly_scores, gat_probabilities, labels = [], [], []
         samples_processed = 0
-        
-        # Direct batch processing for optimal GPU utilization
-        for batch_idx, batch in enumerate(tqdm(data_loader, desc="GPU-Accelerated Extraction", disable=False)):
-            batch = batch.to(self.device, non_blocking=True)
-            
-            # Process batch directly - reasonable batch size avoids memory issues
-            batch_anomaly_scores = self._compute_anomaly_scores_single(batch)
-            batch_gat_probs = self._compute_gat_probabilities_single(batch) 
-            
-            # Efficiently extract labels
-            batch_labels = [graph.y.item() for graph in Batch.to_data_list(batch)]
-            
-            # Convert to lists and extend
-            anomaly_scores.extend(batch_anomaly_scores.cpu().numpy().tolist())
-            gat_probabilities.extend(batch_gat_probs.cpu().numpy().tolist())
-            labels.extend(batch_labels)
-            samples_processed += len(batch_labels)
-            
-            # Check sample limit
-            if max_samples is not None and samples_processed >= max_samples:
-                break
-            
-            # Memory cleanup every 100 batches
-            if batch_idx % 100 == 0 and batch_idx > 0:
-                torch.cuda.empty_cache()
-        
+
+        if self.device.type == 'cuda':
+            prefetcher = CudaPrefetcher(data_loader, self.device, prefetch_batches=2)
+            batch_idx = 0
+            batch = prefetcher.next()
+            while batch is not None:
+                # Already on device; compute immediately
+                batch_anomaly_scores = self._compute_anomaly_scores_single(batch)
+                batch_gat_probs = self._compute_gat_probabilities_single(batch)
+
+                # Labels from graphs
+                batch_labels = [graph.y.item() for graph in Batch.to_data_list(batch)]
+                anomaly_scores.extend(batch_anomaly_scores.cpu().numpy().tolist())
+                gat_probabilities.extend(batch_gat_probs.cpu().numpy().tolist())
+                labels.extend(batch_labels)
+                samples_processed += len(batch_labels)
+
+                if max_samples is not None and samples_processed >= max_samples:
+                    break
+
+                if batch_idx % 100 == 0 and batch_idx > 0:
+                    torch.cuda.empty_cache()
+                batch_idx += 1
+                batch = prefetcher.next()
+        else:
+            # Fallback: original CPU loop
+            for batch_idx, batch in enumerate(tqdm(data_loader, desc="GPU-Accelerated Extraction", disable=False)):
+                batch = batch.to(self.device, non_blocking=True)
+                batch_anomaly_scores = self._compute_anomaly_scores_single(batch)
+                batch_gat_probs = self._compute_gat_probabilities_single(batch)
+                batch_labels = [graph.y.item() for graph in Batch.to_data_list(batch)]
+                anomaly_scores.extend(batch_anomaly_scores.cpu().numpy().tolist())
+                gat_probabilities.extend(batch_gat_probs.cpu().numpy().tolist())
+                labels.extend(batch_labels)
+                samples_processed += len(batch_labels)
+                if max_samples is not None and samples_processed >= max_samples:
+                    break
+                if batch_idx % 100 == 0 and batch_idx > 0:
+                    torch.cuda.empty_cache()
+
         print(f"✅ GPU-Accelerated Extraction Complete: {len(anomaly_scores)} samples")
         print(f"  Normal samples: {sum(1 for l in labels if l == 0)}")
         print(f"  Attack samples: {sum(1 for l in labels if l == 1)}")
-        
         return anomaly_scores, gat_probabilities, labels
     
     def _process_batch_parallel(self, batch_list):
@@ -1653,10 +1695,11 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
         # Calculate max batch size with 2x safety factor for model overhead
         max_batch_from_gpu = int(available_gpu_memory * 1024 / (memory_per_sample_mb * 2))
         
-        # Set practical batch size for optimal GPU utilization
-        target_batch = min(max_batch_from_gpu, 8192)  # Larger batches for better efficiency
-        target_workers = max(16, min(cpu_count_available - 2, int(cpu_count_available * 0.9)))  # Use 90% of CPUs
-        prefetch_factor = min(8, max(2, target_workers // 8))
+        # Prefer very large batches on big GPUs (A100)
+        upper_cap = 32768 if gpu_memory_gb >= 30 else 16384
+        target_batch = min(max_batch_from_gpu, upper_cap)
+        target_workers = min(8, max(4, int(cpu_count_available * 0.5)))
+        prefetch_factor = 4  # more batches queued per worker
             
         config = {
             'batch_size': target_batch,
@@ -1672,12 +1715,12 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
         
         target_batch = max_batch_from_memory  # Remove artificial 2048 cap
         # Use most CPUs but leave some for system
-        target_workers = max(8, min(cpu_count_available - 1, int(cpu_count_available * 0.85)))
+        target_workers = min(8, max(4, int(cpu_count_available * 0.5)))
             
         config = {
             'batch_size': target_batch,
             'num_workers': target_workers, 
-            'prefetch_factor': max(2, target_workers // 4),
+            'prefetch_factor': 2,
             'pin_memory': False,
             'persistent_workers': False
         }
