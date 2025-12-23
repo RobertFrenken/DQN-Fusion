@@ -200,13 +200,41 @@ class FusionDataExtractor:
 
     def compute_anomaly_scores(self, batch) -> torch.Tensor:
         """
-        GPU-optimized computation of normalized anomaly scores for batch.
+        GPU-optimized computation of normalized anomaly scores for batch with chunking.
         
         Args:
             batch: Batch of graph data
             
         Returns:
             Tensor of anomaly scores [0, 1] for each graph
+        """
+        # Check if batch is too large for GPU memory - split if needed
+        total_nodes = batch.x.shape[0]
+        max_nodes_per_chunk = 75000  # Conservative limit to avoid 14GB tensor allocation
+        
+        if total_nodes > max_nodes_per_chunk:
+            # Split batch into memory-friendly chunks
+            data_list = Batch.to_data_list(batch)
+            chunk_size = max(1, len(data_list) // ((total_nodes // max_nodes_per_chunk) + 1))
+            
+            all_anomaly_scores = []
+            for i in range(0, len(data_list), chunk_size):
+                chunk_data = data_list[i:i+chunk_size]
+                chunk_batch = Batch.from_data_list(chunk_data).to(self.device)
+                chunk_scores = self._compute_anomaly_scores_single(chunk_batch)
+                all_anomaly_scores.append(chunk_scores)
+                
+                # Clear GPU cache between chunks
+                del chunk_batch
+                torch.cuda.empty_cache()
+            
+            return torch.cat(all_anomaly_scores, dim=0)
+        else:
+            return self._compute_anomaly_scores_single(batch)
+    
+    def _compute_anomaly_scores_single(self, batch) -> torch.Tensor:
+        """
+        Internal method to compute anomaly scores for a single manageable batch.
         """
         with torch.no_grad():
             # GPU-optimized forward pass with larger batch processing
@@ -261,6 +289,34 @@ class FusionDataExtractor:
 
     def compute_gat_probabilities(self, batch) -> torch.Tensor:
         """
+        Compute GAT classification probabilities with memory-efficient chunking.
+        """
+        # Check if batch needs chunking for GPU memory
+        total_nodes = batch.x.shape[0]
+        max_nodes_per_chunk = 75000  # Same limit as anomaly scores
+        
+        if total_nodes > max_nodes_per_chunk:
+            # Split batch into memory-friendly chunks
+            data_list = Batch.to_data_list(batch)
+            chunk_size = max(1, len(data_list) // ((total_nodes // max_nodes_per_chunk) + 1))
+            
+            all_gat_probs = []
+            for i in range(0, len(data_list), chunk_size):
+                chunk_data = data_list[i:i+chunk_size]
+                chunk_batch = Batch.from_data_list(chunk_data).to(self.device)
+                chunk_probs = self._compute_gat_probabilities_single(chunk_batch)
+                all_gat_probs.append(chunk_probs)
+                
+                # Clear GPU cache between chunks
+                del chunk_batch
+                torch.cuda.empty_cache()
+            
+            return torch.cat(all_gat_probs, dim=0)
+        else:
+            return self._compute_gat_probabilities_single(batch)
+    
+    def _compute_gat_probabilities_single(self, batch) -> torch.Tensor:
+        """
         GPU-accelerated computation of GAT classification probabilities.
         
         Args:
@@ -294,20 +350,39 @@ class FusionDataExtractor:
         
         samples_processed = 0
         
-        # Direct batch processing for better GPU/CPU utilization
+        # Direct batch processing with individual graph processing to avoid giant combined graphs
         for batch_idx, batch in enumerate(tqdm(data_loader, desc="GPU-Accelerated Extraction", disable=False)):
-            batch = batch.to(self.device, non_blocking=True)
+            # Process individual graphs to avoid memory issues with giant combined graphs
+            individual_graphs = Batch.to_data_list(batch)
             
-            # Process batch immediately without accumulation
-            batch_anomaly_scores = self.compute_anomaly_scores(batch)
-            batch_gat_probs = self.compute_gat_probabilities(batch) 
+            batch_anomaly_scores = []
+            batch_gat_probs = []
+            batch_labels = []
             
-            # Efficiently extract labels
-            batch_labels = [graph.y.item() for graph in Batch.to_data_list(batch)]
+            # Process graphs in small mini-batches to balance efficiency and memory
+            mini_batch_size = 64  # Process 64 graphs at a time
+            for i in range(0, len(individual_graphs), mini_batch_size):
+                mini_graphs = individual_graphs[i:i+mini_batch_size]
+                mini_batch = Batch.from_data_list(mini_graphs).to(self.device, non_blocking=True)
+                
+                # Process this manageable mini-batch
+                mini_anomaly_scores = self._compute_anomaly_scores_single(mini_batch)
+                mini_gat_probs = self._compute_gat_probabilities_single(mini_batch) 
+                
+                # Collect results
+                batch_anomaly_scores.extend(mini_anomaly_scores.cpu().numpy().tolist())
+                batch_gat_probs.extend(mini_gat_probs.cpu().numpy().tolist())
+                
+                # Clear GPU memory
+                del mini_batch
+                torch.cuda.empty_cache()
+            
+            # Extract labels from individual graphs
+            batch_labels = [graph.y.item() for graph in individual_graphs]
             
             # Convert to lists and extend
-            anomaly_scores.extend(batch_anomaly_scores.cpu().numpy().tolist())
-            gat_probabilities.extend(batch_gat_probs.cpu().numpy().tolist())
+            anomaly_scores.extend(batch_anomaly_scores)
+            gat_probabilities.extend(batch_gat_probs)
             labels.extend(batch_labels)
             samples_processed += len(batch_labels)
             
@@ -1396,17 +1471,21 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
     
     # Estimate memory per sample (rough heuristic based on graph data)
     # Typical CAN graph: ~50-200 nodes, ~100-500 edges, features = ~1-10KB per graph
-    memory_per_sample_mb = 0.01  # 10KB per sample estimate
+    # it is likely around 0.035 MB per sample, using 0.05 MB to be safe
+    # Memory estimation based on actual OOM error data
+    # Error showed 55.84 GB needed for ~1.6M samples = 0.0349 MB per sample
+    # Using 0.035 MB per sample (exact from error) + small safety margin
+    memory_per_sample_mb = 0.04  # 40KB per sample - based on actual usage data
     
     # Calculate optimal batch size based on available memory
     if cuda_available:
-        # Use 95% of GPU memory for maximum throughput
-        available_gpu_memory = gpu_memory_gb * 0.95
-        # GPU can handle larger batches due to parallel processing
-        max_batch_from_gpu = int(available_gpu_memory * 1024 / (memory_per_sample_mb * 3))  # Reduced overhead factor
+        # Use 85% of GPU memory - leaves room for model parameters
+        available_gpu_memory = gpu_memory_gb * 0.85
+        # Calculate max batch size with 2x safety factor for model overhead
+        max_batch_from_gpu = int(available_gpu_memory * 1024 / (memory_per_sample_mb * 2))
         
-        # Remove artificial caps - let GPU memory be the limiting factor
-        target_batch = max_batch_from_gpu
+        # Set practical batch size - let memory be the primary constraint
+        target_batch = min(max_batch_from_gpu, 50000)  # Cap at 50K for practical reasons
         target_workers = max(16, min(cpu_count_available - 2, int(cpu_count_available * 0.9)))  # Use 90% of CPUs
         prefetch_factor = min(8, max(2, target_workers // 8))
             
