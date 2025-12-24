@@ -543,7 +543,7 @@ class FusionDataExtractor:
                     break
                 
                 # Memory management
-                if batch_idx % 100 == 0 and batch_idx > 0:
+                if batch_idx % 50 == 0 and batch_idx > 0:
                     torch.cuda.empty_cache()
                 
                 batch_idx += 1
@@ -1737,8 +1737,15 @@ class FusionTrainingPipeline:
 def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
     """Dynamically calculate optimal resource allocation based on dataset size and available hardware."""
     
-    # Get system resources
-    cpu_count_available = cpu_count()
+    # Try to get SLURM allocation first
+    if 'SLURM_CPUS_PER_TASK' in os.environ:
+        allocated_cpus = int(os.environ['SLURM_CPUS_PER_TASK'])
+    elif 'SLURM_CPUS_ON_NODE' in os.environ:
+        # This might be total CPUs on node, but could be your allocation
+        allocated_cpus = int(os.environ['SLURM_CPUS_ON_NODE'])
+    elif 'PBS_NCPUS' in os.environ:  # Alternative scheduler
+        allocated_cpus = int(os.environ['PBS_NCPUS'])
+    
     memory_gb = psutil.virtual_memory().total / (1024**3)
     
     # Get GPU info if available
@@ -1750,49 +1757,50 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
         except:
             cuda_available = False
     
-    print(f"🔍 System Resources: {cpu_count_available} CPUs, {memory_gb:.1f}GB RAM, GPU: {gpu_memory_gb:.1f}GB")
+    print(f"🔍 System Resources: {allocated_cpus} Allocated CPUs, {memory_gb:.1f}GB RAM, GPU: {gpu_memory_gb:.1f}GB")
     print(f"📊 Dataset size: {dataset_size:,} samples")
     
-    # Estimate memory per sample (rough heuristic based on graph data)
-    # Typical CAN graph: ~50-200 nodes, ~100-500 edges, features = ~1-10KB per graph
-    # it is likely around 0.035 MB per sample, using 0.05 MB to be safe
-    # Memory estimation based on actual OOM error data
-    # Error showed 55.84 GB needed for ~1.6M samples = 0.0349 MB per sample
-    # Using 0.035 MB per sample (exact from error) + small safety margin
-    memory_per_sample_mb = 0.04  # 40KB per sample - based on actual usage data
+    # You needed 18.68 GB for 65,536 samples = 0.285 MB per sample
+    # data storage (0.04 MB) + intermediate activation tensors (0.15 MB) + gradients (0.1 MB)
+    # 0.04 MB might be the approximate memory, but variations might have OOM error
+    memory_per_sample_mb = 0.285
     
     # Calculate optimal batch size based on available memory
     if cuda_available:
-        # Use 85% of GPU memory - leaves room for model parameters
-        available_gpu_memory = gpu_memory_gb * 0.85
-        # Calculate max batch size with 2x safety factor for model overhead
-        max_batch_from_gpu = int(available_gpu_memory * 1024 / (memory_per_sample_mb * 2))
+
+        # Get current free memory (more accurate than total)
+        current_allocated = torch.cuda.memory_allocated() / (1024**3)
+        current_reserved = torch.cuda.memory_reserved() / (1024**3)
+        available_memory = gpu_memory_gb - current_reserved  # Use reserved, not allocated
         
-        # Prefer very large batches on big GPUs (A100)
-        upper_cap = 32768*2 if gpu_memory_gb >= 30 else 16384
-        target_batch = min(max_batch_from_gpu, upper_cap)
-        target_workers = min(8, int(cpu_count_available * 0.15))
-        prefetch_factor = 2  # more batches queued per worker
+        print(f"📊 GPU Memory Analysis:")
+        print(f"  Total GPU Memory: {gpu_memory_gb:.2f}GB")
+        print(f"  Currently Allocated: {current_allocated:.2f}GB")
+        print(f"  Currently Reserved: {current_reserved:.2f}GB") 
+        print(f"  Available for Batch: {available_memory:.2f}GB")
+        print(f"  Approximate Measured Usage: {memory_per_sample_mb*1000:.3f}MB per sample")
+        # Use 85% of GPU memory - leaves room for model parameters
+        # FIXED: Single safety margin calculation
+        usable_memory = available_memory * 0.90
+
+        calculated_batch_size = int(usable_memory * 1024 / memory_per_sample_mb)
+        
+        upper_cap = 60000 if gpu_memory_gb >= 30 else 16384
+        target_batch = min(calculated_batch_size*0.85, upper_cap)
             
         config = {
             'batch_size': target_batch,
-            'num_workers': target_workers,
-            'prefetch_factor': prefetch_factor,
+            'num_workers': min(4, allocated_cpus-1),
+            'prefetch_factor': 2,
             'pin_memory': True,
             'persistent_workers': True
         }
     else:
-        # CPU mode - more aggressive memory usage
-        available_memory = memory_gb * 0.8  # Only reserve 20% for system
-        max_batch_from_memory = int(available_memory * 1024 / memory_per_sample_mb)
-        
-        target_batch = max_batch_from_memory  # Remove artificial 2048 cap
-        # Use most CPUs but leave some for system
-        target_workers = min(8, max(4, int(cpu_count_available * 0.5)))
+        # CPU modee
             
         config = {
-            'batch_size': target_batch,
-            'num_workers': target_workers, 
+            'batch_size': int(memory_gb * 0.8 * 1024 / memory_per_sample_mb),
+            'num_workers': 8, 
             'prefetch_factor': 2,
             'pin_memory': False,
             'persistent_workers': False
