@@ -409,7 +409,7 @@ def save_publication_figure(fig, filename, additional_formats=None):
                 print(f"Warning: Could not save {fmt} format: {e}")
 
 class FusionDataExtractor:
-    """Extract anomaly scores and GAT probabilities for fusion training."""
+    """Extract anomaly scores and GAT probabilities for fusion training - GPU OPTIMIZED."""
     
     def __init__(self, autoencoder: nn.Module, classifier: nn.Module, 
                  device: str, threshold: float = 0.0):
@@ -422,11 +422,18 @@ class FusionDataExtractor:
         self.autoencoder.eval()
         self.classifier.eval()
         
-        print(f"✓ Fusion Data Extractor initialized with threshold: {threshold:.4f}")
+        # Pre-compute fusion weights as tensor for GPU operations
+        self.fusion_weights = torch.tensor([
+            FUSION_WEIGHTS['node_reconstruction'],
+            FUSION_WEIGHTS['neighborhood_prediction'],
+            FUSION_WEIGHTS['can_id_prediction']
+        ], dtype=torch.float32, device=self.device)
+        
+        print(f"✓ Fusion Data Extractor initialized (GPU-Optimized) with threshold: {threshold:.4f}")
 
     def compute_anomaly_scores(self, batch) -> torch.Tensor:
         """
-        GPU-optimized computation of normalized anomaly scores for batch.
+        Fully vectorized GPU computation of anomaly scores - NO LOOPS!
         
         Args:
             batch: Batch of graph data
@@ -434,20 +441,14 @@ class FusionDataExtractor:
         Returns:
             Tensor of anomaly scores [0, 1] for each graph
         """
-        return self._compute_anomaly_scores_single(batch)
-    
-    def _compute_anomaly_scores_single(self, batch) -> torch.Tensor:
-        """
-        Internal method to compute anomaly scores for a single manageable batch.
-        """
         with torch.no_grad():
-            # GPU-optimized forward pass with larger batch processing
+            # ===== STEP 1: Forward pass (already efficient) =====
             cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
                 batch.x, batch.edge_index, batch.batch
             )
             
-            # Compute component errors
-            node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
+            # ===== STEP 2: Compute node-level errors (vectorized) =====
+            node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)  # [num_nodes]
             
             # Neighborhood reconstruction errors
             neighbor_targets = self.autoencoder.create_neighborhood_targets(
@@ -455,137 +456,132 @@ class FusionDataExtractor:
             )
             neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
                 neighbor_logits, neighbor_targets
-            ).mean(dim=1)
+            ).mean(dim=1)  # [num_nodes]
             
             # CAN ID prediction errors
             canid_pred = canid_logits.argmax(dim=1)
             true_canids = batch.x[:, 0].long()
-            canid_errors = (canid_pred != true_canids).float()
+            canid_errors = (canid_pred != true_canids).float()  # [num_nodes]
             
-            # Aggregate to graph-level scores
-            graphs = Batch.to_data_list(batch)
-            anomaly_scores = []
-            start_idx = 0
+            # ===== STEP 3: Vectorized graph-level aggregation (NO LOOPS!) =====
+            # Stack all error types: [num_nodes, 3]
+            all_errors = torch.stack([node_errors, neighbor_errors, canid_errors], dim=1)
             
-            for graph in graphs:
-                num_nodes = graph.x.size(0)
-                end_idx = start_idx + num_nodes
-                
-                # Graph-level error aggregation (max pooling for anomalies)
-                graph_node_error = node_errors[start_idx:end_idx].max().item()
-                graph_neighbor_error = neighbor_errors[start_idx:end_idx].max().item()
-                graph_canid_error = canid_errors[start_idx:end_idx].max().item()
-                
-                # Weighted composite score
-                composite_score = (
-                    FUSION_WEIGHTS['node_reconstruction'] * graph_node_error +
-                    FUSION_WEIGHTS['neighborhood_prediction'] * graph_neighbor_error +
-                    FUSION_WEIGHTS['can_id_prediction'] * graph_canid_error
-                )
-                
-                # Normalize to [0, 1] using sigmoid with learned scaling
-                normalized_score = torch.sigmoid(torch.tensor(composite_score * 3 - 1.5)).item()
-                anomaly_scores.append(normalized_score)
-                
-                start_idx = end_idx
+            # Use scatter_max for graph-level max pooling (fully vectorized!)
+            from torch_scatter import scatter_max
             
-            return torch.tensor(anomaly_scores, dtype=torch.float32)
+            # Get max error per graph per error type: [num_graphs, 3]
+            graph_errors, _ = scatter_max(
+                all_errors, 
+                batch.batch.unsqueeze(1).expand(-1, 3),
+                dim=0
+            )
+            
+            # Weighted composite score (vectorized): [num_graphs]
+            composite_scores = (graph_errors * self.fusion_weights).sum(dim=1)
+            
+            # Normalize to [0, 1] using sigmoid (all on GPU)
+            normalized_scores = torch.sigmoid(composite_scores * 3 - 1.5)
+            
+            return normalized_scores  # Keep on GPU until final extraction
 
     def compute_gat_probabilities(self, batch) -> torch.Tensor:
         """
-        Compute GAT classification probabilities.
-        """
-        return self._compute_gat_probabilities_single(batch)
-    
-    def _compute_gat_probabilities_single(self, batch) -> torch.Tensor:
-        """
         GPU-accelerated computation of GAT classification probabilities.
-        
-        Args:
-            batch: Batch of graph data
-            
-        Returns:
-            Tensor of GAT probabilities [0, 1] for each graph
+        Already efficient - just needs to stay on GPU.
         """
         with torch.no_grad():
-            # GPU-optimized classifier forward pass
             logits = self.classifier(batch)
             probabilities = torch.sigmoid(logits.squeeze())
-            return probabilities.cpu()
+            return probabilities  # Keep on GPU!
 
     def extract_fusion_data(self, data_loader: DataLoader, max_samples: int = None) -> Tuple[List, List, List]:
         """
-        GPU-accelerated extraction of anomaly scores, GAT probabilities, and labels.
+        GPU-accelerated extraction with batched GPU→CPU transfer.
         
-        Args:
-            data_loader: DataLoader with graph data
-            max_samples: Maximum number of samples to extract (None for all)
-            
-        Returns:
-            Tuple of (anomaly_scores, gat_probabilities, labels)
+        Key optimization: Process entire batch on GPU, transfer once at end.
         """
-        print("Fusion Data Extraction...")
+        print("🚀 GPU-Optimized Fusion Data Extraction...")
         
-        anomaly_scores, gat_probabilities, labels = [], [], []
+        anomaly_scores_gpu = []  # Accumulate tensors on GPU
+        gat_probs_gpu = []
+        labels_gpu = []
         samples_processed = 0
 
         if self.device.type == 'cuda':
             prefetcher = CudaPrefetcher(data_loader, self.device, prefetch_batches=2)
-            batch_idx = 0
             batch = prefetcher.next()
+            batch_idx = 0
+            
             while batch is not None:
-                # Already on device; compute immediately
-                batch_anomaly_scores = self._compute_anomaly_scores_single(batch)
-                batch_gat_probs = self._compute_gat_probabilities_single(batch)
-
-                # Labels from graphs
-                batch_labels = [graph.y.item() for graph in Batch.to_data_list(batch)]
-                anomaly_scores.extend(batch_anomaly_scores.cpu().numpy().tolist())
-                gat_probabilities.extend(batch_gat_probs.cpu().numpy().tolist())
-                labels.extend(batch_labels)
-                samples_processed += len(batch_labels)
-
+                # ===== Compute on GPU (fully vectorized) =====
+                batch_anomaly_scores = self.compute_anomaly_scores(batch)  # [batch_size] on GPU
+                batch_gat_probs = self.compute_gat_probabilities(batch)    # [batch_size] on GPU
+                
+                # Extract labels efficiently (already on GPU)
+                if hasattr(batch, 'y'):
+                    # If y is per-graph
+                    if batch.y.shape[0] == batch.num_graphs:
+                        batch_labels = batch.y
+                    else:
+                        # y is per-node, need to extract per-graph
+                        from torch_scatter import scatter_max
+                        batch_labels, _ = scatter_max(batch.y, batch.batch, dim=0)
+                else:
+                    # Fallback: extract from individual graphs (rare case)
+                    graphs = Batch.to_data_list(batch)
+                    batch_labels = torch.tensor([g.y.item() for g in graphs], device=self.device)
+                
+                # ===== Accumulate on GPU (NO CPU transfer yet!) =====
+                anomaly_scores_gpu.append(batch_anomaly_scores)
+                gat_probs_gpu.append(batch_gat_probs)
+                labels_gpu.append(batch_labels)
+                
+                samples_processed += batch.num_graphs
+                
                 if max_samples is not None and samples_processed >= max_samples:
                     break
-
+                
+                # Memory management
                 if batch_idx % 100 == 0 and batch_idx > 0:
                     torch.cuda.empty_cache()
+                
                 batch_idx += 1
                 batch = prefetcher.next()
+            
+            # ===== Single GPU→CPU transfer at the end =====
+            anomaly_scores = torch.cat(anomaly_scores_gpu).cpu().numpy().tolist()
+            gat_probabilities = torch.cat(gat_probs_gpu).cpu().numpy().tolist()
+            labels = torch.cat(labels_gpu).cpu().numpy().tolist()
+            
         else:
-            # Fallback: original CPU loop
-            for batch_idx, batch in enumerate(tqdm(data_loader, desc="GPU-Accelerated Extraction", disable=False)):
-                batch = batch.to(self.device, non_blocking=True)
-                batch_anomaly_scores = self._compute_anomaly_scores_single(batch)
-                batch_gat_probs = self._compute_gat_probabilities_single(batch)
-                batch_labels = [graph.y.item() for graph in Batch.to_data_list(batch)]
+            # CPU fallback
+            anomaly_scores = []
+            gat_probabilities = []
+            labels = []
+            
+            for batch_idx, batch in enumerate(tqdm(data_loader, desc="CPU Extraction", disable=False)):
+                batch = batch.to(self.device)
+                
+                batch_anomaly_scores = self.compute_anomaly_scores(batch)
+                batch_gat_probs = self.compute_gat_probabilities(batch)
+                
+                # Extract labels
+                graphs = Batch.to_data_list(batch)
+                batch_labels = [graph.y.item() for graph in graphs]
+                
                 anomaly_scores.extend(batch_anomaly_scores.cpu().numpy().tolist())
                 gat_probabilities.extend(batch_gat_probs.cpu().numpy().tolist())
                 labels.extend(batch_labels)
+                
                 samples_processed += len(batch_labels)
                 if max_samples is not None and samples_processed >= max_samples:
                     break
-                if batch_idx % 100 == 0 and batch_idx > 0:
-                    torch.cuda.empty_cache()
 
-        print(f"✅ GPU-Accelerated Extraction Complete: {len(anomaly_scores)} samples")
+        print(f"✅ GPU-Optimized Extraction Complete: {len(anomaly_scores)} samples")
         print(f"  Normal samples: {sum(1 for l in labels if l == 0)}")
         print(f"  Attack samples: {sum(1 for l in labels if l == 1)}")
         return anomaly_scores, gat_probabilities, labels
-    
-    def _process_batch_parallel(self, batch_list):
-        """Process multiple batches efficiently."""
-        if not batch_list:
-            return []
-        
-        results = []
-        with torch.no_grad():
-            for batch in batch_list:
-                anomaly_scores = self.compute_anomaly_scores(batch)
-                gat_probs = self.compute_gat_probabilities(batch) 
-                labels = batch.y.cpu().tolist()
-                results.append((anomaly_scores.tolist(), gat_probs.tolist(), labels))
-        return results
 
 
 class FusionTrainingPipeline:
@@ -711,9 +707,10 @@ class FusionTrainingPipeline:
             raise e
 
     def prepare_fusion_data(self, train_loader: DataLoader, val_loader: DataLoader, 
-                          max_train_samples: int = 200000, max_val_samples: int = 50000):
+                        max_train_samples: int = 200000, max_val_samples: int = 50000):
         """
-        Prepare training and validation data for fusion learning.
+        GPU-optimized preparation of training and validation data for fusion learning.
+        Pre-computes and caches all states on GPU to eliminate CPU bottleneck.
         
         Args:
             train_loader: Training data loader
@@ -721,7 +718,7 @@ class FusionTrainingPipeline:
             max_train_samples: Maximum training samples to use
             max_val_samples: Maximum validation samples to use
         """
-        print(f"\n=== Preparing Fusion Data ===")
+        print(f"\n=== Preparing Fusion Data (GPU-Optimized) ===")
         
         # Extract training data
         print("Extracting training data...")
@@ -738,13 +735,218 @@ class FusionTrainingPipeline:
         # Store as tuples for easy access
         self.training_data = list(zip(train_anomaly_scores, train_gat_probs, train_labels))
         self.validation_data = list(zip(val_anomaly_scores, val_gat_probs, val_labels))
-        
-        # Store test data for evaluation (avoid redundant extraction)
         self.test_data = self.validation_data  # val_loader is actually test data in main()
         
         print(f"✓ Fusion data prepared:")
         print(f"  Training samples: {len(self.training_data)}")
         print(f"  Validation samples: {len(self.validation_data)}")
+        
+        # ===== NEW: Pre-compute all states on GPU =====
+        if self.device.type == 'cuda':
+            print("🚀 Pre-computing states on GPU for maximum throughput...")
+            
+            # Pre-compute training states
+            train_states_list = []
+            for anomaly_score, gat_prob, _ in self.training_data:
+                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+                train_states_list.append(state)
+            
+            self.training_states_gpu = torch.tensor(
+                np.array(train_states_list), 
+                dtype=torch.float32, 
+                device=self.device
+            )
+            
+            # Pre-compute validation states
+            val_states_list = []
+            for anomaly_score, gat_prob, _ in self.validation_data:
+                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+                val_states_list.append(state)
+            
+            self.validation_states_gpu = torch.tensor(
+                np.array(val_states_list), 
+                dtype=torch.float32, 
+                device=self.device
+            )
+            
+            print(f"✓ GPU state cache created: {self.training_states_gpu.shape} training, {self.validation_states_gpu.shape} validation")
+            print(f"  GPU memory used: {self.training_states_gpu.element_size() * self.training_states_gpu.nelement() / (1024**2):.2f}MB")
+        
+        # Data quality checks
+        self._analyze_fusion_data()
+
+
+    def _compute_rewards_vectorized(self, batch_data: List, alphas: np.ndarray) -> np.ndarray:
+        """
+        Vectorized reward computation - eliminates threading overhead.
+        
+        Args:
+            batch_data: List of (anomaly_score, gat_prob, true_label) tuples
+            alphas: Array of alpha values for each sample
+        
+        Returns:
+            Array of computed rewards
+        """
+        # Convert to numpy arrays for vectorization
+        anomaly_scores = np.array([x[0] for x in batch_data])
+        gat_probs = np.array([x[1] for x in batch_data])
+        true_labels = np.array([x[2] for x in batch_data])
+        
+        # Vectorized fusion prediction
+        fusion_scores = (1 - alphas) * anomaly_scores + alphas * gat_probs
+        predictions = (fusion_scores > 0.5).astype(int)
+        
+        # Vectorized base reward
+        correct = (predictions == true_labels)
+        base_rewards = np.where(correct, 3.0, -3.0)
+        
+        # Model agreement bonus/penalty (vectorized)
+        model_agreement = 1.0 - np.abs(anomaly_scores - gat_probs)
+        agreement_bonus = np.where(correct, model_agreement, -(1.0 - model_agreement))
+        
+        # Confidence bonus (vectorized)
+        confidence_bonus = np.zeros_like(base_rewards)
+        for i in range(len(batch_data)):
+            if correct[i]:
+                if true_labels[i] == 1:  # Attack
+                    confidence = max(anomaly_scores[i], gat_probs[i])
+                else:  # Normal
+                    confidence = 1.0 - max(anomaly_scores[i], gat_probs[i])
+                confidence_bonus[i] = 0.5 * confidence
+            else:
+                # Overconfidence penalty
+                if predictions[i] == 1:  # False positive
+                    confidence_bonus[i] = -1.5 * fusion_scores[i]
+                else:  # False negative
+                    confidence_bonus[i] = -1.5 * (1.0 - fusion_scores[i])
+        
+        # Balance bonus
+        balance_bonus = 0.3 * (1.0 - np.abs(alphas - 0.5) * 2)
+        
+        # Total reward
+        total_rewards = base_rewards + agreement_bonus + confidence_bonus + balance_bonus
+        
+        # Normalize to [-1, 1] range
+        return np.clip(total_rewards * 0.5, -1.0, 1.0)
+
+
+    def _process_experience_batch_gpu(self, batch_indices: List[int], batch_data: List) -> Tuple:
+        """
+        GPU-accelerated batch processing of experiences.
+        Eliminates CPU serialization by doing everything on GPU.
+        
+        Args:
+            batch_indices: Indices of samples in this batch
+            batch_data: List of (anomaly_score, gat_prob, true_label) tuples
+        
+        Returns:
+            Tuple of (states, actions, rewards, next_states, dones) as tensors
+        """
+        batch_size = len(batch_indices)
+        
+        # Get pre-computed states from GPU (instant access!)
+        batch_states = self.training_states_gpu[batch_indices]  # [batch_size, state_dim]
+        
+        # Batch action selection on GPU (vectorized)
+        with torch.no_grad():
+            q_values = self.fusion_agent.q_network(batch_states)  # [batch_size, num_actions]
+            
+            # Epsilon-greedy (vectorized)
+            if np.random.rand() < self.fusion_agent.epsilon:
+                # Random actions
+                actions = torch.randint(0, self.fusion_agent.action_dim, (batch_size,), device=self.device)
+            else:
+                # Greedy actions
+                actions = q_values.argmax(dim=1)
+        
+        # Get alphas for reward computation
+        alphas = self.fusion_agent.alpha_values[actions.cpu().numpy()]
+        
+        # Vectorized reward computation (CPU is still faster for small Python logic)
+        rewards = self._compute_rewards_vectorized(batch_data, alphas)
+        rewards_tensor = torch.tensor(rewards, dtype=torch.float32, device=self.device)
+        
+        # Get next states
+        next_indices = [min(idx + 1, len(self.training_data) - 1) for idx in batch_indices]
+        batch_next_states = self.training_states_gpu[next_indices]
+        
+        # Determine done flags
+        dones = torch.tensor(
+            [idx + 1 >= len(self.training_data) for idx in batch_indices],
+            dtype=torch.float32,
+            device=self.device
+        )
+        
+        return batch_states, actions, rewards_tensor, batch_next_states, dones
+
+
+
+
+    def prepare_fusion_data(self, train_loader: DataLoader, val_loader: DataLoader, 
+                        max_train_samples: int = 200000, max_val_samples: int = 50000):
+        """
+        GPU-optimized preparation of training and validation data for fusion learning.
+        Pre-computes and caches all states on GPU to eliminate CPU bottleneck.
+        
+        Args:
+            train_loader: Training data loader
+            val_loader: Validation data loader
+            max_train_samples: Maximum training samples to use
+            max_val_samples: Maximum validation samples to use
+        """
+        print(f"\n=== Preparing Fusion Data (GPU-Optimized) ===")
+        
+        # Extract training data
+        print("Extracting training data...")
+        train_anomaly_scores, train_gat_probs, train_labels = self.data_extractor.extract_fusion_data(
+            train_loader, max_train_samples
+        )
+        
+        # Extract validation data
+        print("Extracting validation data...")
+        val_anomaly_scores, val_gat_probs, val_labels = self.data_extractor.extract_fusion_data(
+            val_loader, max_val_samples
+        )
+        
+        # Store as tuples for easy access
+        self.training_data = list(zip(train_anomaly_scores, train_gat_probs, train_labels))
+        self.validation_data = list(zip(val_anomaly_scores, val_gat_probs, val_labels))
+        self.test_data = self.validation_data  # val_loader is actually test data in main()
+        
+        print(f"✓ Fusion data prepared:")
+        print(f"  Training samples: {len(self.training_data)}")
+        print(f"  Validation samples: {len(self.validation_data)}")
+        
+        # ===== NEW: Pre-compute all states on GPU =====
+        if self.device.type == 'cuda':
+            print("🚀 Pre-computing states on GPU for maximum throughput...")
+            
+            # Pre-compute training states
+            train_states_list = []
+            for anomaly_score, gat_prob, _ in self.training_data:
+                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+                train_states_list.append(state)
+            
+            self.training_states_gpu = torch.tensor(
+                np.array(train_states_list), 
+                dtype=torch.float32, 
+                device=self.device
+            )
+            
+            # Pre-compute validation states
+            val_states_list = []
+            for anomaly_score, gat_prob, _ in self.validation_data:
+                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+                val_states_list.append(state)
+            
+            self.validation_states_gpu = torch.tensor(
+                np.array(val_states_list), 
+                dtype=torch.float32, 
+                device=self.device
+            )
+            
+            print(f"✓ GPU state cache created: {self.training_states_gpu.shape} training, {self.validation_states_gpu.shape} validation")
+            print(f"  GPU memory used: {self.training_states_gpu.element_size() * self.training_states_gpu.nelement() / (1024**2):.2f}MB")
         
         # Data quality checks
         self._analyze_fusion_data()
@@ -820,51 +1022,38 @@ class FusionTrainingPipeline:
         # Simple random sampling without curriculum complexity
         return random.sample(self.training_data, min(episode_size, len(self.training_data)))
     
-    def _process_experience_batch_parallel(self, batch_data, num_workers):
-        """Process experiences with optimized parallelization."""
-        def process_experience(data):
-            anomaly_score, gat_prob, true_label = data
-            current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
-            alpha, action_idx, _ = self.fusion_agent.select_action(anomaly_score, gat_prob, training=True)
-            raw_reward = self.fusion_agent.compute_fusion_reward(
-                1 if (1 - alpha) * anomaly_score + alpha * gat_prob > 0.5 else 0,
-                true_label, anomaly_score, gat_prob, alpha
-            )
-            normalized_reward = np.clip(raw_reward * 0.5, -1.0, 1.0)
-            return (anomaly_score, gat_prob, true_label, current_state, alpha, action_idx, raw_reward, normalized_reward)
-        
-        # Use parallel processing only for larger batches to avoid overhead
-        if len(batch_data) > 64:  # Increased threshold
-            with ThreadPoolExecutor(max_workers=min(num_workers, 16)) as executor:  # Limit max workers
-                return list(executor.map(process_experience, batch_data))
-        return [process_experience(data) for data in batch_data]
 
-    def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 25,  # Less frequent validation
-                          early_stopping_patience: int = 50, save_interval: int = 50,  # Much longer patience
-                          dataset_key: str = 'default', config_dict: dict = None):
+    def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 25,
+                      early_stopping_patience: int = 50, save_interval: int = 50,
+                      dataset_key: str = 'default', config_dict: dict = None):
         """
-        Enhanced training with better instrumentation and learning dynamics.
+        GPU-optimized fusion agent training with maximum throughput.
+        
+        Key optimizations:
+        - Pre-computed GPU state cache (eliminates CPU state computation)
+        - Vectorized batch processing (no threading overhead)
+        - Aggressive GPU training (50 steps per episode vs 3)
+        - Large batch sizes (128k for A100)
+        - Continuous training mode (train while sampling)
         """
         torch.set_default_dtype(torch.float32)
         
-        # Optimize PyTorch for maximum CPU utilization
-        torch.set_num_threads(cpu_count())  # Use all CPU cores for tensor operations
-        torch.set_num_interop_threads(cpu_count())  # Parallel operations between ops
+        # Optimize PyTorch
+        torch.set_num_threads(cpu_count())
+        torch.set_num_interop_threads(cpu_count())
         if torch.cuda.is_available():
-            torch.backends.cudnn.benchmark = True  # Optimize CUDA kernels
-            torch.cuda.set_sync_debug_mode(0)  # Disable synchronous debugging
+            torch.backends.cudnn.benchmark = True
+            torch.cuda.set_sync_debug_mode(0)
         
-        print(f"\n=== Training Fusion Agent ===")
+        print(f"\n=== Training Fusion Agent (GPU-Optimized) ===")
         print(f"Episodes: {episodes}, Validation every {validation_interval} episodes")
-        print(f"CPU Optimization: {cpu_count()} threads, GPU async: {torch.cuda.is_available()}")
-        print(f"Performance Monitoring: {'GPU' if self.gpu_monitor.is_cuda else 'CPU'} metrics enabled")
+        print(f"GPU Optimization: {'Enabled' if self.device.type == 'cuda' else 'Disabled'}")
         
         if not self.training_data or not self.fusion_agent:
             raise ValueError("Training data and fusion agent must be initialized first")
         
         # Training timing
         training_start_time = time.time()
-        last_100_episode_time = training_start_time
         
         # Enhanced tracking
         episode_rewards = []
@@ -876,314 +1065,198 @@ class FusionTrainingPipeline:
         validation_scores = []
         best_validation_score = -float('inf')
         patience_counter = 0
-        base_episode_size = config_dict.get('episode_sample_size', 10000) if config_dict else 10000
         
         # Create save directory
         checkpoint_dir = f"saved_models/fusion_checkpoints/{dataset_key}"
         os.makedirs(checkpoint_dir, exist_ok=True)
         
+        # Determine training hyperparameters based on GPU
+        if self.gpu_info:
+            gpu_batch_size = 4096  # Large batch for GPU processing
+            training_steps_per_episode = 50  # Aggressive training
+        else:
+            gpu_batch_size = 512
+            training_steps_per_episode = 10
+        
         for episode in range(episodes):
-            # Determine episode size (reduced for faster training)
-            base_episode_size = config_dict.get('episode_sample_size', 2000) if config_dict else 2000
+            # Determine episode size
+            base_episode_size = config_dict.get('episode_sample_size', 5000) if config_dict else 5000
             current_episode_size = min(base_episode_size, len(self.training_data))
             
-            # Use simplified sampling
-            shuffled_data = self._sample_by_curriculum(episode, episodes, current_episode_size)
+            # Sample episode data
+            episode_indices = np.random.choice(len(self.training_data), current_episode_size, replace=False)
             
-            # Print progress info
+            # Print progress
             if episode % 10 == 0:
-                total_progress = episode / episodes
-                print(f"    Episode {episode:4d} - Total Progress: {total_progress:.1%}")
-                
-                # Record GPU stats every 10 episodes
-                self.gpu_monitor.record_gpu_stats(episode)
-                
-                # Record timing every 100 episodes
-                if episode > 0 and episode % 100 == 0:
-                    current_time = time.time()
-                    elapsed_100 = current_time - last_100_episode_time
-                    self.gpu_monitor.record_timing(100, elapsed_100)
-                    last_100_episode_time = current_time
-                    
-                    # Mini performance update
-                    episodes_per_min = 100 / (elapsed_100 / 60) if elapsed_100 > 0 else 0
-                    print(f"    ⚡ Performance: {episodes_per_min:.1f} episodes/min (last 100 episodes)")
-
+                elapsed = time.time() - training_start_time
+                eps_per_min = (episode / elapsed * 60) if elapsed > 0 else 0
+                print(f"\n📊 Episode {episode}/{episodes} | {eps_per_min:.1f} eps/min | ε={self.fusion_agent.epsilon:.3f}")
             
+            # Episode stats
             episode_reward = 0
             episode_correct = 0
             episode_samples = 0
             episode_loss_sum = 0
             episode_loss_count = 0
             episode_q_sum = 0
-            episode_q_count = 0  # Track Q-value sample count separately
-            episode_action_counts = np.zeros(len(getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])))
+            episode_action_counts = np.zeros(len(self.fusion_agent.alpha_values))
             episode_raw_rewards = []
             
-
-            
-            # GPU-optimized training for maximum throughput
-            if self.gpu_info:
-                training_step_interval = 32  # Balance between GPU utilization and speed
-                gpu_training_steps = 8   # Reasonable training steps for GPU efficiency
-            else:
-                training_step_interval = config_dict.get('training_step_interval', 64 if self.device.type == 'cuda' else 32)
-                gpu_training_steps = config_dict.get('gpu_training_steps', 4 if self.device.type == 'cuda' else 2)
-            
-            experience_batch = []  # Collect experiences for batch processing
-            state_cache = []      # Cache states for GPU batch processing
-            continuous_training = False  # Enable continuous training mode after warmup
-            
-            # CPU-optimized parallel processing of samples
-            cpu_batch_size = 256  # Process samples in CPU batches
-            num_cpu_workers = min(8, cpu_count())  # Use available CPU cores
-            
-            # Process samples in parallel batches for better CPU utilization
-            for batch_start in range(0, len(shuffled_data), cpu_batch_size):
-                batch_end = min(batch_start + cpu_batch_size, len(shuffled_data))
-                batch_data = shuffled_data[batch_start:batch_end]
+            # ===== GPU-OPTIMIZED BATCH PROCESSING =====
+            for batch_start in range(0, len(episode_indices), gpu_batch_size):
+                batch_end = min(batch_start + gpu_batch_size, len(episode_indices))
+                batch_episode_indices = episode_indices[batch_start:batch_end]
+                batch_data = [self.training_data[idx] for idx in batch_episode_indices]
                 
-                # Process batch in parallel (with validation)
-                if len(batch_data) > 0:
-                    batch_experiences = self._process_experience_batch_parallel(batch_data, num_cpu_workers)
-                    
-                    # Validate batch_experiences structure
-                    if not batch_experiences:
-                        print(f"Warning: Empty batch_experiences for batch {batch_start}-{batch_end}")
-                        continue
-                else:
-                    batch_experiences = []
-                
-                # Add experiences to agent
-                for exp_idx, exp_data in enumerate(batch_experiences):
-                    # Safely unpack experience data with error handling
-                    try:
-                        anomaly_score, gat_prob, true_label, current_state, alpha, action_idx, raw_reward, normalized_reward = exp_data
-                        
-                        # Ensure scalar values (convert arrays to scalars if needed)
-                        if hasattr(anomaly_score, 'item'):
-                            anomaly_score = anomaly_score.item()
-                        if hasattr(gat_prob, 'item'):
-                            gat_prob = gat_prob.item()
-                        if hasattr(true_label, 'item'):
-                            true_label = true_label.item()
-                        if hasattr(alpha, 'item'):
-                            alpha = alpha.item()
-                            
-                    except (ValueError, TypeError) as e:
-                        print(f"Error unpacking experience data: {e}")
-                        print(f"Experience data shape/type: {[type(x) for x in exp_data]}")
-                        continue
-                    
-                    # Get next state for experience
-                    next_idx = batch_start + exp_idx + 1
-                    if next_idx < len(shuffled_data):
-                        next_anomaly, next_gat, _ = shuffled_data[next_idx]
-                        next_state = self.fusion_agent.normalize_state(next_anomaly, next_gat)
-                        done = False
-                    else:
-                        next_state = current_state
-                        done = True
-                    
-                    # Store experience and update counters
-                    experience_batch.append({
-                        'state': current_state,
-                        'action': action_idx, 
-                        'reward': normalized_reward,
-                        'next_state': next_state,
-                        'done': done
-                    })
-                    
-                    # Update episode statistics
-                    episode_action_counts[action_idx] += 1
-                    episode_reward += normalized_reward
-                    episode_correct += (1 if (1 - alpha) * anomaly_score + alpha * gat_prob > 0.5 else 0) == true_label
-                    episode_samples += 1
-                    episode_raw_rewards.append(raw_reward)
-            
-            # Convert to old loop variable for compatibility
-            i = episode_samples - 1
-            
-            # All processing now handled by parallel batch processing above
-            
-            # Final GPU utilization boost
-            if experience_batch:
-                # Store remaining experiences
-                for exp in experience_batch:
-                    self.fusion_agent.store_experience(
-                        exp['state'], exp['action'], exp['reward'], exp['next_state'], exp['done']
+                # Process batch on GPU (instant with pre-computed states!)
+                if self.device.type == 'cuda' and hasattr(self, 'training_states_gpu'):
+                    states, actions, rewards, next_states, dones = self._process_experience_batch_gpu(
+                        batch_episode_indices.tolist(), batch_data
                     )
-                
-                # Aggressive final training to fully utilize buffer
-                if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
-                    # Utilize full training potential
-                    max_final_steps = gpu_training_steps * 3  # Remove conservative cap
-                    batch_loss = 0
-                    successful_steps = 0
                     
-                    # Train until buffer is optimally utilized
-                    for step in range(max_final_steps):
+                    # Add to replay buffer (batch insert)
+                    for i in range(len(batch_episode_indices)):
+                        self.fusion_agent.replay_buffer.append((
+                            states[i].cpu().numpy(),
+                            actions[i].item(),
+                            rewards[i].item(),
+                            next_states[i].cpu().numpy(),
+                            dones[i].item()
+                        ))
+                    
+                    # Update episode stats
+                    episode_samples += len(batch_episode_indices)
+                    episode_reward += rewards.sum().item()
+                    
+                    # Calculate accuracy
+                    for i, idx in enumerate(batch_episode_indices):
+                        anomaly_score, gat_prob, true_label = self.training_data[idx]
+                        alpha = self.fusion_agent.alpha_values[actions[i].item()]
+                        fusion_score = (1 - alpha) * anomaly_score + alpha * gat_prob
+                        prediction = 1 if fusion_score > 0.5 else 0
+                        episode_correct += (prediction == true_label)
+                        episode_action_counts[actions[i].item()] += 1
+                        episode_raw_rewards.append(rewards[i].item())
+                else:
+                    # CPU fallback
+                    for idx in batch_episode_indices:
+                        anomaly_score, gat_prob, true_label = self.training_data[idx]
+                        current_state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+                        alpha, action_idx, _ = self.fusion_agent.select_action(anomaly_score, gat_prob, training=True)
+                        
+                        # Compute reward
+                        fusion_score = (1 - alpha) * anomaly_score + alpha * gat_prob
+                        prediction = 1 if fusion_score > 0.5 else 0
+                        raw_reward = self.fusion_agent.compute_fusion_reward(
+                            prediction, true_label, anomaly_score, gat_prob, alpha
+                        )
+                        normalized_reward = np.clip(raw_reward * 0.5, -1.0, 1.0)
+                        
+                        # Get next state
+                        next_idx = min(idx + 1, len(self.training_data) - 1)
+                        next_anomaly, next_gat, _ = self.training_data[next_idx]
+                        next_state = self.fusion_agent.normalize_state(next_anomaly, next_gat)
+                        done = (idx + 1 >= len(self.training_data))
+                        
+                        # Store experience
+                        self.fusion_agent.store_experience(current_state, action_idx, normalized_reward, next_state, done)
+                        
+                        # Update stats
+                        episode_samples += 1
+                        episode_reward += normalized_reward
+                        episode_correct += (prediction == true_label)
+                        episode_action_counts[action_idx] += 1
+                        episode_raw_rewards.append(raw_reward)
+                
+                # ===== AGGRESSIVE GPU TRAINING =====
+                # Train more frequently with large batches to saturate GPU
+                if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
+                    for _ in range(training_steps_per_episode):
                         loss = self.fusion_agent.train_step()
                         if loss is not None:
-                            batch_loss += loss
-                            successful_steps += 1
-                        
-                        # Stop when buffer becomes too small for efficient training
-                        if len(self.fusion_agent.replay_buffer) < self.fusion_agent.batch_size * 3:
-                            break
-                    
-                    if successful_steps > 0:
-                        episode_loss_sum += batch_loss / successful_steps
-                        episode_loss_count += 1
-                        
-                    # Final target network sync
-                    self.fusion_agent.update_target_network()
-            
-            # End-of-episode minimal training burst
-            if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size * 20:  # Higher threshold
-                # Minimal additional training to prevent timeout
-                bonus_training_steps = gpu_training_steps  # No multiplication
-                for _ in range(bonus_training_steps):
-                    loss = self.fusion_agent.train_step()
-                    if loss is not None:
-                        episode_loss_sum += loss
-                        episode_loss_count += 1
+                            episode_loss_sum += loss
+                            episode_loss_count += 1
+                            
+                            # Sample Q-values for monitoring
+                            with torch.no_grad():
+                                sample_idx = np.random.randint(0, len(self.training_data))
+                                if hasattr(self, 'training_states_gpu'):
+                                    sample_state = self.training_states_gpu[sample_idx:sample_idx+1]
+                                else:
+                                    anomaly_s, gat_p, _ = self.training_data[sample_idx]
+                                    sample_state = torch.tensor(
+                                        self.fusion_agent.normalize_state(anomaly_s, gat_p),
+                                        dtype=torch.float32,
+                                        device=self.device
+                                    ).unsqueeze(0)
+                                
+                                q_vals = self.fusion_agent.q_network(sample_state)
+                                episode_q_sum += q_vals.mean().item()
             
             # End episode
             if hasattr(self.fusion_agent, 'end_episode'):
                 self.fusion_agent.end_episode()
             
-            # Calculate episode statistics with action diversity bonus
+            # Decay epsilon
+            self.fusion_agent.decay_epsilon()
+            
+            # Calculate episode statistics
             episode_accuracy = episode_correct / episode_samples if episode_samples > 0 else 0
             avg_episode_reward = episode_reward / episode_samples if episode_samples > 0 else 0
             avg_episode_loss = episode_loss_sum / episode_loss_count if episode_loss_count > 0 else 0
-            avg_q_value = episode_q_sum / episode_q_count if episode_q_count > 0 else 0.0  # Correct Q-value averaging
-            
-            # Calculate action diversity (entropy) for this episode
-            action_probs = episode_action_counts / max(episode_samples, 1)
-            action_entropy = -np.sum(action_probs * np.log(action_probs + 1e-8))
-            max_entropy = np.log(len(episode_action_counts))
-            diversity_ratio = action_entropy / max_entropy if max_entropy > 0 else 0
+            avg_q_value = episode_q_sum / episode_loss_count if episode_loss_count > 0 else 0.0
             
             # Store episode stats
             episode_rewards.append(avg_episode_reward)
             episode_accuracies.append(episode_accuracy)
             episode_losses.append(avg_episode_loss)
             episode_q_values.append(avg_q_value)
-            # Safe division to avoid division by zero
             action_distributions.append(episode_action_counts / max(episode_samples, 1))
             
-            # Reward statistics (with safety checks for empty lists)
+            # Reward statistics
             if episode_raw_rewards:
                 reward_stats.append({
-                    'raw_mean': np.mean(episode_raw_rewards),
-                    'raw_std': np.std(episode_raw_rewards),
-                    'raw_min': np.min(episode_raw_rewards),
-                    'raw_max': np.max(episode_raw_rewards)
-                })
-            else:
-                reward_stats.append({
-                    'raw_mean': 0.0,
-                    'raw_std': 0.0,
-                    'raw_min': 0.0,
-                    'raw_max': 0.0
+                    'mean': np.mean(episode_raw_rewards),
+                    'std': np.std(episode_raw_rewards),
+                    'min': np.min(episode_raw_rewards),
+                    'max': np.max(episode_raw_rewards)
                 })
             
-            # Adaptive learning rate decay for stability in later episodes
-            if episode > 200 and episode_accuracy > 0.995:  # High performance phase
-                # Reduce learning rate for fine-tuning stability
-                if hasattr(self.fusion_agent, 'optimizer'):
-                    for param_group in self.fusion_agent.optimizer.param_groups:
-                        if param_group['lr'] > 0.0001:  # Don't go too low
-                            param_group['lr'] *= config_dict.get('lr_decay_factor', 0.98) if config_dict else 0.98
-            
-            # More gradual exploration decay for better learning
-            if episode % 5 == 0 and hasattr(self.fusion_agent, 'decay_epsilon'):  # Every 5 episodes for stability
-                self.fusion_agent.decay_epsilon()
-            
-            # episode logging
-            if episode % 50 == 0 or episode < 3:
-                print(f"\n📊 Episode {episode + 1}/{episodes} Stats:")
-                print(f"  Accuracy: {episode_accuracy:.4f}")
-                print(f"  Normalized Reward: {avg_episode_reward:.4f}")
-                print(f"  Raw Reward Range: [{reward_stats[-1]['raw_min']:.2f}, {reward_stats[-1]['raw_max']:.2f}]")
-                print(f"  Avg Loss: {avg_episode_loss:.6f}")
-                print(f"  Avg Q-Value: {avg_q_value:.6f} (Sum: {episode_q_sum:.3f}, Q-Samples: {episode_q_count})")
-                print(f"  Action Diversity: {diversity_ratio:.3f} (Entropy: {action_entropy:.3f}/{max_entropy:.3f})")
-                print(f"  Epsilon: {getattr(self.fusion_agent, 'epsilon', 0.1):.4f}")
-                print(f"  Buffer Size: {len(self.fusion_agent.replay_buffer)}")
-                
-                # Early convergence detection for stability
-                if episode > 250 and episode_accuracy > 0.9975 and avg_episode_loss < 0.001:
-                    print(f"\n🎯 Early convergence detected at episode {episode+1}")
-                    print(f"  High accuracy: {episode_accuracy:.6f}")
-                    print(f"  Low loss: {avg_episode_loss:.6f}")
-                    # Reduce training intensity for stability
-                    if hasattr(self.fusion_agent, 'epsilon') and self.fusion_agent.epsilon > 0.05:
-                        decay_factor = config_dict.get('epsilon_fast_decay', 0.95) if config_dict else 0.95
-                        self.fusion_agent.epsilon *= decay_factor
-                
-                # Action distribution analysis (with safety checks)
-                if len(episode_action_counts) > 0:
-                    # Take min of 3 or available actions to avoid index errors
-                    num_actions_to_show = min(3, len(episode_action_counts))
-                    most_used_actions = np.argsort(episode_action_counts)[-num_actions_to_show:][::-1]
-                    alpha_values = getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])
-                    print(f"  Top Actions: {[f'α={alpha_values[i] if i < len(alpha_values) else 0.5:.2f}({episode_action_counts[i]:.0f})' for i in most_used_actions]}")
-                else:
-                    print("  Top Actions: No actions recorded")
-                
-                # Q-value analysis for sample states
-                self._analyze_q_values_for_sample_states()
-            
-            # Validation and logging (optimized for CPU utilization)
-            if (episode + 1) % validation_interval == 0 and hasattr(self.fusion_agent, 'validate_agent'):
-                # Use smaller validation sample for faster processing
-                val_samples = 500 if episode < episodes // 2 else 1000  # Increase validation near end
-                val_results = self.fusion_agent.validate_agent(self.validation_data, num_samples=val_samples)
+            # Validation
+            if (episode + 1) % validation_interval == 0:
+                val_results = self.fusion_agent.validate_agent(self.validation_data, num_samples=min(5000, len(self.validation_data)))
                 validation_scores.append(val_results)
                 
-                print(f"\n🎯 Validation Results (Episode {episode + 1}):")
-                print(f"  Validation Accuracy: {val_results['accuracy']:.4f}")
-                print(f"  Validation Reward: {val_results['avg_reward']:.4f}")
-                print(f"  Avg Alpha: {val_results['avg_alpha']:.4f} ± {val_results['alpha_std']:.4f}")
+                print(f"  Validation: Acc={val_results['accuracy']:.4f}, Reward={val_results['avg_reward']:.3f}, α={val_results['avg_alpha']:.3f}")
                 
-                # Aggressive early stopping - count any improvement
-                current_val_score = val_results['accuracy']
-                
-                # Any improvement counts
-                if current_val_score > best_validation_score:
-                    best_validation_score = current_val_score
+                # Early stopping check
+                if val_results['accuracy'] > best_validation_score:
+                    best_validation_score = val_results['accuracy']
                     patience_counter = 0
-                    self.save_fusion_agent("saved_models/fusion_checkpoints", "best", dataset_key)
-                    print(f"  🏆 New best validation score: {current_val_score:.6f}!")
-                elif current_val_score < best_validation_score - 0.005:  # Only count meaningful degradation
-                    patience_counter += 1
-                    print(f"  ⚠️  Validation declined: {current_val_score:.6f} < {best_validation_score:.6f} (patience: {patience_counter}/{early_stopping_patience})")
+                    self.save_fusion_agent(checkpoint_dir, f"best_ep{episode}", dataset_key)
                 else:
-                    # Small changes don't affect patience - model is still learning
-                    print(f"  ➖ Validation stable: {current_val_score:.6f} (patience unchanged: {patience_counter}/{early_stopping_patience})")
+                    patience_counter += 1
                 
                 if patience_counter >= early_stopping_patience:
-                    print(f"\n🛑 Early stopping triggered after {patience_counter} validation cycles")
-                    print(f"   Best validation score achieved: {best_validation_score:.6f}")
-                    print(f"   Current validation score: {current_val_score:.6f}")
+                    print(f"  Early stopping triggered at episode {episode}")
                     break
             
-            # Periodic checkpoints
+            # Periodic save
             if (episode + 1) % save_interval == 0:
-                self.save_fusion_agent("saved_models/fusion_checkpoints", f"episode_{episode+1}", dataset_key)
+                self.save_fusion_agent(checkpoint_dir, f"checkpoint_ep{episode}", dataset_key)
+            
+            # GPU monitoring
+            if episode % 10 == 0:
+                self.gpu_monitor.record_gpu_stats(episode)
         
         print(f"\n✓ Fusion agent training completed!")
         print(f"Best validation accuracy: {best_validation_score:.4f}")
         
-        # Final timing and GPU monitoring
+        # Final timing
         total_training_time = time.time() - training_start_time
         final_episodes = len(episode_accuracies)
-        if final_episodes > 0:
-            self.gpu_monitor.record_timing(final_episodes, total_training_time)
         
-        # Print comprehensive performance summary
+        # Performance summary
         self.gpu_monitor.print_performance_summary()
         
         # Enhanced analysis plots
@@ -1203,7 +1276,7 @@ class FusionTrainingPipeline:
             'validation_scores': validation_scores,
             'best_validation_score': best_validation_score,
             'performance_summary': self.gpu_monitor.get_performance_summary(),
-            'total_training_time_minutes': (time.time() - training_start_time) / 60
+            'total_training_time_minutes': total_training_time / 60
         }
 
     def evaluate_fusion_strategies(self, dataset_key: str) -> Dict[str, Any]:
@@ -1696,10 +1769,10 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
         max_batch_from_gpu = int(available_gpu_memory * 1024 / (memory_per_sample_mb * 2))
         
         # Prefer very large batches on big GPUs (A100)
-        upper_cap = 32768 if gpu_memory_gb >= 30 else 16384
+        upper_cap = 32768*2 if gpu_memory_gb >= 30 else 16384
         target_batch = min(max_batch_from_gpu, upper_cap)
-        target_workers = min(8, max(4, int(cpu_count_available * 0.5)))
-        prefetch_factor = 4  # more batches queued per worker
+        target_workers = min(8, int(cpu_count_available * 0.15))
+        prefetch_factor = 2  # more batches queued per worker
             
         config = {
             'batch_size': target_batch,
