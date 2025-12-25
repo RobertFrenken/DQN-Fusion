@@ -433,57 +433,53 @@ class FusionDataExtractor:
 
     def compute_anomaly_scores(self, batch) -> torch.Tensor:
         """
-        Fully vectorized GPU computation of anomaly scores - NO LOOPS!
-        
-        Args:
-            batch: Batch of graph data
-            
-        Returns:
-            Tensor of anomaly scores [0, 1] for each graph
+        Memory-efficient GPU computation without torch_scatter.
+        Fixed to avoid massive tensor allocation.
         """
         with torch.no_grad():
-            # ===== STEP 1: Forward pass (already efficient) =====
+            # Forward pass
             cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
                 batch.x, batch.edge_index, batch.batch
             )
             
-            # ===== STEP 2: Compute node-level errors (vectorized) =====
-            node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)  # [num_nodes]
+            # Compute node-level errors
+            node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
             
-            # Neighborhood reconstruction errors
             neighbor_targets = self.autoencoder.create_neighborhood_targets(
                 batch.x, batch.edge_index, batch.batch
             )
             neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
                 neighbor_logits, neighbor_targets
-            ).mean(dim=1)  # [num_nodes]
+            ).mean(dim=1)
             
-            # CAN ID prediction errors
             canid_pred = canid_logits.argmax(dim=1)
             true_canids = batch.x[:, 0].long()
-            canid_errors = (canid_pred != true_canids).float()  # [num_nodes]
+            canid_errors = (canid_pred != true_canids).float()
             
-            # ===== STEP 3: Vectorized graph-level aggregation (NO LOOPS!) =====
-            # Stack all error types: [num_nodes, 3]
+            # FIXED: Memory-efficient approach using simple loop instead of huge tensors
+            num_graphs = batch.batch.max().item() + 1
+            device = batch.x.device
+            
+            # Stack all errors: [num_nodes, 3]
             all_errors = torch.stack([node_errors, neighbor_errors, canid_errors], dim=1)
             
-            # Use scatter_max for graph-level max pooling (fully vectorized!)
-            from torch_scatter import scatter_max
+            # Initialize output tensor for graph-level errors
+            graph_errors = torch.zeros(num_graphs, 3, device=device, dtype=all_errors.dtype)
             
-            # Get max error per graph per error type: [num_graphs, 3]
-            graph_errors, _ = scatter_max(
-                all_errors, 
-                batch.batch.unsqueeze(1).expand(-1, 3),
-                dim=0
-            )
+            # Simple loop - much more memory efficient than huge one-hot tensors
+            for graph_idx in range(num_graphs):
+                # Find nodes belonging to this graph
+                node_mask = (batch.batch == graph_idx)
+                if node_mask.any():
+                    # Get errors for nodes in this graph and take max
+                    graph_node_errors = all_errors[node_mask]  # [nodes_in_graph, 3]
+                    graph_errors[graph_idx] = graph_node_errors.max(dim=0)[0]  # [3]
             
-            # Weighted composite score (vectorized): [num_graphs]
+            # Weighted composite score
             composite_scores = (graph_errors * self.fusion_weights).sum(dim=1)
-            
-            # Normalize to [0, 1] using sigmoid (all on GPU)
             normalized_scores = torch.sigmoid(composite_scores * 3 - 1.5)
             
-            return normalized_scores  # Keep on GPU until final extraction
+            return normalized_scores
 
     def compute_gat_probabilities(self, batch) -> torch.Tensor:
         """
@@ -524,9 +520,22 @@ class FusionDataExtractor:
                     if batch.y.shape[0] == batch.num_graphs:
                         batch_labels = batch.y
                     else:
+                        # FIXED: Replace torch_scatter with native PyTorch
                         # y is per-node, need to extract per-graph
-                        from torch_scatter import scatter_max
-                        batch_labels, _ = scatter_max(batch.y, batch.batch, dim=0)
+                        num_graphs = batch.batch.max().item() + 1
+                        device = batch.y.device
+                        
+                        # Initialize output tensor for graph labels
+                        graph_labels = torch.zeros(num_graphs, device=device, dtype=batch.y.dtype)
+                        
+                        # Use native PyTorch operations instead of scatter_max
+                        for graph_idx in range(num_graphs):
+                            node_mask = (batch.batch == graph_idx)
+                            if node_mask.any():
+                                # Take max label for this graph (or could use mean, etc.)
+                                graph_labels[graph_idx] = batch.y[node_mask].max()
+                        
+                        batch_labels = graph_labels
                 else:
                     # Fallback: extract from individual graphs (rare case)
                     graphs = Batch.to_data_list(batch)
@@ -553,6 +562,10 @@ class FusionDataExtractor:
             anomaly_scores = torch.cat(anomaly_scores_gpu).cpu().numpy().tolist()
             gat_probabilities = torch.cat(gat_probs_gpu).cpu().numpy().tolist()
             labels = torch.cat(labels_gpu).cpu().numpy().tolist()
+            
+            # Clean up GPU tensors
+            del anomaly_scores_gpu, gat_probs_gpu, labels_gpu
+            torch.cuda.empty_cache()
             
         else:
             # CPU fallback
@@ -1741,10 +1754,11 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
     if 'SLURM_CPUS_PER_TASK' in os.environ:
         allocated_cpus = int(os.environ['SLURM_CPUS_PER_TASK'])
     elif 'SLURM_CPUS_ON_NODE' in os.environ:
-        # This might be total CPUs on node, but could be your allocation
         allocated_cpus = int(os.environ['SLURM_CPUS_ON_NODE'])
-    elif 'PBS_NCPUS' in os.environ:  # Alternative scheduler
+    elif 'PBS_NCPUS' in os.environ:
         allocated_cpus = int(os.environ['PBS_NCPUS'])
+    else:
+        allocated_cpus = 6  # Your SLURM allocation
     
     memory_gb = psutil.virtual_memory().total / (1024**3)
     
@@ -1760,33 +1774,46 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
     print(f"🔍 System Resources: {allocated_cpus} Allocated CPUs, {memory_gb:.1f}GB RAM, GPU: {gpu_memory_gb:.1f}GB")
     print(f"📊 Dataset size: {dataset_size:,} samples")
     
-    # You needed 18.68 GB for 65,536 samples = 0.285 MB per sample
-    # data storage (0.04 MB) + intermediate activation tensors (0.15 MB) + gradients (0.1 MB)
-    # 0.04 MB might be the approximate memory, but variations might have OOM error
-    memory_per_sample_mb = 0.285
+    # UPDATED: The create_neighborhood_targets issue shows we need MUCH smaller batches
+    # Your error: 17.10GB for neighbor_targets with 60k batch → huge memory per sample
+    # This is because num_nodes × num_ids (2043) creates massive tensors
     
-    # Calculate optimal batch size based on available memory
+    # Conservative estimate including neighbor target creation
+    memory_per_sample_mb = 0.8  # Much higher due to neighborhood targets
+    
     if cuda_available:
-
-        # Get current free memory (more accurate than total)
+        # Get current GPU memory state
         current_allocated = torch.cuda.memory_allocated() / (1024**3)
         current_reserved = torch.cuda.memory_reserved() / (1024**3)
-        available_memory = gpu_memory_gb - current_reserved  # Use reserved, not allocated
+        available_memory = gpu_memory_gb - max(current_reserved, current_allocated)
         
         print(f"📊 GPU Memory Analysis:")
         print(f"  Total GPU Memory: {gpu_memory_gb:.2f}GB")
         print(f"  Currently Allocated: {current_allocated:.2f}GB")
         print(f"  Currently Reserved: {current_reserved:.2f}GB") 
         print(f"  Available for Batch: {available_memory:.2f}GB")
-        print(f"  Approximate Measured Usage: {memory_per_sample_mb*1000:.3f}MB per sample")
-        # Use 85% of GPU memory - leaves room for model parameters
-        # FIXED: Single safety margin calculation
-        usable_memory = available_memory * 0.90
-
+        print(f"  Conservative Memory per Sample: {memory_per_sample_mb:.3f}MB")
+        
+        # MUCH more conservative calculation due to neighborhood targets
+        usable_memory = available_memory * 0.7  # Only use 70% for safety
         calculated_batch_size = int(usable_memory * 1024 / memory_per_sample_mb)
         
-        upper_cap = 60000 if gpu_memory_gb >= 30 else 16384
-        target_batch = min(calculated_batch_size*0.85, upper_cap)
+        # UPDATED: Much smaller caps due to neighborhood memory requirements
+        if gpu_memory_gb >= 30:  # A100
+            upper_cap = 16000   # Much smaller due to neighborhood targets
+        elif gpu_memory_gb >= 20:
+            upper_cap = 8000
+        else:
+            upper_cap = 4000
+        
+        target_batch = min(calculated_batch_size, upper_cap)
+        
+        print(f"🎯 Memory-Conservative Batch Calculation:")
+        print(f"  Usable Memory: {usable_memory:.2f}GB")
+        print(f"  Calculated Batch Size: {calculated_batch_size:,}")
+        print(f"  Upper Cap: {upper_cap:,}")
+        print(f"  Final Batch Size: {target_batch:,}")
+        print(f"  Estimated Memory Usage: {(target_batch * memory_per_sample_mb / 1024):.2f}GB")
             
         config = {
             'batch_size': target_batch,
@@ -1796,17 +1823,16 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
             'persistent_workers': True
         }
     else:
-        # CPU modee
-            
+        # CPU mode
         config = {
-            'batch_size': int(memory_gb * 0.8 * 1024 / memory_per_sample_mb),
-            'num_workers': 8, 
+            'batch_size': min(8000, int(memory_gb * 0.6 * 1024 / memory_per_sample_mb)),
+            'num_workers': min(8, allocated_cpus), 
             'prefetch_factor': 2,
             'pin_memory': False,
             'persistent_workers': False
         }
     
-    print(f"🎯 Calculated config: batch={config['batch_size']}, workers={config['num_workers']}, "
+    print(f"🎯 Calculated config: batch={config['batch_size']:,}, workers={config['num_workers']}, "
           f"prefetch={config['prefetch_factor']}, cuda={cuda_available}")
     
     return config, cuda_available
