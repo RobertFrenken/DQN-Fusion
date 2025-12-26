@@ -951,8 +951,8 @@ class FusionTrainingPipeline:
     
 
     def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 25,
-                        early_stopping_patience: int = 50, save_interval: int = 50,
-                        dataset_key: str = 'default', config_dict: dict = None):
+                      early_stopping_patience: int = 50, save_interval: int = 50,
+                      dataset_key: str = 'default', config_dict: dict = None):
         """
         GPU-optimized fusion agent training with batch accumulation for high GPU utilization.
         
@@ -977,37 +977,45 @@ class FusionTrainingPipeline:
         # 2. GPU Processing batch_size: Large (maximizes GPU utilization)
         # 3. DQN Training batch_size: Optimal for learning stability
         
-        if self.gpu_info and self.device.type == 'cuda':
-            if self.gpu_info['memory_gb'] >= 30:  # A100
-                # Small disk batches, large GPU processing
-                disk_batch_size = 512          # Small for memory safety
-                gpu_processing_batch = 8192    # Large for GPU efficiency
-                dqn_training_batch = 4096      # Optimal for Q-learning
-                batch_accumulation_factor = 16  # Accumulate 16 small batches
-                training_steps_per_episode = 12
-                episode_sample_ratio = 0.4
-            elif self.gpu_info['memory_gb'] >= 15:  # RTX 3090/4090
-                disk_batch_size = 256
-                gpu_processing_batch = 4096
-                dqn_training_batch = 2048
-                batch_accumulation_factor = 16
-                training_steps_per_episode = 8
-                episode_sample_ratio = 0.3
-            else:  # Smaller GPUs
-                disk_batch_size = 128
-                gpu_processing_batch = 2048
-                dqn_training_batch = 1024
-                batch_accumulation_factor = 16
-                training_steps_per_episode = 6
-                episode_sample_ratio = 0.25
+        # Get the batch configuration from DataLoader creation
+        if hasattr(self, '_dataloader_config'):
+            dataloader_batch = self._dataloader_config['batch_size']
+            gpu_processing_batch = self._dataloader_config.get('gpu_processing_batch', dataloader_batch * 2)
+            dqn_training_batch = self._dataloader_config.get('dqn_training_batch', dataloader_batch)
+            disk_batch_size = dataloader_batch // 4  # Smaller chunks for memory safety
+            batch_accumulation_factor = gpu_processing_batch // disk_batch_size
         else:
-            # CPU mode - keep simple
-            disk_batch_size = 256
-            gpu_processing_batch = 512
-            dqn_training_batch = 256
-            batch_accumulation_factor = 2
-            training_steps_per_episode = 3
-            episode_sample_ratio = 0.15
+            # Fallback to existing logic based on GPU capabilities
+            if self.gpu_info and self.device.type == 'cuda':
+                if self.gpu_info['memory_gb'] >= 30:  # A100
+                    disk_batch_size = 512          # Small for memory safety
+                    gpu_processing_batch = 16384   # Large for GPU efficiency
+                    dqn_training_batch = 8192      # Optimal for Q-learning
+                    batch_accumulation_factor = 32 # Accumulate many small batches
+                    training_steps_per_episode = 12
+                    episode_sample_ratio = 0.4
+                elif self.gpu_info['memory_gb'] >= 15:  # RTX 3090/4090
+                    disk_batch_size = 256
+                    gpu_processing_batch = 8192
+                    dqn_training_batch = 4096
+                    batch_accumulation_factor = 32
+                    training_steps_per_episode = 8
+                    episode_sample_ratio = 0.3
+                else:  # Smaller GPUs
+                    disk_batch_size = 128
+                    gpu_processing_batch = 4096
+                    dqn_training_batch = 2048
+                    batch_accumulation_factor = 32
+                    training_steps_per_episode = 6
+                    episode_sample_ratio = 0.25
+            else:
+                # CPU mode - keep simple
+                disk_batch_size = 256
+                gpu_processing_batch = 1024
+                dqn_training_batch = 512
+                batch_accumulation_factor = 4
+                training_steps_per_episode = 3
+                episode_sample_ratio = 0.15
         
         print(f"🎯 Multi-Level Batch Configuration:")
         print(f"  Disk Loading Batch: {disk_batch_size:,} (prevents OOM)")
@@ -1015,6 +1023,7 @@ class FusionTrainingPipeline:
         print(f"  DQN Training Batch: {dqn_training_batch:,} (optimal learning)")
         print(f"  Accumulation Factor: {batch_accumulation_factor}x")
         print(f"  Training Steps per Episode: {training_steps_per_episode}")
+        print(f"  Episode Sample Ratio: {episode_sample_ratio:.1%}")
         
         # Training setup
         training_start_time = time.time()
@@ -1064,7 +1073,8 @@ class FusionTrainingPipeline:
                 self.training_states_gpu is not None):
                 
                 # ===== GPU-OPTIMIZED PATH WITH BATCH ACCUMULATION =====
-                print(f"🚀 GPU batch accumulation: {disk_batch_size} → {gpu_processing_batch}")
+                if episode % 50 == 0:  # Only print occasionally to avoid spam
+                    print(f"🚀 GPU batch accumulation: {disk_batch_size} → {gpu_processing_batch}")
                 
                 # Process episode in chunks that will be accumulated
                 for batch_start in range(0, len(episode_indices), gpu_processing_batch):
@@ -1073,10 +1083,6 @@ class FusionTrainingPipeline:
                     
                     # STRATEGY: Accumulate multiple small disk batches into one large GPU batch
                     accumulated_states = []
-                    accumulated_actions = []
-                    accumulated_rewards = []
-                    accumulated_next_states = []
-                    accumulated_dones = []
                     accumulated_data = []
                     
                     # Process in small disk-friendly chunks, accumulate for GPU
@@ -1184,7 +1190,8 @@ class FusionTrainingPipeline:
             
             else:
                 # ===== CPU FALLBACK PATH =====
-                print("🔄 CPU fallback mode - processing individually")
+                if episode % 50 == 0:  # Only print occasionally
+                    print("🔄 CPU fallback mode - processing individually")
                 
                 for batch_start in range(0, len(episode_indices), disk_batch_size):
                     batch_end = min(batch_start + disk_batch_size, len(episode_indices))
@@ -1305,8 +1312,9 @@ class FusionTrainingPipeline:
                     print(f"  ⏱️  Episode time: {episode_time:.2f}s, "
                         f"Acc: {episode_accuracy:.3f}, Reward: {avg_episode_reward:.3f}")
                     
-                    # GPU utilization feedback
-                    if hasattr(self, 'training_states_gpu') and self.training_states_gpu is not None:
+                    # GPU utilization feedback (less verbose)
+                    if (hasattr(self, 'training_states_gpu') and self.training_states_gpu is not None and 
+                        episode % 50 == 0):  # Only print every 50 episodes
                         print(f"  🎯 Batch strategy: {disk_batch_size}×{batch_accumulation_factor} → {gpu_processing_batch} GPU batch")
         
         # ===== TRAINING COMPLETION =====
@@ -1791,42 +1799,52 @@ class FusionTrainingPipeline:
         plt.ion()
 
 def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
-    """FIXED: Return tuple as expected by calling code."""
+    """AGGRESSIVE: Push GPU to 75% memory utilization for maximum throughput."""
     
-    # Get allocated CPUs
     if 'SLURM_CPUS_PER_TASK' in os.environ:
         allocated_cpus = int(os.environ['SLURM_CPUS_PER_TASK'])
     else:
-        allocated_cpus = 6  # Your SLURM allocation
+        allocated_cpus = 6
     
     memory_gb = psutil.virtual_memory().total / (1024**3)
-    
-    print(f"🔍 System Resources: {allocated_cpus} Physical CPUs, {memory_gb:.1f}GB RAM")
-    print(f"📊 Dataset size: {dataset_size:,} samples")
     
     if torch.cuda.is_available() and 'cuda' in device:
         cuda_available = True
         gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         
-        if gpu_memory_gb >= 30:  # A100
-            target_batch = 2048
-            # AGGRESSIVE: Use 2-3x more workers than CPUs for I/O bound tasks
-            num_workers = min(24, allocated_cpus * 4)  # 6 CPUs × 4 = 24 workers max
+        if gpu_memory_gb >= 30:  # A100 - your current setup
+            # BALANCED APPROACH: Moderate increase in DataLoader batch
+            target_batch = 8192    # 4x increase (not 8x) for safety
+            num_workers = min(24, allocated_cpus * 4)
+            prefetch_factor = 6    # Higher prefetch for larger batches
+            
+            # CORRESPONDING GPU processing batches
+            gpu_processing_batch = 16384   # 2x larger than DataLoader batch
+            dqn_training_batch = 8192      # Larger DQN batches for stability
+            
+        elif gpu_memory_gb >= 15:
+            target_batch = 4096
+            gpu_processing_batch = 8192
+            dqn_training_batch = 4096
+            num_workers = min(16, allocated_cpus * 3)
             prefetch_factor = 4
-        elif gpu_memory_gb >= 15:  # RTX 3090/4090
-            target_batch = 1024
-            num_workers = min(16, allocated_cpus * 3)  # 6 CPUs × 3 = 18 workers max
-            prefetch_factor = 3
         else:
-            target_batch = 512
-            num_workers = min(12, allocated_cpus * 2)  # 6 CPUs × 2 = 12 workers max
-            prefetch_factor = 2
+            target_batch = 2048
+            gpu_processing_batch = 4096
+            dqn_training_batch = 2048
+            num_workers = min(12, allocated_cpus * 2)
+            prefetch_factor = 3
         
-        print(f"🎯 Optimized for I/O Throughput:")
-        print(f"  Physical CPUs: {allocated_cpus}")
-        print(f"  DataLoader Workers: {num_workers} ({num_workers/allocated_cpus:.1f}x CPU multiplier)")
-        print(f"  Batch Size: {target_batch:,}")
-        print(f"  Prefetch Factor: {prefetch_factor}")
+        # Calculate expected GPU memory usage
+        estimated_memory_per_graph_mb = 0.8  # More realistic estimate
+        estimated_batch_memory_gb = (target_batch * estimated_memory_per_graph_mb) / 1024
+        
+        print(f"🚀 BALANCED GPU Configuration:")
+        print(f"  DataLoader Batch: {target_batch:,} (4x increase for better feeding)")
+        print(f"  GPU Processing Batch: {gpu_processing_batch:,} (2x DataLoader batch)")
+        print(f"  DQN Training Batch: {dqn_training_batch:,} (optimal for learning)")
+        print(f"  Estimated GPU Memory: {estimated_batch_memory_gb:.1f}GB ({estimated_batch_memory_gb/gpu_memory_gb*100:.0f}%)")
+        print(f"  Target GPU Utilization: 70-85% (vs current 45%)")
         
         config = {
             'batch_size': target_batch,
@@ -1834,21 +1852,24 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
             'prefetch_factor': prefetch_factor,
             'pin_memory': True,
             'persistent_workers': True,
-            'drop_last': False
+            'drop_last': False,
+            # Store GPU batch sizes for training function
+            'gpu_processing_batch': gpu_processing_batch,
+            'dqn_training_batch': dqn_training_batch
         }
     else:
         cuda_available = False
-        # CPU mode - still use more workers than cores
         config = {
             'batch_size': 512,
             'num_workers': min(8, allocated_cpus * 2),
             'prefetch_factor': 2,
             'pin_memory': False,
             'persistent_workers': False,
-            'drop_last': False
+            'drop_last': False,
+            'gpu_processing_batch': 512,
+            'dqn_training_batch': 256
         }
     
-    # FIXED: Return tuple as expected by calling code
     return config, cuda_available
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
