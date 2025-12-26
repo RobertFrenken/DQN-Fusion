@@ -719,75 +719,6 @@ class FusionTrainingPipeline:
             print(f"❌ Error loading models: {e}")
             raise e
 
-    def prepare_fusion_data(self, train_loader: DataLoader, val_loader: DataLoader, 
-                        max_train_samples: int = 200000, max_val_samples: int = 50000):
-        """
-        GPU-optimized preparation of training and validation data for fusion learning.
-        Pre-computes and caches all states on GPU to eliminate CPU bottleneck.
-        
-        Args:
-            train_loader: Training data loader
-            val_loader: Validation data loader
-            max_train_samples: Maximum training samples to use
-            max_val_samples: Maximum validation samples to use
-        """
-        print(f"\n=== Preparing Fusion Data (GPU-Optimized) ===")
-        
-        # Extract training data
-        print("Extracting training data...")
-        train_anomaly_scores, train_gat_probs, train_labels = self.data_extractor.extract_fusion_data(
-            train_loader, max_train_samples
-        )
-        
-        # Extract validation data
-        print("Extracting validation data...")
-        val_anomaly_scores, val_gat_probs, val_labels = self.data_extractor.extract_fusion_data(
-            val_loader, max_val_samples
-        )
-        
-        # Store as tuples for easy access
-        self.training_data = list(zip(train_anomaly_scores, train_gat_probs, train_labels))
-        self.validation_data = list(zip(val_anomaly_scores, val_gat_probs, val_labels))
-        self.test_data = self.validation_data  # val_loader is actually test data in main()
-        
-        print(f"✓ Fusion data prepared:")
-        print(f"  Training samples: {len(self.training_data)}")
-        print(f"  Validation samples: {len(self.validation_data)}")
-        
-        # ===== NEW: Pre-compute all states on GPU =====
-        if self.device.type == 'cuda':
-            print("🚀 Pre-computing states on GPU for maximum throughput...")
-            
-            # Pre-compute training states
-            train_states_list = []
-            for anomaly_score, gat_prob, _ in self.training_data:
-                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
-                train_states_list.append(state)
-            
-            self.training_states_gpu = torch.tensor(
-                np.array(train_states_list), 
-                dtype=torch.float32, 
-                device=self.device
-            )
-            
-            # Pre-compute validation states
-            val_states_list = []
-            for anomaly_score, gat_prob, _ in self.validation_data:
-                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
-                val_states_list.append(state)
-            
-            self.validation_states_gpu = torch.tensor(
-                np.array(val_states_list), 
-                dtype=torch.float32, 
-                device=self.device
-            )
-            
-            print(f"✓ GPU state cache created: {self.training_states_gpu.shape} training, {self.validation_states_gpu.shape} validation")
-            print(f"  GPU memory used: {self.training_states_gpu.element_size() * self.training_states_gpu.nelement() / (1024**2):.2f}MB")
-        
-        # Data quality checks
-        self._analyze_fusion_data()
-
 
     def _compute_rewards_vectorized(self, batch_data: List, alphas: np.ndarray) -> np.ndarray:
         """
@@ -934,32 +865,43 @@ class FusionTrainingPipeline:
         if self.device.type == 'cuda':
             print("🚀 Pre-computing states on GPU for maximum throughput...")
             
-            # Pre-compute training states
-            train_states_list = []
-            for anomaly_score, gat_prob, _ in self.training_data:
-                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
-                train_states_list.append(state)
-            
-            self.training_states_gpu = torch.tensor(
-                np.array(train_states_list), 
-                dtype=torch.float32, 
-                device=self.device
-            )
-            
-            # Pre-compute validation states
-            val_states_list = []
-            for anomaly_score, gat_prob, _ in self.validation_data:
-                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
-                val_states_list.append(state)
-            
-            self.validation_states_gpu = torch.tensor(
-                np.array(val_states_list), 
-                dtype=torch.float32, 
-                device=self.device
-            )
-            
-            print(f"✓ GPU state cache created: {self.training_states_gpu.shape} training, {self.validation_states_gpu.shape} validation")
-            print(f"  GPU memory used: {self.training_states_gpu.element_size() * self.training_states_gpu.nelement() / (1024**2):.2f}MB")
+            try:
+                # Pre-compute training states
+                train_states_list = []
+                for anomaly_score, gat_prob, _ in self.training_data:
+                    state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+                    train_states_list.append(state)
+                
+                self.training_states_gpu = torch.tensor(
+                    np.array(train_states_list), 
+                    dtype=torch.float32, 
+                    device=self.device
+                )
+                
+                # Pre-compute validation states
+                val_states_list = []
+                for anomaly_score, gat_prob, _ in self.validation_data:
+                    state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
+                    val_states_list.append(state)
+                
+                self.validation_states_gpu = torch.tensor(
+                    np.array(val_states_list), 
+                    dtype=torch.float32, 
+                    device=self.device
+                )
+                
+                print(f"✓ GPU state cache created: {self.training_states_gpu.shape} training, {self.validation_states_gpu.shape} validation")
+                print(f"  GPU memory used: {self.training_states_gpu.element_size() * self.training_states_gpu.nelement() / (1024**2):.2f}MB")
+                
+            except RuntimeError as e:
+                print(f"⚠️ GPU memory error during state precomputation: {e}")
+                print("Falling back to CPU computation during training...")
+                self.training_states_gpu = None
+                self.validation_states_gpu = None
+        else:
+            # Ensure GPU state tensors are None for CPU mode
+            self.training_states_gpu = None
+            self.validation_states_gpu = None
         
         # Data quality checks
         self._analyze_fusion_data()
@@ -1122,7 +1064,7 @@ class FusionTrainingPipeline:
                 batch_data = [self.training_data[idx] for idx in batch_episode_indices]
                 
                 # Process batch on GPU (instant with pre-computed states!)
-                if self.device.type == 'cuda' and hasattr(self, 'training_states_gpu'):
+                if self.device.type == 'cuda' and hasattr(self, 'training_states_gpu') and self.training_states_gpu is not None:
                     states, actions, rewards, next_states, dones = self._process_experience_batch_gpu(
                         batch_episode_indices.tolist(), batch_data
                     )
@@ -1193,7 +1135,7 @@ class FusionTrainingPipeline:
                             # Sample Q-values for monitoring
                             with torch.no_grad():
                                 sample_idx = np.random.randint(0, len(self.training_data))
-                                if hasattr(self, 'training_states_gpu'):
+                                if hasattr(self, 'training_states_gpu') and self.training_states_gpu is not None:
                                     sample_state = self.training_states_gpu[sample_idx:sample_idx+1]
                                 else:
                                     anomaly_s, gat_p, _ = self.training_data[sample_idx]
@@ -2072,15 +2014,7 @@ def main(config: DictConfig):
         torch.cuda.empty_cache()  # Clear cache before large extraction
         torch.cuda.set_per_process_memory_fraction(0.99)  # Use 99% of GPU memory
     
-    pipeline.prepare_fusion_data(
-        train_loader, 
-        test_loader, 
-        max_train_samples=sampling_config['max_train'],
-        max_val_samples=sampling_config['max_val']
-    )
-    
-    
-    # Initialize fusion agent with stability-focused config
+    # Initialize fusion agent BEFORE preparing fusion data (needed for normalize_state)
     pipeline.initialize_fusion_agent(
         alpha_steps=config_dict.get('alpha_steps', ALPHA_STEPS),           # Use stable config
         lr=config_dict.get('fusion_lr', FUSION_LR),                       # Use stable learning rate
@@ -2089,6 +2023,13 @@ def main(config: DictConfig):
         batch_size=config_dict.get('fusion_batch_size', FUSION_BATCH_SIZE), # Use optimized batch size
         target_update_freq=config_dict.get('fusion_target_update', TARGET_UPDATE_FREQ), # Use optimized update freq
         config_dict={**config_dict, 'fusion_epsilon_decay': FUSION_EPSILON_DECAY, 'fusion_min_epsilon': FUSION_MIN_EPSILON}
+    )
+    
+    pipeline.prepare_fusion_data(
+        train_loader, 
+        test_loader, 
+        max_train_samples=sampling_config['max_train'],
+        max_val_samples=sampling_config['max_val']
     )
     
     # Train the fusion agent with patience for continued learning
