@@ -1791,7 +1791,7 @@ class FusionTrainingPipeline:
         plt.ion()
 
 def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
-    """FIXED: More aggressive worker allocation for better CPU utilization."""
+    """FIXED: Return tuple as expected by calling code."""
     
     # Get allocated CPUs
     if 'SLURM_CPUS_PER_TASK' in os.environ:
@@ -1805,6 +1805,7 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
     print(f"📊 Dataset size: {dataset_size:,} samples")
     
     if torch.cuda.is_available() and 'cuda' in device:
+        cuda_available = True
         gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
         
         if gpu_memory_gb >= 30:  # A100
@@ -1827,7 +1828,7 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
         print(f"  Batch Size: {target_batch:,}")
         print(f"  Prefetch Factor: {prefetch_factor}")
         
-        return {
+        config = {
             'batch_size': target_batch,
             'num_workers': num_workers,
             'prefetch_factor': prefetch_factor,
@@ -1836,8 +1837,9 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
             'drop_last': False
         }
     else:
+        cuda_available = False
         # CPU mode - still use more workers than cores
-        return {
+        config = {
             'batch_size': 512,
             'num_workers': min(8, allocated_cpus * 2),
             'prefetch_factor': 2,
@@ -1845,6 +1847,9 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
             'persistent_workers': False,
             'drop_last': False
         }
+    
+    # FIXED: Return tuple as expected by calling code
+    return config, cuda_available
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
                                  batch_size: int = 1024, device: str = 'cuda'):
