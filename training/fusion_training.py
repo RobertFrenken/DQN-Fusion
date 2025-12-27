@@ -47,38 +47,7 @@ from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanu
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
-class CudaPrefetcher:
-    """Double-buffer batches to GPU to overlap H2D copy with compute."""
-    def __init__(self, loader: DataLoader, device: torch.device, prefetch_batches: int = 2):
-        self.loader = loader
-        self.device = device if isinstance(device, torch.device) else torch.device(device)
-        self.prefetch_batches = max(1, prefetch_batches)
-        self.iterator = iter(loader)
-        self.prefetch_stream = torch.cuda.Stream(device=self.device) if self.device.type == 'cuda' else None
-        self._queue = []
-        self._prefetch()
 
-    def _prefetch(self):
-        # Keep up to prefetch_batches ready (already moved to device if CUDA)
-        while len(self._queue) < self.prefetch_batches:
-            try:
-                batch = next(self.iterator)
-            except StopIteration:
-                break
-            if self.device.type == 'cuda':
-                # Pin memory is handled by DataLoader; move to device on a separate stream
-                with torch.cuda.stream(self.prefetch_stream):
-                    batch = batch.to(self.device, non_blocking=True)
-            self._queue.append(batch)
-
-    def next(self):
-        if not self._queue:
-            return None
-        if self.device.type == 'cuda':
-            torch.cuda.current_stream(self.device).wait_stream(self.prefetch_stream)
-        batch = self._queue.pop(0)
-        self._prefetch()
-        return batch
 class GPUMonitor:
     """Monitor GPU usage, memory, and performance metrics during training."""
     
@@ -433,14 +402,14 @@ class FusionDataExtractor:
         print(f"✓ Fusion Data Extractor initialized (GPU-Optimized) with threshold: {threshold:.4f}")
 
     def compute_anomaly_scores(self, batch) -> torch.Tensor:
-        """FIXED: Memory-efficient computation without massive tensors."""
+        """Memory-efficient computation without massive tensors."""
         with torch.no_grad():
             # Forward pass (normal)
             cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
                 batch.x, batch.edge_index, batch.batch
             )
             
-            # FIXED: Create neighborhood targets more efficiently
+            # Create neighborhood targets more efficiently
             neighbor_targets = self.autoencoder.create_neighborhood_targets(
                 batch.x, batch.edge_index, batch.batch
             )
@@ -494,7 +463,7 @@ class FusionDataExtractor:
             return probabilities  # Keep on GPU!
 
     def extract_fusion_data(self, data_loader: DataLoader, max_samples: int = None) -> Tuple[List, List, List]:
-        """FIXED: Eliminate CPU serialization bottleneck."""
+        """Eliminate CPU serialization bottleneck."""
         print("🚀 GPU-Optimized Fusion Data Extraction...")
         
         # Pre-allocate GPU tensors to avoid repeated allocation
@@ -507,7 +476,7 @@ class FusionDataExtractor:
         samples_processed = 0
         total_batches = len(data_loader)
         
-        # FIXED: Process in larger chunks to reduce Python overhead
+        # Process in larger chunks to reduce Python overhead
         with torch.cuda.stream(torch.cuda.Stream()) if self.device.type == 'cuda' else nullcontext() as stream:
             with tqdm(data_loader, desc="GPU Extraction", total=total_batches, 
                     miniters=max(1, total_batches//20)) as pbar:
@@ -517,7 +486,7 @@ class FusionDataExtractor:
                         # Async GPU transfer with stream
                         batch = batch.to(self.device, non_blocking=True)
                         
-                    # FIXED: Vectorized computation without intermediate CPU transfers
+                    # Vectorized computation without intermediate CPU transfers
                     with torch.no_grad():
                         batch_anomaly_scores = self.compute_anomaly_scores(batch)
                         batch_gat_probs = self.compute_gat_probabilities(batch)
@@ -552,7 +521,7 @@ class FusionDataExtractor:
                     if max_samples and samples_processed >= max_samples:
                         break
                     
-                    # FIXED: Less frequent GPU cache clearing
+                    # Less frequent GPU cache clearing
                     if batch_idx % 100 == 0 and batch_idx > 0:
                         torch.cuda.empty_cache()
         
@@ -797,7 +766,7 @@ class FusionTrainingPipeline:
 
 
     def _process_gpu_batch_fully(self, processing_indices: List[int]) -> Dict:
-        """FIXED: Keep everything on GPU, eliminate CPU bottlenecks."""
+        """Keep everything on GPU, eliminate CPU bottlenecks."""
         
         # Convert all data to GPU tensors at once (no Python loops)
         batch_anomaly_scores = torch.tensor([self.training_data[i][0] for i in processing_indices], 
@@ -958,10 +927,19 @@ class FusionTrainingPipeline:
         """Initialize fusion agent."""
         state_dim = 4  # anomaly_score, gat_prob, disagreement, avg_confidence
         
-        # GPU optimization
+        # GPU optimization with enhanced A100 parameters
         if self.device.type == 'cuda' and self.gpu_info:
-            batch_size = max(batch_size, self.gpu_info['optimal_batch_size'])
-            buffer_size = max(buffer_size, self.gpu_info['buffer_size'])
+            if self.gpu_info['memory_gb'] >= 30:  # A100 - Use maximum efficiency settings
+                batch_size = max(batch_size, 16384)  # Much larger batch
+                buffer_size = max(buffer_size, 2000000)  # Huge replay buffer
+                target_update_freq = max(target_update_freq, 5000)  # More stable updates
+            elif self.gpu_info['memory_gb'] >= 15:  # RTX 3090/4090
+                batch_size = max(batch_size, 8192)
+                buffer_size = max(buffer_size, 1000000)
+                target_update_freq = max(target_update_freq, 3000)
+            else:  # Other GPUs
+                batch_size = max(batch_size, self.gpu_info['optimal_batch_size'])
+                buffer_size = max(buffer_size, self.gpu_info['buffer_size'])
         elif self.device.type == 'cuda':
             batch_size = max(batch_size, 16384)
             buffer_size = max(buffer_size, 500000)
@@ -982,10 +960,7 @@ class FusionTrainingPipeline:
         if self.gpu_info:
             print(f"  GPU-Optimized: Using {self.gpu_info['name']} configuration")
 
-    def _get_curriculum_phase(self, episode: int, total_episodes: int) -> dict:
-        """Return default sampling strategy (simplified)."""
-        return {'phase': 'natural', 'high_disagreement_prob': 0.2, 
-               'extreme_confidence_prob': 0.2, 'balanced_prob': 0.6}
+
 
 
 
@@ -1162,6 +1137,10 @@ class FusionTrainingPipeline:
                         episode_reward += batch_results['episode_reward']
                         episode_correct += batch_results['episode_correct']
                         episode_samples += batch_results['episode_samples']
+                        
+                        # Track actions for episode statistics
+                        for action_idx in batch_results['actions'].cpu().numpy():
+                            episode_action_counts[action_idx] += 1
                         
             
             else:
@@ -1617,39 +1596,6 @@ class FusionTrainingPipeline:
             json.dump(config, f, indent=2)
         
         print(f"✓ Fusion agent and config saved to {save_folder}")
-    
-    def _analyze_q_values_for_sample_states(self):
-        """Analyze Q-values for sample states to check learning."""
-        if not self.training_data:
-            return
-            
-        # Sample a few representative states
-        sample_indices = [0, len(self.training_data)//4, len(self.training_data)//2, 
-                         3*len(self.training_data)//4, len(self.training_data)-1]
-        
-        print(f"  Q-Value Analysis for Sample States:")
-        for i, idx in enumerate(sample_indices[:3]):  # Just show first 3
-            if idx < len(self.training_data):
-                anomaly_score, gat_prob, true_label = self.training_data[idx]
-                state = self.fusion_agent.normalize_state(anomaly_score, gat_prob)
-                
-                with torch.no_grad():
-                    device = getattr(self.fusion_agent, 'device', self.device)
-                    q_network = getattr(self.fusion_agent, 'q_network', None)
-                    alpha_values = getattr(self.fusion_agent, 'alpha_values', [0.0, 0.25, 0.5, 0.75, 1.0])
-                    
-                    if q_network is not None:
-                        state_tensor = torch.tensor(state, dtype=torch.float32).unsqueeze(0).to(device)
-                        q_values = q_network(state_tensor).squeeze()
-                        best_action = torch.argmax(q_values).item()
-                        best_alpha = alpha_values[best_action] if best_action < len(alpha_values) else 0.5
-                        max_q = q_values[best_action].item()
-                    else:
-                        best_alpha = 0.5  # Fallback
-                        max_q = 0.0
-                
-                print(f"    State{i+1}: VGAE={anomaly_score:.3f}, GAT={gat_prob:.3f}, Label={true_label} "
-                      f"→ Best α={best_alpha:.2f} (Q={max_q:.3f})")
 
     def _plot_enhanced_training_progress(self, accuracies, rewards, losses, q_values, 
                                        action_distributions, reward_stats, validation_scores, dataset_key):
@@ -1850,7 +1796,7 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
                                  batch_size: int = 1024, device: str = 'cuda'):
-    """FIXED: Aggressive worker allocation with fallback protection."""
+    """Aggressive worker allocation with fallback protection."""
     
     dataset = next((d for d in [train_subset, test_dataset, full_train_dataset] if d is not None), None)
     if dataset is None:
@@ -2046,6 +1992,10 @@ def main(config: DictConfig):
         embedding_dim=8, 
         device=str(device)
     )
+    
+    # Store dataloader config for fusion training optimization
+    resource_config, _ = calculate_dynamic_resources(len(dataset), str(device))
+    pipeline._dataloader_config = resource_config
     
     # === Load Pre-trained Models ===
     autoencoder_path = f"saved_models1/autoencoder_best_{dataset_key}.pth"
