@@ -824,74 +824,34 @@ class FusionTrainingPipeline:
             attack_gat_avg = np.mean([x[1] for x in attack_data])
             print(f"Attack Class Averages: Anomaly={attack_anomaly_avg:.3f}, GAT={attack_gat_avg:.3f}")
 
-    def initialize_fusion_agent(self, alpha_steps: int = 21, lr: float = 1e-3, 
-                               epsilon: float = 0.3, buffer_size: int = 100000,
-                               batch_size: int = 16384, target_update_freq: int = 100,
-                               config_dict: dict = None):
-        """Initialize fusion agent."""
-        state_dim = 4  # anomaly_score, gat_prob, disagreement, avg_confidence
+    def initialize_fusion_agent(self, config_dict: dict = None):
+        """Initialize fusion agent with optimal defaults."""
+        state_dim = 4
         
-        # GPU optimization with enhanced A100 parameters
-        if self.device.type == 'cuda' and self.gpu_info:
-            if self.gpu_info['memory_gb'] >= 30:  # A100 - Use maximum efficiency settings
-                batch_size = max(batch_size, 16384)  # Much larger batch
-                buffer_size = max(buffer_size, 2000000)  # Huge replay buffer
-                target_update_freq = max(target_update_freq, 5000)  # More stable updates
-            elif self.gpu_info['memory_gb'] >= 15:  # RTX 3090/4090
-                batch_size = max(batch_size, 8192)
-                buffer_size = max(buffer_size, 1000000)
-                target_update_freq = max(target_update_freq, 3000)
-            else:  # Other GPUs
-                batch_size = max(batch_size, self.gpu_info['optimal_batch_size'])
-                buffer_size = max(buffer_size, self.gpu_info['buffer_size'])
-        elif self.device.type == 'cuda':
-            batch_size = max(batch_size, 16384)
-            buffer_size = max(buffer_size, 500000)
+        # Use GPU-optimized defaults based on detected hardware
+        if self.gpu_info['memory_gb'] >= 30:  # A100
+            batch_size, buffer_size = 16384, 2000000
+        else:  # Other GPUs
+            batch_size, buffer_size = 8192, 1000000
             
         self.fusion_agent = EnhancedDQNFusionAgent(
-            alpha_steps=alpha_steps, lr=lr, 
-            gamma=config_dict.get('fusion_gamma', 0.95) if config_dict else 0.95, 
-            epsilon=epsilon,
-            epsilon_decay=config_dict.get('fusion_epsilon_decay', 0.995) if config_dict else 0.995,
-            min_epsilon=config_dict.get('fusion_min_epsilon', 0.1) if config_dict else 0.1,
-            buffer_size=buffer_size, batch_size=batch_size, target_update_freq=target_update_freq,
+            alpha_steps=21, lr=1e-3, epsilon=0.3,
+            buffer_size=buffer_size, batch_size=batch_size,
             device=str(self.device), state_dim=state_dim
         )
         
-        print(f"✓ Fusion Agent initialized with {state_dim}D state space")
-        print(f"  Batch Size: {batch_size:,} samples")
-        print(f"  Buffer Size: {buffer_size:,} experiences")
-        if self.gpu_info:
-            print(f"  GPU-Optimized: Using {self.gpu_info['name']} configuration")
+        print(f"✓ Fusion Agent initialized: {batch_size:,} batch, {buffer_size:,} buffer")
 
 
 
 
 
-    def _sample_by_curriculum(self, episode: int, total_episodes: int, episode_size: int) -> List:
-        """Sample training data (simplified without curriculum learning)."""
-        # Simple random sampling without curriculum complexity
-        return random.sample(self.training_data, min(episode_size, len(self.training_data)))
-    
 
-    def train_fusion_agent(self, episodes: int = 50, validation_interval: int = 25,
-                      early_stopping_patience: int = 50, save_interval: int = 50,
-                      dataset_key: str = 'default', config_dict: dict = None):
-        """
-        GPU-optimized fusion agent training with batch accumulation for high GPU utilization.
-        
-        Strategy: Load small batches from disk → Accumulate → Process large batches on GPU
-        
-        Args:
-            episodes: Number of training episodes
-            validation_interval: Episodes between validation checks  
-            early_stopping_patience: Episodes to wait before early stopping
-            save_interval: Episodes between model saves
-            dataset_key: Dataset identifier for saving
-            config_dict: Additional configuration parameters
-        """
-        print(f"\n=== Training Fusion Agent (GPU-Optimized with Batch Accumulation) ===")
-        print(f"Episodes: {episodes}, Validation every {validation_interval} episodes")
+
+    def train_fusion_agent(self, episodes: int = 50, dataset_key: str = 'default'):
+        """GPU-optimized fusion agent training."""
+        print(f"\n=== Training Fusion Agent (GPU-Optimized) ===")
+        print(f"Episodes: {episodes}")
         
         if not self.training_data or not self.fusion_agent:
             raise ValueError("Training data and fusion agent must be initialized first")
@@ -1036,7 +996,7 @@ class FusionTrainingPipeline:
             action_distributions.append(episode_action_counts / max(episode_samples, 1))
             
             # ===== VALIDATION AND CHECKPOINTING =====
-            if (episode + 1) % validation_interval == 0:
+            if (episode + 1) % 25 == 0:  # Fixed validation interval
                 val_results = self.fusion_agent.validate_agent(
                     self.validation_data, 
                     num_samples=min(5000, len(self.validation_data))
@@ -1054,12 +1014,12 @@ class FusionTrainingPipeline:
                 else:
                     patience_counter += 1
                 
-                if patience_counter >= early_stopping_patience:
-                    print(f"⏹️  Early stopping at episode {episode} (patience: {early_stopping_patience})")
+                if patience_counter >= 50:  # Fixed patience
+                    print(f"⏹️  Early stopping at episode {episode}")
                     break
             
             # Periodic checkpoint save
-            if (episode + 1) % save_interval == 0:
+            if (episode + 1) % 50 == 0:  # Fixed save interval
                 self.save_fusion_agent(checkpoint_dir, f"checkpoint_ep{episode}", dataset_key)
             
             # GPU monitoring
@@ -1069,11 +1029,6 @@ class FusionTrainingPipeline:
                 if episode > 0:
                     print(f"  ⏱️  Episode time: {episode_time:.2f}s, "
                         f"Acc: {episode_accuracy:.3f}, Reward: {avg_episode_reward:.3f}")
-                    
-                    # GPU utilization feedback (less verbose)
-                    if (hasattr(self, 'training_states_gpu') and self.training_states_gpu is not None and 
-                        episode % 50 == 0):  # Only print every 50 episodes
-                        print(f"  🎯 Batch strategy: {disk_batch_size}×{batch_accumulation_factor} → {gpu_processing_batch} GPU batch")
         
         # ===== TRAINING COMPLETION =====
         total_training_time = time.time() - training_start_time
@@ -1853,15 +1808,7 @@ def main(config: DictConfig):
         torch.cuda.set_per_process_memory_fraction(0.8)  # Use 80% instead of 99%
     
     # Initialize fusion agent BEFORE preparing fusion data (needed for normalize_state)
-    pipeline.initialize_fusion_agent(
-        alpha_steps=config_dict.get('alpha_steps', ALPHA_STEPS),           # Use stable config
-        lr=config_dict.get('fusion_lr', FUSION_LR),                       # Use stable learning rate
-        epsilon=config_dict.get('fusion_epsilon', FUSION_EPSILON),        # Use enhanced exploration
-        buffer_size=config_dict.get('fusion_buffer_size', BUFFER_SIZE), # Use optimized buffer size
-        batch_size=config_dict.get('fusion_batch_size', FUSION_BATCH_SIZE), # Use optimized batch size
-        target_update_freq=config_dict.get('fusion_target_update', TARGET_UPDATE_FREQ), # Use optimized update freq
-        config_dict={**config_dict, 'fusion_epsilon_decay': FUSION_EPSILON_DECAY, 'fusion_min_epsilon': FUSION_MIN_EPSILON}
-    )
+    pipeline.initialize_fusion_agent()
     
     pipeline.prepare_fusion_data(
         train_loader, 
@@ -1870,14 +1817,10 @@ def main(config: DictConfig):
         max_val_samples=sampling_config['max_val']
     )
     
-    # Train the fusion agent with patience for continued learning
+    # Train the fusion agent
     training_results = pipeline.train_fusion_agent(
-        episodes=config_dict.get('fusion_episodes', FUSION_EPISODES),  # Use faster default
-        validation_interval=25,   # Less frequent validation for speed
-        early_stopping_patience=75,   # Much longer patience - continue learning!
-        save_interval=50,         # Less frequent checkpoints for speed
-        dataset_key=dataset_key,
-        config_dict=config_dict  # Pass config_dict here
+        episodes=config_dict.get('fusion_episodes', 200),  # Reasonable default
+        dataset_key=dataset_key
     )
     
     # === Final Evaluation ===
