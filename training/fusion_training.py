@@ -573,31 +573,8 @@ class FusionTrainingPipeline:
         print(f"  Performance monitoring: {'GPU' if self.device.type == 'cuda' else 'CPU'} tracking enabled")
     
     def _detect_gpu_capabilities(self):
-        """Detect GPU capabilities and optimize parameters."""
-        if not torch.cuda.is_available():
-            return None
-        
-        gpu_props = torch.cuda.get_device_properties(self.device)
-        memory_gb = gpu_props.total_memory / (1024**3)
-
-        # Simplified GPU configuration
-        if memory_gb >= 30:  # A100 class
-            optimal_batch_size = 32768
-            buffer_size = 100000
-            training_steps = 4
-        else:  # Other GPUs
-            optimal_batch_size = 16384
-            buffer_size = 75000
-            training_steps = 3
-        
-        return {
-            'name': gpu_props.name,
-            'memory_gb': memory_gb,
-            'optimal_batch_size': optimal_batch_size,
-            'buffer_size': buffer_size,
-            'training_steps': training_steps,
-            'compute_capability': f"{gpu_props.major}.{gpu_props.minor}"
-        }
+        """Detect GPU capabilities using the unified configuration function."""
+        return detect_gpu_capabilities_unified(str(self.device))
 
     def load_pretrained_models(self, autoencoder_path: str, classifier_path: str):
         """
@@ -854,14 +831,12 @@ class FusionTrainingPipeline:
             print(f"Attack Class Averages: Anomaly={attack_anomaly_avg:.3f}, GAT={attack_gat_avg:.3f}")
 
     def initialize_fusion_agent(self, config_dict: dict = None):
-        """Initialize fusion agent with optimal defaults."""
+        """Initialize fusion agent using unified GPU configuration."""
         state_dim = 4
         
-        # Use GPU-optimized defaults based on detected hardware - INCREASED FOR BETTER UTILIZATION
-        if self.gpu_info['memory_gb'] >= 30:  # A100
-            batch_size, buffer_size = 65536, 8000000  # 4x larger for better GPU utilization
-        else:  # Other GPUs
-            batch_size, buffer_size = 32768, 4000000  # 4x larger for better GPU utilization
+        # Use unified GPU configuration
+        batch_size = self.gpu_info['dqn_batch_size']
+        buffer_size = self.gpu_info['buffer_size']
             
         self.fusion_agent = EnhancedDQNFusionAgent(
             alpha_steps=21, lr=1e-3, epsilon=0.3,
@@ -872,11 +847,6 @@ class FusionTrainingPipeline:
         print(f"✓ Fusion Agent initialized: {batch_size:,} batch, {buffer_size:,} buffer")
 
 
-
-
-
-
-
     def train_fusion_agent(self, episodes: int = 50, dataset_key: str = 'default'):
         """GPU-optimized fusion agent training."""
         print(f"\n=== Training Fusion Agent (GPU-Optimized) ===")
@@ -885,23 +855,11 @@ class FusionTrainingPipeline:
         if not self.training_data or not self.fusion_agent:
             raise ValueError("Training data and fusion agent must be initialized first")
         
-        # ===== GPU BATCH CONFIGURATION - OPTIMIZED FOR BETTER UTILIZATION =====
-        # Increased batch sizes for better GPU utilization
-        if self.gpu_info['memory_gb'] >= 30:  # A100
-            gpu_processing_batch = 65536   # 4x increase for better GPU utilization
-            dqn_training_batch = 32768     # 4x increase
-            training_steps_per_episode = 16
-            episode_sample_ratio = 0.5
-        elif self.gpu_info['memory_gb'] >= 15:  # RTX 3090/4090
-            gpu_processing_batch = 32768   # 4x increase
-            dqn_training_batch = 16384     # 4x increase
-            training_steps_per_episode = 12
-            episode_sample_ratio = 0.4
-        else:  # Other GPUs
-            gpu_processing_batch = 16384   # 4x increase
-            dqn_training_batch = 8192      # 4x increase
-            training_steps_per_episode = 8
-            episode_sample_ratio = 0.3
+        # ===== USE UNIFIED GPU CONFIGURATION =====
+        gpu_processing_batch = self.gpu_info['gpu_processing_batch']
+        dqn_training_batch = self.gpu_info['dqn_training_batch'] 
+        training_steps_per_episode = self.gpu_info['training_steps_per_episode']
+        episode_sample_ratio = self.gpu_info['episode_sample_ratio']
         
         print(f"🎯 GPU Batch Configuration:")
         print(f"  GPU Processing Batch: {gpu_processing_batch:,}")
@@ -1507,68 +1465,22 @@ class FusionTrainingPipeline:
         plt.close(fig)
         plt.ion()
 
-def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
-    """AGGRESSIVE: Push GPU to 75% memory utilization for maximum throughput."""
+def detect_gpu_capabilities_unified(device: str = 'cuda'):
+    """UNIFIED GPU configuration - single source of truth for all batch parameters.
     
+    This is the authoritative function for GPU detection and configuration.
+    All other functions should call this for consistency.
+    """
     if 'SLURM_CPUS_PER_TASK' in os.environ:
         allocated_cpus = int(os.environ['SLURM_CPUS_PER_TASK'])
     else:
         allocated_cpus = 6
     
-    memory_gb = psutil.virtual_memory().total / (1024**3)
-    
-    if torch.cuda.is_available() and 'cuda' in device:
-        cuda_available = True
-        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
-        
-        if gpu_memory_gb >= 30:  # A100 - your current setup
-            # BALANCED APPROACH: Moderate increase in DataLoader batch
-            target_batch = 8192    # 4x increase (not 8x) for safety
-            num_workers = min(24, allocated_cpus * 4)
-            prefetch_factor = 6    # Higher prefetch for larger batches
-            
-            # CORRESPONDING GPU processing batches - INCREASED FOR BETTER UTILIZATION
-            gpu_processing_batch = 65536   # 4x increase for better GPU utilization
-            dqn_training_batch = 32768     # 4x increase for better GPU utilization
-            
-        elif gpu_memory_gb >= 15:
-            target_batch = 4096
-            gpu_processing_batch = 32768   # 4x increase
-            dqn_training_batch = 16384     # 4x increase
-            num_workers = min(16, allocated_cpus * 3)
-            prefetch_factor = 4
-        else:
-            target_batch = 2048
-            gpu_processing_batch = 16384   # 4x increase
-            dqn_training_batch = 8192      # 4x increase
-            num_workers = min(12, allocated_cpus * 2)
-            prefetch_factor = 3
-        
-        # Calculate expected GPU memory usage
-        estimated_memory_per_graph_mb = 0.8  # More realistic estimate
-        estimated_batch_memory_gb = (target_batch * estimated_memory_per_graph_mb) / 1024
-        
-        print(f"🚀 BALANCED GPU Configuration:")
-        print(f"  DataLoader Batch: {target_batch:,} (4x increase for better feeding)")
-        print(f"  GPU Processing Batch: {gpu_processing_batch:,} (2x DataLoader batch)")
-        print(f"  DQN Training Batch: {dqn_training_batch:,} (optimal for learning)")
-        print(f"  Estimated GPU Memory: {estimated_batch_memory_gb:.1f}GB ({estimated_batch_memory_gb/gpu_memory_gb*100:.0f}%)")
-        print(f"  Target GPU Utilization: 70-85% (vs current 45%)")
-        
-        config = {
-            'batch_size': target_batch,
-            'num_workers': num_workers,
-            'prefetch_factor': prefetch_factor,
-            'pin_memory': True,
-            'persistent_workers': True,
-            'drop_last': False,
-            # Store GPU batch sizes for training function
-            'gpu_processing_batch': gpu_processing_batch,
-            'dqn_training_batch': dqn_training_batch
-        }
-    else:
-        cuda_available = False
-        config = {
+    if not torch.cuda.is_available() or device == 'cpu':
+        return {
+            'name': 'CPU',
+            'memory_gb': 0,
+            'compute_capability': 'N/A',
             'batch_size': 512,
             'num_workers': min(8, allocated_cpus * 2),
             'prefetch_factor': 2,
@@ -1576,21 +1488,84 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
             'persistent_workers': False,
             'drop_last': False,
             'gpu_processing_batch': 512,
-            'dqn_training_batch': 256
+            'dqn_training_batch': 256,
+            'dqn_batch_size': 256,
+            'buffer_size': 50000,
+            'training_steps_per_episode': 4,
+            'episode_sample_ratio': 0.2,
+            'cuda_available': False
         }
     
-    return config, cuda_available
+    # Get GPU properties
+    gpu_device = torch.device(device) if isinstance(device, str) else device
+    if gpu_device.type == 'cpu':
+        gpu_device = torch.device('cuda:0')
+        
+    gpu_props = torch.cuda.get_device_properties(gpu_device)
+    memory_gb = gpu_props.total_memory / (1024**3)
+    
+    # UNIFIED GPU CONFIGURATION - All batch sizes defined here
+    if memory_gb >= 30:  # A100 40GB+
+        config = {
+            'batch_size': 8192,                    # DataLoader batch
+            'num_workers': min(24, allocated_cpus * 4),
+            'prefetch_factor': 6,
+            'gpu_processing_batch': 65536,         # GPU processing batch
+            'dqn_training_batch': 32768,           # DQN training batch
+            'dqn_batch_size': 32768,              # Alias for compatibility
+            'buffer_size': 500000,                 # Large buffer for A100
+            'training_steps_per_episode': 16,
+            'episode_sample_ratio': 0.5
+        }
+    elif memory_gb >= 15:  # RTX 3090/4090
+        config = {
+            'batch_size': 4096,
+            'num_workers': min(16, allocated_cpus * 3),
+            'prefetch_factor': 4,
+            'gpu_processing_batch': 32768,
+            'dqn_training_batch': 16384,
+            'dqn_batch_size': 16384,
+            'buffer_size': 300000,
+            'training_steps_per_episode': 12,
+            'episode_sample_ratio': 0.4
+        }
+    else:  # Other GPUs
+        config = {
+            'batch_size': 2048,
+            'num_workers': min(12, allocated_cpus * 2),
+            'prefetch_factor': 3,
+            'gpu_processing_batch': 16384,
+            'dqn_training_batch': 8192,
+            'dqn_batch_size': 8192,
+            'buffer_size': 200000,
+            'training_steps_per_episode': 8,
+            'episode_sample_ratio': 0.3
+        }
+    
+    # Add common parameters
+    config.update({
+        'name': gpu_props.name,
+        'memory_gb': memory_gb,
+        'compute_capability': f"{gpu_props.major}.{gpu_props.minor}",
+        'pin_memory': True,
+        'persistent_workers': True,
+        'drop_last': False,
+        'cuda_available': True
+    })
+    
+    return config
 
 def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
                                  batch_size: int = 1024, device: str = 'cuda'):
-    """Aggressive worker allocation with fallback protection."""
+    """Create optimized data loaders using unified GPU configuration."""
     
     dataset = next((d for d in [train_subset, test_dataset, full_train_dataset] if d is not None), None)
     if dataset is None:
         raise ValueError("No valid dataset provided")
     
     dataset_size = len(dataset)
-    config, cuda_available = calculate_dynamic_resources(dataset_size, device)
+    config = detect_gpu_capabilities_unified(device)
+    cuda_available = config['cuda_available']
     
     
     print(f"🎯 Aggressive Worker Configuration:")
@@ -1793,7 +1768,7 @@ def main(config: DictConfig):
     )
     
     # Store dataloader config for fusion training optimization
-    resource_config, _ = calculate_dynamic_resources(len(dataset), str(device))
+    resource_config = detect_gpu_capabilities_unified(str(device))
     pipeline._dataloader_config = resource_config
     
     # === Load Pre-trained Models ===
