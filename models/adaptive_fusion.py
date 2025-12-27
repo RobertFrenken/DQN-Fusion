@@ -245,21 +245,12 @@ class EnhancedDQNFusionAgent:
         dones_np = np.zeros(batch_size)
         dones_np[-1] = 1.0  # Last state is done
         
-        # Batch insert into replay buffer
+        # Batch insert into replay buffer - let deque handle maxlen automatically
         for i in range(batch_size):
-            if len(self.replay_buffer) < self.buffer_size:
-                self.replay_buffer.append((
-                    states_np[i], actions_np[i], rewards_np[i], 
-                    next_states_np[i], dones_np[i]
-                ))
-            else:
-                # Replace oldest experience
-                idx = self.buffer_index % self.buffer_size
-                self.replay_buffer[idx] = (
-                    states_np[i], actions_np[i], rewards_np[i],
-                    next_states_np[i], dones_np[i] 
-                )
-                self.buffer_index += 1
+            self.replay_buffer.append((
+                states_np[i], actions_np[i], rewards_np[i], 
+                next_states_np[i], dones_np[i]
+            ))
 
     def update_target_network(self):
         """Update target network parameters."""

@@ -44,6 +44,7 @@ from models.models import GATWithJK, GraphAutoencoderNeighborhood
 from models.adaptive_fusion import EnhancedDQNFusionAgent
 from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
+from utils.cache_manager import CacheManager
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -699,7 +700,7 @@ class FusionTrainingPipeline:
         # All fusion math on GPU
         fusion_scores = (1 - alpha_tensor) * batch_anomaly_scores + alpha_tensor * batch_gat_probs
         predictions = (fusion_scores > 0.5).float()
-        correct = (predictions == batch_labels).float()
+        correct = (predictions == batch_labels)  # Keep as boolean for torch.where
         
         # Vectorized rewards (all on GPU)
         base_rewards = torch.where(correct, 3.0, -3.0)
@@ -712,7 +713,7 @@ class FusionTrainingPipeline:
             'actions': actions,
             'rewards': total_rewards,
             'episode_reward': total_rewards.sum().item(),
-            'episode_correct': correct.sum().item(),
+            'episode_correct': correct.float().sum().item(),
             'episode_samples': len(processing_indices)
         }
 
@@ -730,22 +731,50 @@ class FusionTrainingPipeline:
         """
         print(f"\n=== Preparing Fusion Data (GPU-Optimized) ===")
         
-        # Extract training data
-        print("Extracting training data...")
-        train_anomaly_scores, train_gat_probs, train_labels = self.data_extractor.extract_fusion_data(
-            train_loader, max_train_samples
-        )
+        # Check for cached fusion predictions first
+        cached_fusion_data = None
+        if hasattr(self, 'cache_mgr') and self.cache_mgr:
+            cached_fusion_data = self.cache_mgr.load_cache('fusion_predictions')
         
-        # Extract validation data
-        print("Extracting validation data...")
-        val_anomaly_scores, val_gat_probs, val_labels = self.data_extractor.extract_fusion_data(
-            val_loader, max_val_samples
-        )
-        
-        # Store as tuples for easy access
-        self.training_data = list(zip(train_anomaly_scores, train_gat_probs, train_labels))
-        self.validation_data = list(zip(val_anomaly_scores, val_gat_probs, val_labels))
-        self.test_data = self.validation_data  # val_loader is actually test data in main()
+        if cached_fusion_data is not None:
+            print("📥 Loading fusion predictions from cache...")
+            self.training_data = cached_fusion_data['training_data']
+            self.validation_data = cached_fusion_data['validation_data']
+            self.test_data = self.validation_data
+            print(f"🚀 Cache hit! Loaded {len(self.training_data)} train, {len(self.validation_data)} val samples")
+            print("💾 Saved ~25 minutes of GPU extraction time!")
+        else:
+            print("🔄 Cache miss - extracting fusion predictions...")
+            
+            # Extract training data
+            print("Extracting training data...")
+            train_anomaly_scores, train_gat_probs, train_labels = self.data_extractor.extract_fusion_data(
+                train_loader, max_train_samples
+            )
+            
+            # Extract validation data
+            print("Extracting validation data...")
+            val_anomaly_scores, val_gat_probs, val_labels = self.data_extractor.extract_fusion_data(
+                val_loader, max_val_samples
+            )
+            
+            # Store as tuples for easy access
+            self.training_data = list(zip(train_anomaly_scores, train_gat_probs, train_labels))
+            self.validation_data = list(zip(val_anomaly_scores, val_gat_probs, val_labels))
+            self.test_data = self.validation_data  # val_loader is actually test data in main()
+            
+            # Cache the fusion predictions
+            if hasattr(self, 'cache_mgr') and self.cache_mgr:
+                fusion_cache_data = {
+                    'training_data': self.training_data,
+                    'validation_data': self.validation_data
+                }
+                self.cache_mgr.save_cache(fusion_cache_data, 'fusion_predictions', metadata={
+                    'train_samples': len(self.training_data),
+                    'val_samples': len(self.validation_data),
+                    'max_train_samples': max_train_samples,
+                    'max_val_samples': max_val_samples
+                })
         
         print(f"✓ Fusion data prepared:")
         print(f"  Training samples: {len(self.training_data)}")
@@ -828,11 +857,11 @@ class FusionTrainingPipeline:
         """Initialize fusion agent with optimal defaults."""
         state_dim = 4
         
-        # Use GPU-optimized defaults based on detected hardware
+        # Use GPU-optimized defaults based on detected hardware - INCREASED FOR BETTER UTILIZATION
         if self.gpu_info['memory_gb'] >= 30:  # A100
-            batch_size, buffer_size = 16384, 2000000
+            batch_size, buffer_size = 65536, 8000000  # 4x larger for better GPU utilization
         else:  # Other GPUs
-            batch_size, buffer_size = 8192, 1000000
+            batch_size, buffer_size = 32768, 4000000  # 4x larger for better GPU utilization
             
         self.fusion_agent = EnhancedDQNFusionAgent(
             alpha_steps=21, lr=1e-3, epsilon=0.3,
@@ -856,23 +885,23 @@ class FusionTrainingPipeline:
         if not self.training_data or not self.fusion_agent:
             raise ValueError("Training data and fusion agent must be initialized first")
         
-        # ===== GPU BATCH CONFIGURATION =====
-        # Simplified for GPU-only usage
+        # ===== GPU BATCH CONFIGURATION - OPTIMIZED FOR BETTER UTILIZATION =====
+        # Increased batch sizes for better GPU utilization
         if self.gpu_info['memory_gb'] >= 30:  # A100
-            gpu_processing_batch = 16384
-            dqn_training_batch = 8192
+            gpu_processing_batch = 65536   # 4x increase for better GPU utilization
+            dqn_training_batch = 32768     # 4x increase
+            training_steps_per_episode = 16
+            episode_sample_ratio = 0.5
+        elif self.gpu_info['memory_gb'] >= 15:  # RTX 3090/4090
+            gpu_processing_batch = 32768   # 4x increase
+            dqn_training_batch = 16384     # 4x increase
             training_steps_per_episode = 12
             episode_sample_ratio = 0.4
-        elif self.gpu_info['memory_gb'] >= 15:  # RTX 3090/4090
-            gpu_processing_batch = 8192
-            dqn_training_batch = 4096
+        else:  # Other GPUs
+            gpu_processing_batch = 16384   # 4x increase
+            dqn_training_batch = 8192      # 4x increase
             training_steps_per_episode = 8
             episode_sample_ratio = 0.3
-        else:  # Other GPUs
-            gpu_processing_batch = 4096
-            dqn_training_batch = 2048
-            training_steps_per_episode = 6
-            episode_sample_ratio = 0.25
         
         print(f"🎯 GPU Batch Configuration:")
         print(f"  GPU Processing Batch: {gpu_processing_batch:,}")
@@ -1498,20 +1527,20 @@ def calculate_dynamic_resources(dataset_size: int, device: str = 'cuda'):
             num_workers = min(24, allocated_cpus * 4)
             prefetch_factor = 6    # Higher prefetch for larger batches
             
-            # CORRESPONDING GPU processing batches
-            gpu_processing_batch = 16384   # 2x larger than DataLoader batch
-            dqn_training_batch = 8192      # Larger DQN batches for stability
+            # CORRESPONDING GPU processing batches - INCREASED FOR BETTER UTILIZATION
+            gpu_processing_batch = 65536   # 4x increase for better GPU utilization
+            dqn_training_batch = 32768     # 4x increase for better GPU utilization
             
         elif gpu_memory_gb >= 15:
             target_batch = 4096
-            gpu_processing_batch = 8192
-            dqn_training_batch = 4096
+            gpu_processing_batch = 32768   # 4x increase
+            dqn_training_batch = 16384     # 4x increase
             num_workers = min(16, allocated_cpus * 3)
             prefetch_factor = 4
         else:
             target_batch = 2048
-            gpu_processing_batch = 4096
-            dqn_training_batch = 2048
+            gpu_processing_batch = 16384   # 4x increase
+            dqn_training_batch = 8192      # 4x increase
             num_workers = min(12, allocated_cpus * 2)
             prefetch_factor = 3
         
@@ -1675,55 +1704,67 @@ def main(config: DictConfig):
     for dir_name in ["images", "saved_models", "saved_models/fusion_checkpoints"]:
         os.makedirs(dir_name, exist_ok=True)
     
-    # === Data Loading and Preprocessing ===
+    # === Data Loading and Preprocessing with Caching ===
     print(f"\n=== Data Loading and Preprocessing ===")
     print(f"✓ Dataset: {dataset_key}, Path: {root_folder}")
+    
+    # Initialize cache manager
+    cache_mgr = CacheManager(dataset_name=dataset_key)
     
     # Add memory monitoring for preprocessing
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
         print(f"🧠 Starting preprocessing - GPU memory cleared")
     
-    # Timing diagnostics with progress
-    print("🔄 Step 1/2: Building ID mapping...")
-    io_start_time = time.time()
-    id_mapping = build_id_mapping_from_normal(root_folder)
-    io_mapping_time = time.time() - io_start_time
-    print(f"✓ ID mapping built in {io_mapping_time:.2f}s ({len(id_mapping)} IDs)")
+    # Try loading from cache first
+    print("💾 Checking for cached data...")
+    id_mapping = cache_mgr.load_cache('id_mapping')
+    dataset = cache_mgr.load_cache('raw_dataset')
+    
+    if id_mapping is None or dataset is None:
+        print("🔄 Cache miss - performing full preprocessing...")
+        
+        # Timing diagnostics with progress
+        print("🔄 Step 1/2: Building ID mapping...")
+        io_start_time = time.time()
+        id_mapping = build_id_mapping_from_normal(root_folder)
+        io_mapping_time = time.time() - io_start_time
+        print(f"✓ ID mapping built in {io_mapping_time:.2f}s ({len(id_mapping)} IDs)")
+        
+        # Cache ID mapping
+        cache_mgr.save_cache(id_mapping, 'id_mapping')
 
-    print("🔄 Step 2/2: Creating graph dataset...")
-    if preprocessing_time := io_mapping_time > 60:  # If ID mapping took > 1 min, likely slow I/O
-        print("⚠️  Slow I/O detected - using conservative settings...")
-    
-    start_time = time.time()
-    dataset = graph_creation(root_folder, id_mapping=id_mapping, 
-                           window_size=config_dict.get('window_size', 100))
-    graph_creation_time = time.time() - start_time
-    total_preprocessing_time = io_mapping_time + graph_creation_time
-    
-    print(f"✓ Dataset: {len(dataset)} graphs, {len(id_mapping)} CAN IDs")
-    print(f"✓ Graph creation time: {graph_creation_time:.2f}s")
-    print(f"✓ Total preprocessing time: {total_preprocessing_time:.2f}s")
-    
-    if total_preprocessing_time > 300:  # > 5 minutes
-        print(f"⚠️  Preprocessing took {total_preprocessing_time/60:.1f} minutes - consider data caching for future runs")
+        print("🔄 Step 2/2: Creating graph dataset...")
+        if preprocessing_time := io_mapping_time > 60:  # If ID mapping took > 1 min, likely slow I/O
+            print("⚠️  Slow I/O detected - using conservative settings...")
+        
+        start_time = time.time()
+        dataset = graph_creation(root_folder, id_mapping=id_mapping, 
+                               window_size=config_dict.get('window_size', 100))
+        graph_creation_time = time.time() - start_time
+        total_preprocessing_time = io_mapping_time + graph_creation_time
+        
+        # Cache dataset
+        cache_mgr.save_cache(dataset, 'raw_dataset', metadata={
+            'num_graphs': len(dataset),
+            'num_ids': len(id_mapping),
+            'window_size': config_dict.get('window_size', 100)
+        })
+        
+        print(f"✓ Dataset: {len(dataset)} graphs, {len(id_mapping)} CAN IDs")
+        print(f"✓ Graph creation time: {graph_creation_time:.2f}s")
+        print(f"✓ Total preprocessing time: {total_preprocessing_time:.2f}s")
+        
+        if total_preprocessing_time > 300:  # > 5 minutes
+            print(f"⚠️  Preprocessing took {total_preprocessing_time/60:.1f} minutes - now cached for future runs!")
+    else:
+        print(f"🚀 Cache hit! Loaded {len(dataset)} graphs and {len(id_mapping)} IDs from cache")
+        print(f"💾 Saved ~23 minutes of preprocessing time!")
     
     # Configuration (optimized for GPU utilization and speed)
     TRAIN_RATIO = config_dict.get('train_ratio', 0.8)
     BATCH_SIZE = config_dict.get('batch_size', 1024)
     FUSION_EPISODES = config_dict.get('fusion_episodes', 1000)
-    ALPHA_STEPS = 21
-    FUSION_LR = 0.0005  # Much lower for stability
-    FUSION_EPSILON = 0.8  # Higher exploration for better Q-learning
-    # Dynamic parameters - will be set by GPU detection and resource calculation
-    BUFFER_SIZE = None  # Will be calculated dynamically
-    FUSION_BATCH_SIZE = None  # Will be calculated dynamically  
-    TARGET_UPDATE_FREQ = None  # Will be calculated dynamically
-    
-    # Enhanced exploration parameters
-    FUSION_EPSILON = 0.9  # Higher initial exploration (was 0.8)
-    FUSION_EPSILON_DECAY = 0.995  # Slower decay for longer exploration (was 0.99)
-    FUSION_MIN_EPSILON = 0.2  # Higher minimum exploration (was 0.15)
 
     
     # Set random seeds
@@ -1809,6 +1850,9 @@ def main(config: DictConfig):
     
     # Initialize fusion agent BEFORE preparing fusion data (needed for normalize_state)
     pipeline.initialize_fusion_agent()
+    
+    # Add fusion data caching
+    pipeline.cache_mgr = cache_mgr  # Pass cache manager to pipeline
     
     pipeline.prepare_fusion_data(
         train_loader, 
