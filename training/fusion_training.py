@@ -46,498 +46,14 @@ from archive.preprocessing import graph_creation, build_id_mapping_from_normal
 from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 from utils.cache_manager import CacheManager
 
+# Import new organized modules
+from config.fusion_config import DATASET_PATHS, FUSION_WEIGHTS
+from config.plotting_config import COLOR_SCHEMES, apply_publication_style, save_publication_figure
+from gpu_monitor import GPUMonitor
+from fusion_extractor import FusionDataExtractor
+from utils.gpu_utils import detect_gpu_capabilities_unified, create_optimized_data_loaders
+
 warnings.filterwarnings('ignore', category=UserWarning)
-
-
-class GPUMonitor:
-    """Monitor GPU usage, memory, and performance metrics during training."""
-    
-    def __init__(self, device):
-        self.device = torch.device(device)
-        self.is_cuda = self.device.type == 'cuda'
-        self.gpu_stats = []
-        self.timing_stats = []
-        
-        if self.is_cuda:
-            self.gpu_name = torch.cuda.get_device_properties(self.device).name
-            self.total_memory = torch.cuda.get_device_properties(self.device).total_memory
-        else:
-            self.gpu_name = "CPU"
-            self.total_memory = psutil.virtual_memory().total
-    
-    def record_gpu_stats(self, episode: int):
-        """Record current GPU statistics."""
-        if self.is_cuda:
-            torch.cuda.synchronize()  # Ensure all ops are complete
-            
-            # Memory stats
-            memory_allocated = torch.cuda.memory_allocated(self.device)
-            memory_reserved = torch.cuda.memory_reserved(self.device)
-            memory_free = self.total_memory - memory_reserved
-            
-            # Calculate utilization percentages
-            memory_util = (memory_allocated / self.total_memory) * 100
-            reserved_util = (memory_reserved / self.total_memory) * 100
-            
-            # Try to get GPU utilization (requires nvidia-ml-py3 or pynvml)
-            gpu_util = 0.0
-            try:
-                import pynvml
-                pynvml.nvmlInit()
-                handle = pynvml.nvmlDeviceGetHandleByIndex(self.device.index)
-                util = pynvml.nvmlDeviceGetUtilizationRates(handle)
-                gpu_util = util.gpu
-            except (ImportError, Exception):
-                # Fallback: estimate based on memory usage
-                gpu_util = min(95.0, memory_util * 1.2)  # Rough approximation
-            
-            stats = {
-                'episode': episode,
-                'memory_allocated_gb': memory_allocated / (1024**3),
-                'memory_reserved_gb': memory_reserved / (1024**3),
-                'memory_free_gb': memory_free / (1024**3),
-                'memory_utilization_pct': memory_util,
-                'reserved_utilization_pct': reserved_util,
-                'gpu_utilization_pct': gpu_util,
-                'timestamp': time.time()
-            }
-        else:
-            # CPU stats
-            cpu_percent = psutil.cpu_percent(interval=0.1)
-            memory = psutil.virtual_memory()
-            
-            stats = {
-                'episode': episode,
-                'memory_allocated_gb': (memory.total - memory.available) / (1024**3),
-                'memory_reserved_gb': memory.used / (1024**3),
-                'memory_free_gb': memory.available / (1024**3),
-                'memory_utilization_pct': memory.percent,
-                'reserved_utilization_pct': memory.percent,
-                'gpu_utilization_pct': cpu_percent,
-                'timestamp': time.time()
-            }
-        
-        self.gpu_stats.append(stats)
-    
-    def record_timing(self, episodes_completed: int, elapsed_time: float):
-        """Record timing statistics."""
-        self.timing_stats.append({
-            'episodes': episodes_completed,
-            'elapsed_time': elapsed_time,
-            'episodes_per_minute': (episodes_completed / elapsed_time) * 60 if elapsed_time > 0 else 0
-        })
-    
-    def get_performance_summary(self) -> Dict:
-        """Generate performance summary with batch size recommendations."""
-        if not self.gpu_stats:
-            return {'error': 'No GPU stats collected'}
-        
-        # Calculate averages
-        avg_memory_util = np.mean([s['memory_utilization_pct'] for s in self.gpu_stats])
-        avg_gpu_util = np.mean([s['gpu_utilization_pct'] for s in self.gpu_stats])
-        max_memory_util = max([s['memory_utilization_pct'] for s in self.gpu_stats])
-        avg_memory_allocated = np.mean([s['memory_allocated_gb'] for s in self.gpu_stats])
-        
-        # Timing analysis
-        timing_summary = {}
-        if self.timing_stats:
-            total_time = sum([t['elapsed_time'] for t in self.timing_stats])
-            total_episodes = sum([t['episodes'] for t in self.timing_stats])
-            avg_episodes_per_min = np.mean([t['episodes_per_minute'] for t in self.timing_stats])
-            
-            timing_summary = {
-                'total_training_time_minutes': total_time / 60,
-                'total_episodes_trained': total_episodes,
-                'average_episodes_per_minute': avg_episodes_per_min,
-                'estimated_time_per_100_episodes_minutes': (100 / avg_episodes_per_min) if avg_episodes_per_min > 0 else 0
-            }
-        
-        # Batch size recommendations
-        current_batch_util = avg_memory_util
-        recommendations = self._generate_batch_recommendations(current_batch_util, max_memory_util, avg_gpu_util)
-        
-        return {
-            'device_name': self.gpu_name,
-            'total_memory_gb': self.total_memory / (1024**3),
-            'average_memory_utilization_pct': avg_memory_util,
-            'average_gpu_utilization_pct': avg_gpu_util,
-            'peak_memory_utilization_pct': max_memory_util,
-            'average_memory_allocated_gb': avg_memory_allocated,
-            'timing': timing_summary,
-            'recommendations': recommendations,
-            'stats_collected': len(self.gpu_stats)
-        }
-    
-    def _generate_batch_recommendations(self, avg_memory_util: float, peak_memory_util: float, avg_gpu_util: float) -> Dict:
-        """Generate intelligent batch size recommendations."""
-        recommendations = {
-            'current_efficiency': 'unknown',
-            'batch_size_recommendation': 'maintain current',
-            'reasoning': [],
-            'target_memory_utilization': '70-85%',
-            'target_gpu_utilization': '85-95%'
-        }
-        
-        # Memory utilization analysis
-        if peak_memory_util > 90:
-            recommendations['batch_size_recommendation'] = 'decrease by 25-50%'
-            recommendations['reasoning'].append(f'Peak memory usage too high: {peak_memory_util:.1f}%')
-            recommendations['current_efficiency'] = 'memory_constrained'
-        elif avg_memory_util < 50:
-            recommendations['batch_size_recommendation'] = 'increase by 50-100%'
-            recommendations['reasoning'].append(f'Low memory usage: {avg_memory_util:.1f}%, can increase batch size')
-            recommendations['current_efficiency'] = 'underutilized'
-        elif 70 <= avg_memory_util <= 85:
-            recommendations['current_efficiency'] = 'optimal'
-            recommendations['reasoning'].append(f'Good memory utilization: {avg_memory_util:.1f}%')
-        
-        # GPU utilization analysis
-        if avg_gpu_util < 70:
-            if 'increase' not in recommendations['batch_size_recommendation']:
-                recommendations['batch_size_recommendation'] = 'increase by 25-50%'
-            recommendations['reasoning'].append(f'Low GPU utilization: {avg_gpu_util:.1f}%')
-        elif avg_gpu_util > 95:
-            recommendations['reasoning'].append(f'High GPU utilization: {avg_gpu_util:.1f}% - good throughput')
-        
-        # Combined analysis
-        if avg_memory_util < 60 and avg_gpu_util < 80:
-            recommendations['batch_size_recommendation'] = 'increase by 100-200%'
-            recommendations['reasoning'].append('Both memory and GPU underutilized - significant batch size increase recommended')
-        
-        return recommendations
-    
-    def print_performance_summary(self):
-        """Print a formatted performance summary."""
-        summary = self.get_performance_summary()
-        
-        print(f"\n{'='*80}")
-        print(f"🚀 FUSION TRAINING PERFORMANCE SUMMARY")
-        print(f"{'='*80}")
-        print(f"Device: {summary['device_name']} ({summary['total_memory_gb']:.1f}GB)")
-        print(f"Stats collected from {summary['stats_collected']} episodes")
-        
-        print(f"\n📊 RESOURCE UTILIZATION:")
-        print(f"  Average Memory Usage: {summary['average_memory_utilization_pct']:.1f}% ({summary['average_memory_allocated_gb']:.2f}GB)")
-        print(f"  Peak Memory Usage: {summary['peak_memory_utilization_pct']:.1f}%")
-        print(f"  Average {'GPU' if self.is_cuda else 'CPU'} Utilization: {summary['average_gpu_utilization_pct']:.1f}%")
-        
-        if 'timing' in summary and summary['timing']:
-            timing = summary['timing']
-            print(f"\n⏱️ TRAINING PERFORMANCE:")
-            print(f"  Total Training Time: {timing['total_training_time_minutes']:.1f} minutes")
-            print(f"  Episodes Completed: {timing['total_episodes_trained']:.0f}")
-            print(f"  Training Speed: {timing['average_episodes_per_minute']:.2f} episodes/minute")
-            print(f"  Time per 100 Episodes: {timing['estimated_time_per_100_episodes_minutes']:.1f} minutes")
-        
-        rec = summary['recommendations']
-        print(f"\n🎯 OPTIMIZATION RECOMMENDATIONS:")
-        print(f"  Current Efficiency: {rec['current_efficiency'].upper()}")
-        print(f"  Batch Size Recommendation: {rec['batch_size_recommendation']}")
-        if rec['reasoning']:
-            print(f"  Reasoning:")
-            for reason in rec['reasoning']:
-                print(f"    • {reason}")
-        
-        print(f"\n📈 TARGETS FOR OPTIMAL PERFORMANCE:")
-        print(f"  Target Memory Utilization: {rec['target_memory_utilization']}")
-        print(f"  Target {'GPU' if self.is_cuda else 'CPU'} Utilization: {rec['target_gpu_utilization']}")
-        print(f"{'='*80}")
-
-# Configuration Constants
-DATASET_PATHS = {
-    'hcrl_ch': r"datasets/can-train-and-test-v1.5/hcrl-ch",
-    'hcrl_sa': r"datasets/can-train-and-test-v1.5/hcrl-sa",
-    'set_01': r"datasets/can-train-and-test-v1.5/set_01",
-    'set_02': r"datasets/can-train-and-test-v1.5/set_02",
-    'set_03': r"datasets/can-train-and-test-v1.5/set_03",
-    'set_04': r"datasets/can-train-and-test-v1.5/set_04",
-}
-
-# Fusion weights for composite anomaly scoring
-FUSION_WEIGHTS = {
-    'node_reconstruction': 0.4,
-    'neighborhood_prediction': 0.35,
-    'can_id_prediction': 0.25
-}
-
-# Publication-Ready Plotting Configuration (Scientific Paper Style)
-PLOT_CONFIG = {
-    # Font settings - clean, professional
-    'font.size': 11,
-    'font.family': 'sans-serif',
-    'font.sans-serif': ['Arial', 'Helvetica', 'DejaVu Sans'],
-    'axes.labelsize': 12,
-    'axes.titlesize': 13,
-    'xtick.labelsize': 10,
-    'ytick.labelsize': 10,
-    'legend.fontsize': 10,
-    
-    # Figure settings - high DPI, clean background
-    'figure.dpi': 300,
-    'figure.facecolor': 'white',
-    'figure.edgecolor': 'none',
-    'savefig.dpi': 300,
-    'savefig.bbox': 'tight',
-    'savefig.pad_inches': 0.05,
-    'savefig.facecolor': 'white',
-    
-    # Line and marker settings - thin, precise
-    'lines.linewidth': 1.5,
-    'lines.markersize': 4,
-    'patch.linewidth': 0.8,
-    
-    # Grid and axes - minimal, clean
-    'axes.grid': False,
-    'axes.spines.left': True,
-    'axes.spines.bottom': True,
-    'axes.spines.top': False,
-    'axes.spines.right': False,
-    'axes.axisbelow': True,
-    'axes.edgecolor': '#333333',
-    'axes.linewidth': 0.8,
-    'axes.facecolor': 'white',
-    
-    # Ticks - clean, minimal
-    'xtick.direction': 'out',
-    'ytick.direction': 'out',
-    'xtick.major.size': 3,
-    'ytick.major.size': 3,
-    'xtick.minor.size': 1.5,
-    'ytick.minor.size': 1.5,
-    'xtick.color': '#333333',
-    'ytick.color': '#333333',
-    
-    # Colors - scientific, muted palette
-    'axes.prop_cycle': plt.cycler('color', [
-        '#2E86AB',  # Blue
-        '#A23B72',  # Magenta  
-        '#F18F01',  # Orange
-        '#C73E1D',  # Red
-        '#592E83',  # Purple
-        '#1B5F40',  # Green
-        '#8B4513',  # Brown
-        '#708090'   # Slate Gray
-    ]),
-    
-    # LaTeX rendering
-    'text.usetex': False,
-    'mathtext.fontset': 'dejavusans',
-    
-    # Legend settings - clean, minimal
-    'legend.frameon': False,
-    'legend.numpoints': 1,
-    'legend.scatterpoints': 1
-}
-
-# Color schemes for different plot types (Scientific Paper Style)
-COLOR_SCHEMES = {
-    'training': {
-        'accuracy': '#2E86AB',
-        'reward': '#1B5F40', 
-        'loss': '#C73E1D',
-        'q_values': '#592E83'
-    },
-    'validation': {
-        'primary': '#A23B72',
-        'secondary': '#8B4513'
-    },
-    'fusion_analysis': {
-        'normal': '#2E86AB',
-        'attack': '#A23B72',
-        'adaptive': '#F18F01'
-    },
-    'heatmap': 'RdYlBu_r',
-    'contour': 'viridis'
-}
-
-def apply_publication_style():
-    """Apply publication-ready matplotlib style."""
-    plt.rcParams.update(PLOT_CONFIG)
-    plt.style.use('default')  # Reset to default first
-    for key, value in PLOT_CONFIG.items():
-        if key in plt.rcParams:
-            plt.rcParams[key] = value
-
-def save_publication_figure(fig, filename, additional_formats=None):
-    """Save figure in multiple publication-ready formats.
-    
-    Args:
-        fig: matplotlib figure object
-        filename: base filename with extension
-        additional_formats: list of additional formats to save ['pdf', 'svg', 'eps'] or None for PNG only
-    """
-    base_path = filename.rsplit('.', 1)[0]
-    
-    # Always save PNG (default)
-    fig.savefig(f"{base_path}.png", dpi=300, bbox_inches='tight', pad_inches=0.05)
-    
-    # Save additional formats only if specified
-    if additional_formats:
-        for fmt in additional_formats:
-            try:
-                fig.savefig(f"{base_path}.{fmt}", bbox_inches='tight', pad_inches=0.05)
-            except Exception as e:
-                print(f"Warning: Could not save {fmt} format: {e}")
-
-class FusionDataExtractor:
-    """Extract anomaly scores and GAT probabilities for fusion training - GPU OPTIMIZED."""
-    
-    def __init__(self, autoencoder: nn.Module, classifier: nn.Module, 
-                 device: str, threshold: float = 0.0):
-        self.autoencoder = autoencoder.to(device)
-        self.classifier = classifier.to(device)
-        self.device = torch.device(device)
-        self.threshold = threshold
-        
-        # Set models to evaluation mode
-        self.autoencoder.eval()
-        self.classifier.eval()
-        
-        # Pre-compute fusion weights as tensor for GPU operations
-        self.fusion_weights = torch.tensor([
-            FUSION_WEIGHTS['node_reconstruction'],
-            FUSION_WEIGHTS['neighborhood_prediction'],
-            FUSION_WEIGHTS['can_id_prediction']
-        ], dtype=torch.float32, device=self.device)
-        
-        print(f"✓ Fusion Data Extractor initialized (GPU-Optimized) with threshold: {threshold:.4f}")
-
-    def compute_anomaly_scores(self, batch) -> torch.Tensor:
-        """Memory-efficient computation without massive tensors."""
-        with torch.no_grad():
-            # Forward pass (normal)
-            cont_out, canid_logits, neighbor_logits, _, _ = self.autoencoder(
-                batch.x, batch.edge_index, batch.batch
-            )
-            
-            # Create neighborhood targets more efficiently
-            neighbor_targets = self.autoencoder.create_neighborhood_targets(
-                batch.x, batch.edge_index, batch.batch
-            )
-            
-            # Node-level errors (efficient)
-            node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
-            neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
-                neighbor_logits, neighbor_targets
-            ).mean(dim=1)
-            canid_pred = canid_logits.argmax(dim=1)
-            true_canids = batch.x[:, 0].long()
-            canid_errors = (canid_pred != true_canids).float()
-            
-            # MEMORY OPTIMIZATION: Process graphs in smaller chunks
-            num_graphs = batch.batch.max().item() + 1
-            chunk_size = min(2048, num_graphs)  # Process 2048 graphs at a time
-            
-            graph_errors_list = []
-            for chunk_start in range(0, num_graphs, chunk_size):
-                chunk_end = min(chunk_start + chunk_size, num_graphs)
-                chunk_graph_errors = torch.zeros(chunk_end - chunk_start, 3, 
-                                            device=self.device, dtype=node_errors.dtype)
-                
-                for i, graph_idx in enumerate(range(chunk_start, chunk_end)):
-                    node_mask = (batch.batch == graph_idx)
-                    if node_mask.any():
-                        graph_node_errors = torch.stack([
-                            node_errors[node_mask], 
-                            neighbor_errors[node_mask], 
-                            canid_errors[node_mask]
-                        ], dim=1)
-                        chunk_graph_errors[i] = graph_node_errors.max(dim=0)[0]
-                
-                graph_errors_list.append(chunk_graph_errors)
-            
-            # Combine chunks
-            graph_errors = torch.cat(graph_errors_list, dim=0)
-            
-            # Weighted composite score (efficient)
-            composite_scores = (graph_errors * self.fusion_weights).sum(dim=1)
-            return torch.sigmoid(composite_scores * 3 - 1.5)
-
-    def compute_gat_probabilities(self, batch) -> torch.Tensor:
-        """
-        GPU-accelerated computation of GAT classification probabilities.
-        Already efficient - just needs to stay on GPU.
-        """
-        with torch.no_grad():
-            logits = self.classifier(batch)
-            probabilities = torch.sigmoid(logits.squeeze())
-            return probabilities  # Keep on GPU!
-
-    def extract_fusion_data(self, data_loader: DataLoader, max_samples: int = None) -> Tuple[List, List, List]:
-        """Eliminate CPU serialization bottleneck."""
-        print("🚀 GPU-Optimized Fusion Data Extraction...")
-        
-        # Pre-allocate GPU tensors to avoid repeated allocation
-        device_tensors = {
-            'anomaly_scores': [],
-            'gat_probs': [],  
-            'labels': []
-        }
-        
-        samples_processed = 0
-        total_batches = len(data_loader)
-        
-        # Process in larger chunks to reduce Python overhead
-        with torch.cuda.stream(torch.cuda.Stream()) if self.device.type == 'cuda' else nullcontext() as stream:
-            with tqdm(data_loader, desc="GPU Extraction", total=total_batches, 
-                    miniters=max(1, total_batches//20)) as pbar:
-                
-                for batch_idx, batch in enumerate(pbar):
-                    if self.device.type == 'cuda':
-                        # Async GPU transfer with stream
-                        batch = batch.to(self.device, non_blocking=True)
-                        
-                    # Vectorized computation without intermediate CPU transfers
-                    with torch.no_grad():
-                        batch_anomaly_scores = self.compute_anomaly_scores(batch)
-                        batch_gat_probs = self.compute_gat_probabilities(batch)
-                        
-                        # Extract labels efficiently (keep on GPU)
-                        if hasattr(batch, 'y') and batch.y.shape[0] == batch.num_graphs:
-                            batch_labels = batch.y
-                        else:
-                            # Handle per-node labels -> per-graph labels
-                            num_graphs = batch.batch.max().item() + 1
-                            batch_labels = torch.zeros(num_graphs, device=self.device, dtype=batch.y.dtype)
-                            
-                            for graph_idx in range(num_graphs):
-                                node_mask = (batch.batch == graph_idx)
-                                if node_mask.any():
-                                    batch_labels[graph_idx] = batch.y[node_mask].max()
-                    
-                    # Accumulate on GPU (no CPU transfer yet)
-                    device_tensors['anomaly_scores'].append(batch_anomaly_scores)
-                    device_tensors['gat_probs'].append(batch_gat_probs)
-                    device_tensors['labels'].append(batch_labels)
-                    
-                    samples_processed += batch.num_graphs
-                    
-                    # Update progress less frequently for speed
-                    if batch_idx % 50 == 0:
-                        pbar.set_postfix({
-                            'samples': f"{samples_processed:,}",
-                            'gpu_util': f"{torch.cuda.utilization():.0f}%" if self.device.type == 'cuda' else "N/A"
-                        })
-                    
-                    if max_samples and samples_processed >= max_samples:
-                        break
-                    
-                    # Less frequent GPU cache clearing
-                    if batch_idx % 100 == 0 and batch_idx > 0:
-                        torch.cuda.empty_cache()
-        
-        # Single GPU→CPU transfer at the end (minimizes transfer overhead)
-        print("📥 Transferring results from GPU to CPU...")
-        anomaly_scores = torch.cat(device_tensors['anomaly_scores']).cpu().numpy().tolist()
-        gat_probabilities = torch.cat(device_tensors['gat_probs']).cpu().numpy().tolist()
-        labels = torch.cat(device_tensors['labels']).cpu().numpy().tolist()
-        
-        # Clean up GPU memory
-        del device_tensors
-        torch.cuda.empty_cache()
-        
-        return anomaly_scores, gat_probabilities, labels
-
 
 class FusionTrainingPipeline:
     """Complete pipeline for training the fusion agent."""
@@ -569,8 +85,8 @@ class FusionTrainingPipeline:
         print(f"✓ Fusion Training Pipeline initialized on {device}")
         if self.gpu_info:
             print(f"  GPU: {self.gpu_info['name']} ({self.gpu_info['memory_gb']:.1f}GB)")
-            print(f"  Optimized batch size: {self.gpu_info['optimal_batch_size']}")
-        print(f"  Performance monitoring: {'GPU' if self.device.type == 'cuda' else 'CPU'} tracking enabled")
+            print(f"  Batch size: {self.gpu_info['batch_size']}")
+        print(f"  GPU tracking enabled")
     
     def _detect_gpu_capabilities(self):
         """Detect GPU capabilities using the unified configuration function."""
@@ -1465,190 +981,7 @@ class FusionTrainingPipeline:
         plt.close(fig)
         plt.ion()
 
-def detect_gpu_capabilities_unified(device: str = 'cuda'):
-    """UNIFIED GPU configuration - single source of truth for all batch parameters.
-    
-    This is the authoritative function for GPU detection and configuration.
-    All other functions should call this for consistency.
-    """
-    if 'SLURM_CPUS_PER_TASK' in os.environ:
-        allocated_cpus = int(os.environ['SLURM_CPUS_PER_TASK'])
-    else:
-        allocated_cpus = 6
-    
-    if not torch.cuda.is_available() or device == 'cpu':
-        return {
-            'name': 'CPU',
-            'memory_gb': 0,
-            'compute_capability': 'N/A',
-            'batch_size': 512,
-            'num_workers': min(8, allocated_cpus * 2),
-            'prefetch_factor': 2,
-            'pin_memory': False,
-            'persistent_workers': False,
-            'drop_last': False,
-            'gpu_processing_batch': 512,
-            'dqn_training_batch': 256,
-            'dqn_batch_size': 256,
-            'buffer_size': 50000,
-            'training_steps_per_episode': 4,
-            'episode_sample_ratio': 0.2,
-            'cuda_available': False
-        }
-    
-    # Get GPU properties
-    gpu_device = torch.device(device) if isinstance(device, str) else device
-    if gpu_device.type == 'cpu':
-        gpu_device = torch.device('cuda:0')
-        
-    gpu_props = torch.cuda.get_device_properties(gpu_device)
-    memory_gb = gpu_props.total_memory / (1024**3)
-    
-    # UNIFIED GPU CONFIGURATION - All batch sizes defined here
-    if memory_gb >= 30:  # A100 40GB+
-        config = {
-            'batch_size': 8192,                    # DataLoader batch
-            'num_workers': min(24, allocated_cpus * 4),
-            'prefetch_factor': 6,
-            'gpu_processing_batch': 65536,         # GPU processing batch
-            'dqn_training_batch': 32768,           # DQN training batch
-            'dqn_batch_size': 32768,              # Alias for compatibility
-            'buffer_size': 500000,                 # Large buffer for A100
-            'training_steps_per_episode': 16,
-            'episode_sample_ratio': 0.5
-        }
-    elif memory_gb >= 15:  # RTX 3090/4090
-        config = {
-            'batch_size': 4096,
-            'num_workers': min(16, allocated_cpus * 3),
-            'prefetch_factor': 4,
-            'gpu_processing_batch': 32768,
-            'dqn_training_batch': 16384,
-            'dqn_batch_size': 16384,
-            'buffer_size': 300000,
-            'training_steps_per_episode': 12,
-            'episode_sample_ratio': 0.4
-        }
-    else:  # Other GPUs
-        config = {
-            'batch_size': 2048,
-            'num_workers': min(12, allocated_cpus * 2),
-            'prefetch_factor': 3,
-            'gpu_processing_batch': 16384,
-            'dqn_training_batch': 8192,
-            'dqn_batch_size': 8192,
-            'buffer_size': 200000,
-            'training_steps_per_episode': 8,
-            'episode_sample_ratio': 0.3
-        }
-    
-    # Add common parameters
-    config.update({
-        'name': gpu_props.name,
-        'memory_gb': memory_gb,
-        'compute_capability': f"{gpu_props.major}.{gpu_props.minor}",
-        'pin_memory': True,
-        'persistent_workers': True,
-        'drop_last': False,
-        'cuda_available': True
-    })
-    
-    return config
 
-def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_train_dataset=None, 
-                                 batch_size: int = 1024, device: str = 'cuda'):
-    """Create optimized data loaders using unified GPU configuration."""
-    
-    dataset = next((d for d in [train_subset, test_dataset, full_train_dataset] if d is not None), None)
-    if dataset is None:
-        raise ValueError("No valid dataset provided")
-    
-    dataset_size = len(dataset)
-    config = detect_gpu_capabilities_unified(device)
-    cuda_available = config['cuda_available']
-    
-    
-    print(f"🎯 Aggressive Worker Configuration:")
-    print(f"  Target Workers: {config['num_workers']} (for maximum I/O throughput)")
-    print(f"  Batch Size: {config['batch_size']:,}")
-    print(f"  Expected GPU Utilization Improvement: 3-5x")
-    
-    if cuda_available:
-        torch.cuda.empty_cache()
-    
-    datasets = [train_subset, test_dataset, full_train_dataset]
-    shuffles = [True, False, True]
-    
-    for dataset, shuffle in zip(datasets, shuffles):
-        if dataset is not None:
-            try:
-                print(f"🚀 Attempting aggressive configuration: {config['num_workers']} workers...")
-                
-                # Add timeout protection for worker testing
-                import signal
-                
-                def timeout_handler(signum, frame):
-                    raise TimeoutError("DataLoader creation timed out")
-                
-                signal.signal(signal.SIGALRM, timeout_handler)
-                signal.alarm(30)  # 30-second timeout
-                
-                try:
-                    loader = DataLoader(
-                        dataset,
-                        batch_size=config['batch_size'],
-                        shuffle=shuffle,
-                        pin_memory=config['pin_memory'],
-                        num_workers=config['num_workers'],
-                        persistent_workers=config['persistent_workers'],
-                        prefetch_factor=config['prefetch_factor']
-                    )
-                    
-                    # Quick test batch
-                    test_batch = next(iter(loader))
-                    signal.alarm(0)  # Cancel timeout
-                    
-                    print(f"✅ Success! {config['num_workers']} workers on {6} CPUs working efficiently")
-                    return loader
-                    
-                except TimeoutError:
-                    signal.alarm(0)
-                    print(f"⏰ Timeout with {config['num_workers']} workers - trying conservative config")
-                    raise
-                    
-            except Exception as e:
-                signal.alarm(0)  # Ensure timeout is cancelled
-                print(f"❌ Failed with {config['num_workers']} workers: {e}")
-                
-                # Progressive fallback: reduce workers but keep aggressive batching
-                fallback_workers = [
-                    config['num_workers'] // 2,  # Half workers first
-                    config['num_workers'] // 3,  # Then 1/3
-                    min(8, config['num_workers'] // 4),  # Conservative
-                    4  # Minimum fallback
-                ]
-                
-                for attempt, workers in enumerate(fallback_workers, 1):
-                    try:
-                        print(f"🔄 Fallback {attempt}: {workers} workers...")
-                        loader = DataLoader(
-                            dataset,
-                            batch_size=config['batch_size'],  # Keep aggressive batch size
-                            shuffle=shuffle,
-                            pin_memory=config['pin_memory'],
-                            num_workers=workers,
-                            persistent_workers=config['persistent_workers'],
-                            prefetch_factor=config['prefetch_factor']
-                        )
-                        test_batch = next(iter(loader))
-                        print(f"✅ Fallback successful: {workers} workers")
-                        return loader
-                    except Exception as fe:
-                        print(f"❌ Fallback {attempt} failed: {fe}")
-                
-                raise RuntimeError("All worker configurations failed")
-    
-    raise ValueError("No valid dataset provided")
 
 @hydra.main(config_path="../conf", config_name="base", version_base=None)
 def main(config: DictConfig):
@@ -1665,7 +998,11 @@ def main(config: DictConfig):
     # Setup
     setup_gpu_optimization()
     config_dict = OmegaConf.to_container(config, resolve=True)
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    
+    if not torch.cuda.is_available():
+        raise RuntimeError("CUDA GPU required for fusion training. No GPU detected.")
+        
+    device = torch.device("cuda")
     print(f"✓ Using device: {device}")
     
     # Dataset configuration
@@ -1686,10 +1023,9 @@ def main(config: DictConfig):
     # Initialize cache manager
     cache_mgr = CacheManager(dataset_name=dataset_key)
     
-    # Add memory monitoring for preprocessing
-    if torch.cuda.is_available():
-        torch.cuda.empty_cache()
-        print(f"🧠 Starting preprocessing - GPU memory cleared")
+    # Clear GPU memory for preprocessing
+    torch.cuda.empty_cache()
+    print(f"🧠 Starting preprocessing - GPU memory cleared")
     
     # Try loading from cache first
     print("💾 Checking for cached data...")
@@ -1736,9 +1072,8 @@ def main(config: DictConfig):
         print(f"🚀 Cache hit! Loaded {len(dataset)} graphs and {len(id_mapping)} IDs from cache")
         print(f"💾 Saved ~23 minutes of preprocessing time!")
     
-    # Configuration (optimized for GPU utilization and speed)
+    # Configuration
     TRAIN_RATIO = config_dict.get('train_ratio', 0.8)
-    BATCH_SIZE = config_dict.get('batch_size', 1024)
     FUSION_EPISODES = config_dict.get('fusion_episodes', 1000)
 
     
@@ -1755,8 +1090,8 @@ def main(config: DictConfig):
     
     # Create GPU-optimized data loaders
     print("🔧 Creating GPU-optimized data loaders...")
-    train_loader = create_optimized_data_loaders(train_dataset, None, None, BATCH_SIZE, str(device))
-    test_loader = create_optimized_data_loaders(None, test_dataset, None, BATCH_SIZE, str(device))
+    train_loader = create_optimized_data_loaders(train_dataset, None, None, device=str(device))
+    test_loader = create_optimized_data_loaders(None, test_dataset, None, device=str(device))
     
     print(f"✓ Data split: {len(train_dataset)} train, {len(test_dataset)} test")
     
@@ -1782,48 +1117,15 @@ def main(config: DictConfig):
         print("Please run osc_training_AD.py first to train the base models!")
         return
     
-    # Dynamic sampling based on dataset size and available resources
-    def calculate_optimal_sampling(dataset_size: int, device_type: str) -> Dict[str, int]:
-        """Calculate optimal train/val sampling based on dataset characteristics."""
-        # Dynamic ratios based purely on dataset size and compute power
-        if dataset_size < 50000:  # Small datasets - use most data
-            train_ratio = 0.9
-            val_ratio = 0.3
-        elif dataset_size < 200000:  # Medium datasets
-            train_ratio = 0.7
-            val_ratio = 0.25
-        else:  # Large datasets
-            train_ratio = 0.5
-            val_ratio = 0.15
-            
-        # Scale up for better hardware
-        if device_type == 'cuda':
-            train_ratio *= 1.5  # Use more data on GPU
-            val_ratio *= 1.2
-            
-        max_train = int(dataset_size * train_ratio)
-        max_val = int(dataset_size * val_ratio)
-        
-        # Remove artificial caps - let hardware determine limits
-        max_train = max(10000, max_train)  # Only minimum bound
-        max_val = max(2000, max_val)       # Only minimum bound
-        
-        return {'max_train': max_train, 'max_val': max_val}
+    # Use all available data - consistent batch sizes regardless of dataset size
+    max_train_samples = len(train_dataset)  # Use all training data
+    max_val_samples = len(test_dataset)     # Use all validation data
     
-    total_samples = len(train_dataset) + len(test_dataset)
-    sampling_config = calculate_optimal_sampling(total_samples, device.type)
+    print(f"📊 Using all available data:")
+    print(f"   Training samples: {max_train_samples:,}")
+    print(f"   Validation samples: {max_val_samples:,}")
     
-    print(f"🎯 Dynamic sampling for {total_samples:,} total samples:")
-    print(f"   Training samples: {sampling_config['max_train']:,}")
-    print(f"   Validation samples: {sampling_config['max_val']:,}")
-    
-    # GPU memory optimization for extraction phase
-    if torch.cuda.is_available():
-        print("🚀 Pre-allocating GPU memory for accelerated extraction...")
-        torch.cuda.empty_cache()  # Clear cache before large extraction
-        torch.cuda.set_per_process_memory_fraction(0.8)  # Use 80% instead of 99%
-    
-    # Initialize fusion agent BEFORE preparing fusion data (needed for normalize_state)
+    # Initialize fusion agent
     pipeline.initialize_fusion_agent()
     
     # Add fusion data caching
@@ -1832,8 +1134,8 @@ def main(config: DictConfig):
     pipeline.prepare_fusion_data(
         train_loader, 
         test_loader, 
-        max_train_samples=sampling_config['max_train'],
-        max_val_samples=sampling_config['max_val']
+        max_train_samples=max_train_samples,
+        max_val_samples=max_val_samples
     )
     
     # Train the fusion agent
