@@ -54,8 +54,9 @@ class EnhancedDQNFusionAgent:
         self.epsilon_decay = epsilon_decay
         self.min_epsilon = min_epsilon
         self.device = device
-        self.batch_size = batch_size
+        self.batch_size = max(batch_size, 8192) if device == 'cuda' else batch_size 
         self.target_update_freq = target_update_freq
+        self.buffer_size = max(buffer_size, 200000) if device == 'cuda' else buffer_size
         
         # Networks
         self.q_network = QNetwork(state_dim, self.action_dim).to(self.device)  # Use state_dim
@@ -183,7 +184,7 @@ class EnhancedDQNFusionAgent:
 
     def train_step(self) -> Optional[float]:
         """Enhanced training step with Double DQN."""
-        if len(self.replay_buffer) < self.batch_size:
+        if len(self.replay_buffer) < max(1024, self.batch_size):
             return None
             
         # Sample random batch
@@ -227,6 +228,38 @@ class EnhancedDQNFusionAgent:
         self.reward_history.append(rewards.mean().item())
         
         return loss.item()
+    
+    def store_batch_experiences_gpu(self, states_tensor: torch.Tensor, 
+                               actions_tensor: torch.Tensor, 
+                               rewards_tensor: torch.Tensor):
+        """Store entire batch of experiences at once on GPU - much faster."""
+        
+        # Convert tensors to numpy once
+        states_np = states_tensor.cpu().numpy()
+        actions_np = actions_tensor.cpu().numpy() 
+        rewards_np = rewards_tensor.cpu().numpy()
+        
+        # Generate next states and dones
+        batch_size = len(states_np)
+        next_states_np = np.roll(states_np, -1, axis=0)  # Simple next state
+        dones_np = np.zeros(batch_size)
+        dones_np[-1] = 1.0  # Last state is done
+        
+        # Batch insert into replay buffer
+        for i in range(batch_size):
+            if len(self.replay_buffer) < self.buffer_size:
+                self.replay_buffer.append((
+                    states_np[i], actions_np[i], rewards_np[i], 
+                    next_states_np[i], dones_np[i]
+                ))
+            else:
+                # Replace oldest experience
+                idx = self.buffer_index % self.buffer_size
+                self.replay_buffer[idx] = (
+                    states_np[i], actions_np[i], rewards_np[i],
+                    next_states_np[i], dones_np[i] 
+                )
+                self.buffer_index += 1
 
     def update_target_network(self):
         """Update target network parameters."""

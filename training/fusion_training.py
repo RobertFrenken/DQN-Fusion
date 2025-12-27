@@ -456,7 +456,7 @@ class FusionDataExtractor:
             
             # MEMORY OPTIMIZATION: Process graphs in smaller chunks
             num_graphs = batch.batch.max().item() + 1
-            chunk_size = min(512, num_graphs)  # Process 512 graphs at a time
+            chunk_size = min(2048, num_graphs)  # Process 2048 graphs at a time
             
             graph_errors_list = []
             for chunk_start in range(0, num_graphs, chunk_size):
@@ -543,7 +543,7 @@ class FusionDataExtractor:
                     samples_processed += batch.num_graphs
                     
                     # Update progress less frequently for speed
-                    if batch_idx % 10 == 0:
+                    if batch_idx % 50 == 0:
                         pbar.set_postfix({
                             'samples': f"{samples_processed:,}",
                             'gpu_util': f"{torch.cuda.utilization():.0f}%" if self.device.type == 'cuda' else "N/A"
@@ -796,7 +796,52 @@ class FusionTrainingPipeline:
         return batch_states, actions, rewards_tensor, batch_next_states, dones
 
 
-
+    def _process_gpu_batch_fully(self, processing_indices: List[int]) -> Dict:
+        """FIXED: Keep everything on GPU, eliminate CPU bottlenecks."""
+        
+        # Convert all data to GPU tensors at once (no Python loops)
+        batch_anomaly_scores = torch.tensor([self.training_data[i][0] for i in processing_indices], 
+                                        device=self.device, dtype=torch.float32)
+        batch_gat_probs = torch.tensor([self.training_data[i][1] for i in processing_indices],
+                                    device=self.device, dtype=torch.float32)  
+        batch_labels = torch.tensor([self.training_data[i][2] for i in processing_indices],
+                                device=self.device, dtype=torch.float32)
+        
+        # Get states from GPU cache
+        batch_states = self.training_states_gpu[processing_indices]
+        
+        # GPU-vectorized action selection
+        with torch.no_grad():
+            q_values = self.fusion_agent.q_network(batch_states)
+            if np.random.rand() < self.fusion_agent.epsilon:
+                actions = torch.randint(0, self.fusion_agent.action_dim, 
+                                    (len(processing_indices),), device=self.device)
+            else:
+                actions = q_values.argmax(dim=1)
+        
+        # GPU-vectorized reward computation
+        alpha_tensor = torch.tensor([self.fusion_agent.alpha_values[a] for a in actions.cpu()],
+                                device=self.device, dtype=torch.float32)
+        
+        # All fusion math on GPU
+        fusion_scores = (1 - alpha_tensor) * batch_anomaly_scores + alpha_tensor * batch_gat_probs
+        predictions = (fusion_scores > 0.5).float()
+        correct = (predictions == batch_labels).float()
+        
+        # Vectorized rewards (all on GPU)
+        base_rewards = torch.where(correct, 3.0, -3.0)
+        agreement = 1.0 - torch.abs(batch_anomaly_scores - batch_gat_probs)
+        agreement_bonus = torch.where(correct, agreement, -agreement)
+        total_rewards = torch.clamp((base_rewards + agreement_bonus) * 0.5, -1.0, 1.0)
+        
+        return {
+            'states': batch_states,
+            'actions': actions,
+            'rewards': total_rewards,
+            'episode_reward': total_rewards.sum().item(),
+            'episode_correct': correct.sum().item(),
+            'episode_samples': len(processing_indices)
+        }
 
     def prepare_fusion_data(self, train_loader: DataLoader, val_loader: DataLoader, 
                         max_train_samples: int = 200000, max_val_samples: int = 50000):
@@ -1101,92 +1146,23 @@ class FusionTrainingPipeline:
                     # Combine all accumulated small batches into one large GPU batch
                     if accumulated_states:
                         large_batch_states = torch.cat(accumulated_states, dim=0)
-                        batch_size = large_batch_states.shape[0]
+                        processing_indices = processing_indices[:len(accumulated_data)]
                         
-                        # ===== VECTORIZED GPU PROCESSING (HIGH UTILIZATION) =====
-                        with torch.no_grad():
-                            # Process entire large batch at once on GPU
-                            q_values = self.fusion_agent.q_network(large_batch_states)
-                            
-                            # Vectorized epsilon-greedy for entire batch
-                            if np.random.rand() < self.fusion_agent.epsilon:
-                                actions = torch.randint(0, self.fusion_agent.action_dim, 
-                                                    (batch_size,), device=self.device)
-                            else:
-                                actions = q_values.argmax(dim=1)
+                        # Use the new GPU batch processor
+                        batch_results = self._process_gpu_batch_fully(processing_indices)
                         
-                        # ===== VECTORIZED REWARD COMPUTATION =====
-                        # Extract data for vectorized computation
-                        batch_anomaly_scores = np.array([x[0] for x in accumulated_data])
-                        batch_gat_probs = np.array([x[1] for x in accumulated_data])
-                        batch_true_labels = np.array([x[2] for x in accumulated_data])
-                        batch_alphas = self.fusion_agent.alpha_values[actions.cpu().numpy()]
-                        
-                        # Vectorized fusion and reward computation
-                        fusion_scores = (1 - batch_alphas) * batch_anomaly_scores + batch_alphas * batch_gat_probs
-                        predictions = (fusion_scores > 0.5).astype(int)
-                        
-                        # Vectorized reward computation (much faster than loops!)
-                        correct_mask = (predictions == batch_true_labels)
-                        base_rewards = np.where(correct_mask, 3.0, -3.0)
-                        
-                        # Model agreement bonus (vectorized)
-                        model_agreement = 1.0 - np.abs(batch_anomaly_scores - batch_gat_probs)
-                        agreement_bonus = np.where(correct_mask, model_agreement, -(1.0 - model_agreement))
-                        
-                        # Confidence bonus (vectorized)
-                        confidence_bonus = np.zeros_like(base_rewards)
-                        for i in range(len(accumulated_data)):
-                            if correct_mask[i]:
-                                if batch_true_labels[i] == 1:  # Attack
-                                    confidence = max(batch_anomaly_scores[i], batch_gat_probs[i])
-                                else:  # Normal
-                                    confidence = 1.0 - max(batch_anomaly_scores[i], batch_gat_probs[i])
-                                confidence_bonus[i] = 0.5 * confidence
-                            else:
-                                # Overconfidence penalty
-                                if predictions[i] == 1:  # False positive
-                                    confidence_bonus[i] = -1.5 * fusion_scores[i]
-                                else:  # False negative
-                                    confidence_bonus[i] = -1.5 * (1.0 - fusion_scores[i])
-                        
-                        # Balance bonus (vectorized)
-                        balance_bonus = 0.3 * (1.0 - np.abs(batch_alphas - 0.5) * 2)
-                        
-                        # Total rewards (vectorized)
-                        total_rewards = base_rewards + agreement_bonus + confidence_bonus + balance_bonus
-                        normalized_rewards = np.clip(total_rewards * 0.5, -1.0, 1.0)
-                        
-                        # ===== NEXT STATES AND EXPERIENCE STORAGE =====
-                        # Get next states efficiently
-                        next_indices = [min(idx + 1, len(self.training_data) - 1) 
-                                    for idx in processing_indices[:len(accumulated_data)]]
-                        large_batch_next_states = self.training_states_gpu[next_indices]
-                        
-                        # Done flags
-                        dones = torch.tensor(
-                            [idx + 1 >= len(self.training_data) for idx in processing_indices[:len(accumulated_data)]],
-                            dtype=torch.float32, device=self.device
+                        # Store experiences in batches (not individual loops)
+                        self.fusion_agent.store_batch_experiences_gpu(
+                            batch_results['states'],
+                            batch_results['actions'], 
+                            batch_results['rewards']
                         )
                         
-                        # Store experiences efficiently (batch storage)
-                        for i in range(len(accumulated_data)):
-                            self.fusion_agent.store_experience(
-                                large_batch_states[i].cpu().numpy(),
-                                actions[i].item(),
-                                normalized_rewards[i],
-                                large_batch_next_states[i].cpu().numpy(),
-                                dones[i].item()
-                            )
-                        
                         # Update episode statistics
-                        episode_reward += np.sum(normalized_rewards)
-                        episode_correct += np.sum(correct_mask)
-                        episode_samples += len(accumulated_data)
+                        episode_reward += batch_results['episode_reward']
+                        episode_correct += batch_results['episode_correct']
+                        episode_samples += batch_results['episode_samples']
                         
-                        # Update action counts
-                        for action_idx in actions.cpu().numpy():
-                            episode_action_counts[action_idx] += 1
             
             else:
                 # ===== CPU FALLBACK PATH =====
@@ -1882,6 +1858,7 @@ def create_optimized_data_loaders(train_subset=None, test_dataset=None, full_tra
     
     dataset_size = len(dataset)
     config, cuda_available = calculate_dynamic_resources(dataset_size, device)
+    
     
     print(f"🎯 Aggressive Worker Configuration:")
     print(f"  Target Workers: {config['num_workers']} (for maximum I/O throughput)")
