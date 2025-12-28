@@ -1037,23 +1037,17 @@ def main(config: DictConfig):
         
         # Timing diagnostics with progress
         print("🔄 Step 1/2: Building ID mapping...")
-        io_start_time = time.time()
         id_mapping = build_id_mapping_from_normal(root_folder)
-        io_mapping_time = time.time() - io_start_time
-        print(f"✓ ID mapping built in {io_mapping_time:.2f}s ({len(id_mapping)} IDs)")
         
         # Cache ID mapping
         cache_mgr.save_cache(id_mapping, 'id_mapping')
 
         print("🔄 Step 2/2: Creating graph dataset...")
-        if preprocessing_time := io_mapping_time > 60:  # If ID mapping took > 1 min, likely slow I/O
-            print("⚠️  Slow I/O detected - using conservative settings...")
         
         start_time = time.time()
         dataset = graph_creation(root_folder, id_mapping=id_mapping, 
                                window_size=config_dict.get('window_size', 100))
         graph_creation_time = time.time() - start_time
-        total_preprocessing_time = io_mapping_time + graph_creation_time
         
         # Cache dataset
         cache_mgr.save_cache(dataset, 'raw_dataset', metadata={
@@ -1064,26 +1058,18 @@ def main(config: DictConfig):
         
         print(f"✓ Dataset: {len(dataset)} graphs, {len(id_mapping)} CAN IDs")
         print(f"✓ Graph creation time: {graph_creation_time:.2f}s")
-        print(f"✓ Total preprocessing time: {total_preprocessing_time:.2f}s")
         
-        if total_preprocessing_time > 300:  # > 5 minutes
-            print(f"⚠️  Preprocessing took {total_preprocessing_time/60:.1f} minutes - now cached for future runs!")
     else:
         print(f"🚀 Cache hit! Loaded {len(dataset)} graphs and {len(id_mapping)} IDs from cache")
         print(f"💾 Saved ~23 minutes of preprocessing time!")
-    
-    # Configuration
-    TRAIN_RATIO = config_dict.get('train_ratio', 0.8)
-    FUSION_EPISODES = config_dict.get('fusion_episodes', 1000)
 
-    
     # Set random seeds
     torch.manual_seed(42)
     np.random.seed(42)
     random.seed(42)
     
     # Train/test split
-    train_size = int(TRAIN_RATIO * len(dataset))
+    train_size = int(config_dict.get('train_ratio', 0.8) * len(dataset))
     test_size = len(dataset) - train_size
     generator = torch.Generator().manual_seed(42)
     train_dataset, test_dataset = random_split(dataset, [train_size, test_size], generator=generator)
