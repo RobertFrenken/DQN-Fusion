@@ -11,8 +11,6 @@ Key Features:
 - Evaluate and compare fusion strategies
 - Save trained fusion agent for deployment
 """
-
-from contextlib import nullcontext
 import sys
 import os
 from pathlib import Path
@@ -24,7 +22,6 @@ import numpy as np
 import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
-from torch_geometric.data import Data, Batch
 from torch.utils.data import random_split, Subset
 import time
 import hydra
@@ -34,10 +31,6 @@ import matplotlib.pyplot as plt
 from typing import Tuple, Dict, List, Any
 import warnings
 import random
-from tqdm import tqdm
-from concurrent.futures import ThreadPoolExecutor
-from multiprocessing import cpu_count
-import psutil
 
 # Import your existing modules
 from models.models import GATWithJK, GraphAutoencoderNeighborhood
@@ -159,9 +152,6 @@ class FusionTrainingPipeline:
         except Exception as e:
             print(f"❌ Error loading models: {e}")
             raise e
-
-
-
 
     def _process_gpu_batch_fully(self, processing_indices: List[int]) -> Dict:
         """Keep everything on GPU, eliminate CPU bottlenecks."""
