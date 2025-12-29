@@ -1,2 +1,142 @@
-/datasets
-/saved_models
+# ===== CAN-GRAPH PROJECT GITIGNORE =====
+
+# ===== DATASETS =====
+# All dataset directories (raw CAN data is large and shouldn't be in git)
+datasets/
+data/
+*.csv
+*.log
+*.can
+
+# ===== TRAINED MODELS & WEIGHTS =====
+# Model files are too large for git and should be stored in model registries
+saved_models/
+saved_models1/
+output_model_1/
+models/
+checkpoints/
+*.pth
+*.pt
+*.ckpt
+*.safetensors
+*.bin
+
+# Model artifacts
+fusion_checkpoints/
+teacher_models/
+student_models/
+fusion_agents/
+
+# ===== CACHE & TEMPORARY FILES =====
+# Processing cache and temporary files
+cache/
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# ===== EXPERIMENT OUTPUTS =====
+# Generated outputs that can be reproduced
+outputs/
+results/
+logs/
+wandb/
+mlruns/
+tensorboard_logs/
+*.log
+
+# Generated figures and publications
+images/
+figures/
+publication_figures/
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
+!README_assets/  # Keep README images
+
+# ===== IDE & EDITOR FILES =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints/
+*.ipynb
+
+# ===== SYSTEM FILES =====
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ===== ENVIRONMENT & CONFIG =====
+# Virtual environments
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+
+# Environment variables
+.env
+.env.local
+.env.*.local
+
+# Personal configuration overrides
+config/personal/
+conf/personal/
+*.local.yaml
+
+# ===== HYDRA OUTPUTS =====
+# Hydra experiment outputs
+outputs/
+multirun/
+.hydra/
+
+# ===== GPU & PERFORMANCE PROFILING =====
+# NVIDIA profiler outputs
+*.nvprof
+*.prof
+prof/
+profiling/
+
+# ===== SPECIFIC TO CAN-GRAPH =====
+# Project-specific cache directories
+fusion_cache/
+preprocessing_cache/
+graph_cache/
+
+# Large intermediate files
+*.pkl
+*.pickle
+*.joblib
+temp_*
+tmp_*
+
+# Slurm job outputs
+*.out
+*.err
+slurm-*.out
