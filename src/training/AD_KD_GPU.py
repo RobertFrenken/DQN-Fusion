@@ -36,10 +36,10 @@ import multiprocessing as mp
 from typing import Tuple, Dict, Any, Optional, List
 import warnings
 
-from models.models import GATWithJK, GraphAutoencoderNeighborhood
-from archive.preprocessing import graph_creation, build_id_mapping_from_normal
-from training.trainers import distillation_loss_fn
-from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
+from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
+from src.preprocessing.preprocessing import graph_creation, build_id_mapping_from_normal
+from src.training.trainers import distillation_loss_fn
+from src.utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 # Suppress warnings for cleaner output
 warnings.filterwarnings('ignore', category=UserWarning)
 

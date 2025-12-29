@@ -17,11 +17,11 @@ from torch_geometric.loader import DataLoader
 from torch.utils.data import random_split, Subset
 from typing import List, Tuple
 
-from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
-from models.pipeline import GATPipeline
-from archive.preprocessing import graph_creation, build_id_mapping_from_normal
+from src.utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
+from src.models.pipeline import GATPipeline
+from src.preprocessing.preprocessing import graph_creation, build_id_mapping_from_normal
 from torch_geometric.data import Batch
-from utils.plotting_utils import (
+from src.utils.plotting_utils import (
     plot_feature_histograms,
     plot_node_recon_errors, 
     plot_graph_reconstruction,

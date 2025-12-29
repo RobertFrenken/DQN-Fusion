@@ -5,11 +5,11 @@ import numpy as np
 import os
 import time
 from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
-from archive.preprocessing import graph_creation, GraphDataset
-from models.models import GATWithJK
+from src.preprocessing.preprocessing import graph_creation, GraphDataset
+from src.models.models import GATWithJK
 import hydra
 from sklearn.utils.class_weight import compute_class_weight
-from utils.losses import distillation_loss_fn, FocalLoss
+from src.utils.losses import distillation_loss_fn, FocalLoss
 
 #########################################
 # 1) PyTorch Trainer Class              #

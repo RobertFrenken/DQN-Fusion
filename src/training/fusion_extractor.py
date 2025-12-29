@@ -8,7 +8,7 @@ import torch.nn as nn
 from torch_geometric.loader import DataLoader
 from tqdm import tqdm
 from typing import Tuple, List
-from config.fusion_config import FUSION_WEIGHTS
+from src.config.fusion_config import FUSION_WEIGHTS
 
 
 class FusionDataExtractor:

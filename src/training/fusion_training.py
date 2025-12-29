@@ -15,7 +15,7 @@ import sys
 import os
 from pathlib import Path
 # Clean path setup - add parent directory to Python path
-project_root = Path(__file__).parent.parent
+project_root = Path(__file__).parent.parent.parent
 sys.path.insert(0, str(project_root))
 
 import numpy as np
@@ -33,23 +33,23 @@ import warnings
 import random
 
 # Import your existing modules
-from models.models import GATWithJK, GraphAutoencoderNeighborhood
-from models.adaptive_fusion import EnhancedDQNFusionAgent
-from archive.preprocessing import graph_creation, build_id_mapping_from_normal
-from utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
-from utils.cache.cache_manager import CacheManager
+from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
+from src.models.adaptive_fusion import EnhancedDQNFusionAgent
+from src.preprocessing.preprocessing import graph_creation, build_id_mapping_from_normal
+from src.utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
+from src.utils.cache.cache_manager import CacheManager
 
 # Import new organized modules
-from config.fusion_config import DATASET_PATHS, FUSION_WEIGHTS
-from config.plotting_config import COLOR_SCHEMES, apply_publication_style, save_publication_figure
-from utils.plotting_utils import (
+from src.config.fusion_config import DATASET_PATHS, FUSION_WEIGHTS
+from src.config.plotting_config import COLOR_SCHEMES, apply_publication_style, save_publication_figure
+from src.utils.plotting_utils import (
     plot_fusion_training_progress, 
     plot_fusion_analysis, 
     plot_enhanced_fusion_training_progress
 )
-from training.gpu_monitor import GPUMonitor
-from training.fusion_extractor import FusionDataExtractor
-from utils.gpu_utils import detect_gpu_capabilities_unified, create_optimized_data_loaders
+from src.training.gpu_monitor import GPUMonitor
+from src.training.fusion_extractor import FusionDataExtractor
+from src.utils.gpu_utils import detect_gpu_capabilities_unified, create_optimized_data_loaders
 
 warnings.filterwarnings('ignore', category=UserWarning)
 

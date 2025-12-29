@@ -7,8 +7,8 @@ import numpy as np
 import os
 import time
 from sklearn.metrics import accuracy_score, f1_score
-from old_code.preprocessing import graph_creation, GraphDataset
-from models.models import GATWithJK
+from src.preprocessing.preprocessing import graph_creation, GraphDataset
+from src.models.models import GATWithJK
 
 
 ########################################

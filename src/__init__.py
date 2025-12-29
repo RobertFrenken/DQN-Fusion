@@ -9,8 +9,8 @@ __version__ = "1.0.0"
 __author__ = "CAN-Graph Team"
 
 # Make key classes easily importable
-from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
-from src.models.adaptive_fusion import EnhancedDQNFusionAgent
+from .models.models import GATWithJK, GraphAutoencoderNeighborhood
+from .models.adaptive_fusion import EnhancedDQNFusionAgent
 
 __all__ = [
     "GATWithJK", 
