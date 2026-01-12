@@ -1,6 +1,9 @@
 """
 Individual Model Training Script
 
+UPDATED: This script now serves as a compatibility wrapper around the new PyTorch Lightning
+Fabric-based training system. For full features and better performance, use train_fabric_models.py directly.
+
 Train specific models one at a time with full resource management and error isolation.
 This is safer than batch training as it prevents one model's failure from affecting others.
 
@@ -9,6 +12,11 @@ Usage:
     python train_individual_model.py --dataset set_01 --model student
     python train_individual_model.py --dataset hcrl_sa --model fusion
     python train_individual_model.py --list-available  # Show available options
+    python train_individual_model.py --use-fabric      # Use new Fabric training (recommended)
+
+New Fabric Usage (Recommended):
+    python train_fabric_models.py --model gat --dataset hcrl_ch --type teacher
+    python train_fabric_models.py --model vgae --dataset set_01 --type student --teacher saved_models/best_vgae_model_hcrl_sa.pth
 """
 
 import os
@@ -16,6 +24,7 @@ import sys
 import argparse
 import time
 import json
+import subprocess
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 import torch
@@ -25,22 +34,97 @@ project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 from omegaconf import DictConfig, OmegaConf
-from src.training.resource_aware_orchestrator import ResourceAwareOrchestrator, TrainingPhase
-from src.utils.gpu_utils import setup_gpu_optimization, cleanup_memory, log_memory_usage
 
 class IndividualModelTrainer:
     """Handles training of individual models with comprehensive resource management."""
     
-    def __init__(self):
+    def __init__(self, use_fabric: bool = False):
+        self.use_fabric = use_fabric
         self.available_datasets = ['hcrl_ch', 'hcrl_sa', 'set_01', 'set_02', 'set_03', 'set_04']
         self.available_models = ['teacher', 'student', 'fusion']
         
-        # Initialize orchestrator for resource management
-        self.orchestrator = ResourceAwareOrchestrator()
+        
+        # Initialize orchestrator for resource management (legacy mode)
+        if not self.use_fabric:
+            try:
+                from src.training.resource_aware_orchestrator import ResourceAwareOrchestrator, TrainingPhase
+                from src.utils.gpu_utils import setup_gpu_optimization, cleanup_memory, log_memory_usage
+                self.orchestrator = ResourceAwareOrchestrator()
+                self.TrainingPhase = TrainingPhase  # Store for later use
+            except ImportError:
+                print("⚠️  Legacy training modules not available. Please use Fabric training.")
+                print("Run: python train_fabric_models.py --help")
+                self.orchestrator = None
         
         # Results tracking
         self.results_dir = Path("outputs/individual_training_results")
         self.results_dir.mkdir(parents=True, exist_ok=True)
+    
+    def train_with_fabric(self, dataset_key: str, model_type: str) -> Dict[str, Any]:
+        """
+        Train model using the new Fabric-based training system.
+        
+        Args:
+            dataset_key: Dataset identifier
+            model_type: Model type ('teacher', 'student', 'fusion')
+            
+        Returns:
+            Training results
+        """
+        print(f"🚀 Using PyTorch Lightning Fabric training for {model_type} on {dataset_key}")
+        
+        # Map legacy model types to new system
+        if model_type == 'fusion':
+            print("⚠️  Fusion training not yet implemented in Fabric system.")
+            print("Use legacy training or implement DQN fusion with Fabric.")
+            return {"status": "not_implemented", "message": "Fusion training pending"}
+        
+        # Determine which models to train (GAT and VGAE for teacher/student)
+        models_to_train = ['gat', 'vgae']
+        results = {}
+        
+        for model in models_to_train:
+            print(f"\n📊 Training {model.upper()} {model_type} on {dataset_key}")
+            
+            try:
+                # Construct command
+                cmd = [
+                    sys.executable, "train_fabric_models.py",
+                    "--model", model,
+                    "--dataset", dataset_key,
+                    "--type", model_type
+                ]
+                
+                # Add teacher model path for student training
+                if model_type == 'student':
+                    if model == 'gat':
+                        teacher_path = f"saved_models/best_teacher_model_{dataset_key}.pth"
+                    else:  # vgae
+                        teacher_path = f"saved_models/autoencoder_{dataset_key}.pth"
+                    
+                    if Path(teacher_path).exists():
+                        cmd.extend(["--teacher", teacher_path])
+                    else:
+                        print(f"⚠️  Teacher model not found: {teacher_path}")
+                        print("Training student without knowledge distillation")
+                
+                # Run Fabric training
+                print(f"Executing: {' '.join(cmd)}")
+                result = subprocess.run(cmd, capture_output=True, text=True, cwd=project_root)
+                
+                if result.returncode == 0:
+                    print(f"✅ {model.upper()} {model_type} training completed successfully")
+                    results[model] = {"status": "success", "stdout": result.stdout}
+                else:
+                    print(f"❌ {model.upper()} {model_type} training failed")
+                    print(f"Error: {result.stderr}")
+                    results[model] = {"status": "failed", "stderr": result.stderr}
+                
+            except Exception as e:
+                print(f"❌ Failed to execute Fabric training for {model}: {e}")
+                results[model] = {"status": "error", "error": str(e)}
+        
+        return results
     
     def list_available_options(self):
         """Display all available datasets and model types."""
@@ -326,20 +410,21 @@ Examples:
     # List available options
     python train_individual_model.py --list-available
     
-    # Train teacher model for hcrl_ch dataset
-    python train_individual_model.py --dataset hcrl_ch --model teacher
+    # Train using new Fabric system (recommended)
+    python train_individual_model.py --dataset hcrl_ch --model teacher --use-fabric
+    python train_individual_model.py --dataset hcrl_ch --model student --use-fabric
     
-    # Train student model (requires teacher model)
+    # Train using legacy system
+    python train_individual_model.py --dataset hcrl_ch --model teacher
     python train_individual_model.py --dataset hcrl_ch --model student
     
-    # Train fusion model (requires both teacher and student)
-    python train_individual_model.py --dataset hcrl_ch --model fusion
-    
-    # Force retrain existing model
+    # Force retrain existing model (legacy only)
     python train_individual_model.py --dataset hcrl_ch --model teacher --force-retrain
     
-    # Check what would be done without training
+    # Check what would be done without training (legacy only)
     python train_individual_model.py --dataset hcrl_ch --model teacher --dry-run
+    
+    Note: --use-fabric is recommended for better performance and HPC compatibility
         """
     )
     
@@ -373,11 +458,17 @@ Examples:
         help="List all available datasets and model types"
     )
     
+    parser.add_argument(
+        "--use-fabric",
+        action="store_true", 
+        help="Use PyTorch Lightning Fabric training (recommended for better performance)"
+    )
+    
     args = parser.parse_args()
     
     # Initialize trainer
     try:
-        trainer = IndividualModelTrainer()
+        trainer = IndividualModelTrainer(use_fabric=args.use_fabric)
     except Exception as e:
         print(f"❌ Failed to initialize trainer: {e}")
         return 1
@@ -394,18 +485,25 @@ Examples:
         return 1
     
     # Run training
-    result = trainer.train_model(
-        dataset=args.dataset,
-        model_type=args.model,
-        force_retrain=args.force_retrain,
-        dry_run=args.dry_run
-    )
-    
-    # Return appropriate exit code
-    if result['status'] in ['completed', 'skipped', 'dry_run']:
-        return 0
+    if args.use_fabric:
+        print("🚀 Using PyTorch Lightning Fabric training system")
+        result = trainer.train_with_fabric(args.dataset, args.model)
+        success = all(r.get('status') == 'success' for r in result.values() if isinstance(r, dict))
+        return 0 if success else 1
     else:
-        return 1
+        print("⚠️  Using legacy training system")
+        result = trainer.train_model(
+            dataset=args.dataset,
+            model_type=args.model,
+            force_retrain=args.force_retrain,
+            dry_run=args.dry_run
+        )
+        
+        # Return appropriate exit code
+        if result['status'] in ['completed', 'skipped', 'dry_run']:
+            return 0
+        else:
+            return 1
 
 if __name__ == "__main__":
     sys.exit(main())

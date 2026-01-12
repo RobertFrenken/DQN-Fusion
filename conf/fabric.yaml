@@ -1,0 +1,255 @@
+# PyTorch Lightning Fabric Configuration
+# This file contains default configurations for Fabric-based training
+
+# Default training configuration
+default:
+  epochs: 100
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer: adamw
+  gradient_clip_val: 1.0
+  accumulation_steps: 1
+  checkpoint_interval: 10
+  
+  # Dynamic batch sizing
+  batch_size: 32
+  min_batch_size: 1
+  max_batch_size: 8192
+  target_memory_usage: 0.85
+  
+  # Scheduler configuration
+  scheduler:
+    type: cosine
+    T_max: 100
+  
+  # Loss configuration
+  loss:
+    type: bce
+    
+# Fabric-specific configuration
+fabric:
+  # Automatic hardware detection
+  accelerator: auto
+  devices: auto
+  precision: 16-mixed
+  strategy: auto
+  
+  # Logging
+  logger:
+    root_dir: outputs/fabric_logs
+    name: fabric_training
+    
+# Model-specific configurations
+models:
+  gat:
+    teacher:
+      hidden_channels: 64
+      num_layers: 5
+      heads: 8
+      embedding_dim: 16
+      dropout: 0.2
+      num_fc_layers: 3
+      
+    student:
+      hidden_channels: 32
+      num_layers: 3
+      heads: 4
+      embedding_dim: 8
+      dropout: 0.2
+      num_fc_layers: 2
+      
+  vgae:
+    teacher:
+      hidden_dim: 64
+      latent_dim: 32
+      num_encoder_layers: 4
+      num_decoder_layers: 4
+      encoder_heads: 8
+      decoder_heads: 4
+      embedding_dim: 16
+      dropout: 0.3
+      
+    student:
+      hidden_dim: 32
+      latent_dim: 16
+      num_encoder_layers: 2
+      num_decoder_layers: 2
+      encoder_heads: 4
+      decoder_heads: 2
+      embedding_dim: 8
+      dropout: 0.25
+      
+    # VGAE-specific loss weights
+    loss:
+      reconstruction_weight: 1.0
+      kl_weight: 0.1
+      canid_weight: 1.0
+      neighborhood_weight: 0.5
+
+# Knowledge distillation configuration
+distillation:
+  alpha: 0.7  # Weight for distillation loss vs student loss
+  temperature: 3.0  # Temperature for soft targets
+  latent_weight: 0.5  # Weight for latent space distillation
+  output_weight: 0.3  # Weight for output distillation
+
+# Hardware-specific optimizations
+hardware:
+  # A100 GPU configuration
+  a100:
+    precision: 16-mixed
+    batch_size: 128
+    num_workers: 8
+    prefetch_factor: 4
+    pin_memory: true
+    persistent_workers: true
+    
+  # V100 GPU configuration  
+  v100:
+    precision: 16-mixed
+    batch_size: 64
+    num_workers: 6
+    prefetch_factor: 2
+    pin_memory: true
+    persistent_workers: true
+    
+  # H100 GPU configuration
+  h100:
+    precision: bf16-mixed
+    batch_size: 256
+    num_workers: 12
+    prefetch_factor: 4
+    pin_memory: true
+    persistent_workers: true
+    
+  # RTX 3080/4080 configuration
+  rtx:
+    precision: 16-mixed
+    batch_size: 32
+    num_workers: 4
+    prefetch_factor: 2
+    pin_memory: true
+    persistent_workers: false
+    
+  # CPU-only configuration
+  cpu:
+    precision: 32
+    batch_size: 16
+    num_workers: 4
+    prefetch_factor: 2
+    pin_memory: false
+    persistent_workers: true
+
+# SLURM configuration templates
+slurm:
+  # A100 cluster configuration
+  a100_cluster:
+    job_name: fabric_can_training
+    nodes: 1
+    ntasks_per_node: 1
+    cpus_per_task: 16
+    gpus_per_node: 1
+    mem: 64G
+    time: 48:00:00
+    partition: gpu
+    constraint: a100
+    
+  # V100 cluster configuration
+  v100_cluster:
+    job_name: fabric_can_training
+    nodes: 1
+    ntasks_per_node: 1
+    cpus_per_task: 12
+    gpus_per_node: 1
+    mem: 48G
+    time: 72:00:00
+    partition: gpu
+    constraint: v100
+    
+  # Multi-node configuration
+  multi_node:
+    job_name: fabric_can_multi_training
+    nodes: 2
+    ntasks_per_node: 1
+    cpus_per_task: 16
+    gpus_per_node: 1
+    mem: 64G
+    time: 24:00:00
+    partition: gpu
+    constraint: a100
+
+# Dataset-specific configurations
+datasets:
+  hcrl_ch:
+    num_ids: 2000
+    in_channels: 11
+    train_ratio: 0.8
+    
+  hcrl_sa:
+    num_ids: 2000
+    in_channels: 11
+    train_ratio: 0.8
+    
+  set_01:
+    num_ids: 2000
+    in_channels: 11
+    train_ratio: 0.8
+    
+  set_02:
+    num_ids: 2000
+    in_channels: 11
+    train_ratio: 0.8
+    
+  set_03:
+    num_ids: 2000
+    in_channels: 11
+    train_ratio: 0.8
+    
+  set_04:
+    num_ids: 2000
+    in_channels: 11
+    train_ratio: 0.8
+
+# Data loading optimization
+dataloader:
+  # Enable features based on dataset size
+  small_dataset:  # < 1000 samples
+    num_workers: 2
+    use_cache: true
+    use_prefetch: false
+    memory_cache_size: 100
+    
+  medium_dataset:  # 1000-10000 samples
+    num_workers: 4
+    use_cache: true
+    use_prefetch: true
+    memory_cache_size: 1000
+    
+  large_dataset:  # > 10000 samples
+    num_workers: 8
+    use_cache: false
+    use_prefetch: true
+    memory_cache_size: 500
+
+# Environment modules to load (HPC systems)
+modules:
+  cuda_modules:
+    - cuda/11.8
+    - python/3.9
+    
+  conda_environments:
+    default: can-graph
+    
+# Paths configuration
+paths:
+  # Output directories
+  checkpoints: checkpoints
+  logs: outputs/fabric_logs
+  results: outputs/fabric_training_results
+  cache: cache
+  
+  # Model save paths
+  saved_models: saved_models
+  
+  # Dataset paths
+  datasets: datasets/can-train-and-test-v1.5
