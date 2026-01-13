@@ -23,6 +23,7 @@ warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda")
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch.utils.data import Subset
 from torch_geometric.loader import DataLoader  # Use PyTorch Geometric's DataLoader
 import lightning.pytorch as pl

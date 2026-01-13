@@ -154,10 +154,26 @@ class DistillationExample:
                     elif path_pattern.exists():
                         teacher_path = path_pattern
                         break
-                else:\n                    raise FileNotFoundError("Could not find trained teacher model")
-                \n                # Copy to our expected location\n                import shutil\n                shutil.copy2(teacher_path, self.teacher_path)\n                logger.info(f"✅ Teacher model saved to: {self.teacher_path}")\n                return self.teacher_path\n            else:\n                raise RuntimeError("Teacher training failed")
-            \n        except Exception as e:\n            logger.error(f"Failed to train teacher model: {e}")\n            # For demo purposes, create a dummy teacher\n            logger.warning("Creating dummy teacher model for demonstration...")\n            return self._create_dummy_teacher()
-        \n        finally:\n            # Cleanup\n            if config_path.exists():\n                config_path.unlink()
+                else:
+                    raise FileNotFoundError("Could not find trained teacher model")
+                # Copy to our expected location\n
+                import shutil
+                shutil.copy2(teacher_path, self.teacher_path)
+                logger.info(f"✅ Teacher model saved to: {self.teacher_path}")
+                return self.teacher_path        
+            else:               
+                raise RuntimeError("Teacher training failed")
+            
+        except Exception as e:
+            logger.error(f"Failed to train teacher model: {e}")
+            # For demo purposes, create a dummy teacher
+            logger.warning("Creating dummy teacher model for demonstration...")
+            return self._create_dummy_teacher()
+    
+        finally:
+            # Cleanup
+            if config_path.exists():
+                config_path.unlink()
     
     def _create_dummy_teacher(self) -> Path:
         """Create a dummy teacher model for demonstration."""
