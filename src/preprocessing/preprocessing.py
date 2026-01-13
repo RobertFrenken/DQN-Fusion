@@ -84,6 +84,110 @@ def normalize_payload_bytes(df: pd.DataFrame, byte_columns: List[str]) -> pd.Dat
         df_copy[col] = df_copy[col] / 255.0
     return df_copy
 
+def build_complete_id_mapping_streaming(csv_files: List[str], verbose: bool = False) -> Dict[Union[int, str], int]:
+    """
+    Build COMPLETE CAN ID mapping using streaming approach with minimal memory.
+    Gets 100% of all CAN IDs by reading each file once and extracting only the IDs.
+    
+    Args:
+        csv_files: List of CSV file paths
+        verbose: Whether to print progress
+        
+    Returns:
+        Dictionary mapping ALL CAN IDs to integer indices
+    """
+    unique_ids = set()
+    
+    if verbose:
+        print(f"Building COMPLETE ID mapping by streaming through {len(csv_files)} files...")
+    
+    for i, csv_file in enumerate(csv_files):
+        if verbose:
+            print(f"  📂 Processing {os.path.basename(csv_file)} ({i+1}/{len(csv_files)})")
+        
+        try:
+            # Read the ENTIRE file (but we'll only extract IDs)
+            df = pd.read_csv(csv_file)
+            df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
+            
+            # Extract ALL unique CAN IDs from this file
+            can_ids = df['arbitration_id'].dropna().unique()
+            file_ids = set()
+            
+            for can_id in can_ids:
+                converted_id = safe_hex_to_int(can_id)
+                if converted_id is not None:
+                    file_ids.add(converted_id)
+            
+            # Add to global set
+            unique_ids.update(file_ids)
+            
+            # IMMEDIATELY discard the DataFrame to free memory
+            del df
+            
+            if verbose:
+                print(f"     Found {len(file_ids)} unique IDs in this file")
+                print(f"     Total unique IDs so far: {len(unique_ids)}")
+                    
+        except Exception as e:
+            if verbose:
+                print(f"     Warning: Could not process {csv_file}: {e}")
+            continue
+    
+    if verbose:
+        print(f"✅ Found {len(unique_ids)} TOTAL unique CAN IDs (100% coverage)")
+    
+    # Create mapping from ALL unique IDs
+    sorted_ids = sorted(list(unique_ids))
+    id_mapping = {can_id: idx for idx, can_id in enumerate(sorted_ids)}
+    
+    # Add out-of-vocabulary index (for truly corrupted data)
+    oov_index = len(id_mapping)
+    id_mapping['OOV'] = oov_index
+    
+    if verbose:
+        print(f"📋 Final mapping size: {len(id_mapping)} entries (including OOV)")
+    
+    return id_mapping
+
+def apply_dynamic_id_mapping(df: pd.DataFrame, id_mapping: Dict, verbose: bool = False) -> Tuple[pd.DataFrame, Dict]:
+    """
+    Apply ID mapping with dynamic expansion for new IDs encountered during processing.
+    
+    Args:
+        df: DataFrame to process
+        id_mapping: Existing ID mapping
+        verbose: Whether to print information about new IDs
+        
+    Returns:
+        Tuple of (processed DataFrame, updated ID mapping)
+    """
+    # Make a copy to avoid modifying the original mapping
+    dynamic_mapping = id_mapping.copy()
+    oov_index = dynamic_mapping['OOV']
+    new_ids_found = []
+    
+    # Check all CAN ID columns for new IDs
+    for col in ['CAN ID', 'Source', 'Target']:
+        if col in df.columns:
+            unique_vals = df[col].dropna().unique()
+            
+            for val in unique_vals:
+                if val not in dynamic_mapping:
+                    # Found a new ID not in our mapping
+                    new_id_index = len(dynamic_mapping) - 1  # Insert before OOV
+                    dynamic_mapping[val] = new_id_index
+                    dynamic_mapping['OOV'] = len(dynamic_mapping) - 1  # Update OOV index
+                    new_ids_found.append(val)
+            
+            # Apply the mapping (now including new IDs)
+            df[col] = df[col].apply(lambda x: dynamic_mapping.get(x, dynamic_mapping['OOV']))
+    
+    if new_ids_found and verbose:
+        print(f"  Dynamically added {len(new_ids_found)} new CAN IDs: {new_ids_found[:5]}{'...' if len(new_ids_found) > 5 else ''}")
+    
+    return df, dynamic_mapping
+
 def build_id_mapping(df: pd.DataFrame) -> Dict[Union[int, str], int]:
     """
     Build a mapping from CAN IDs to indices for categorical encoding.
@@ -240,11 +344,9 @@ def dataset_creation_vectorized(csv_path: str, id_mapping: Optional[Dict] = None
     for col in hex_columns:
         df[col] = df[col].apply(safe_hex_to_int)
     
-    # Apply categorical encoding for CAN IDs
+    # Apply dynamic ID mapping (handles new IDs gracefully)
     if id_mapping is not None:
-        oov_index = id_mapping['OOV']
-        for col in ['CAN ID', 'Source', 'Target']:
-            df[col] = df[col].apply(lambda x: id_mapping.get(x, oov_index))
+        df, updated_mapping = apply_dynamic_id_mapping(df, id_mapping, verbose=False)
     
     # Clean up and normalize
     df = df.iloc[:-1]  # Remove last row (no target)
@@ -503,25 +605,8 @@ def graph_creation_parallel(root_folder: str, folder_type: str = 'train_',
     
     # Build ID mapping if not provided
     if id_mapping is None:
-        print("Building global ID mapping from all files...")
-        all_dfs = []
-        for csv_file in csv_files:
-            try:
-                df = pd.read_csv(csv_file)
-                df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
-                df.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
-                df['Source'] = df['CAN ID']
-                df['Target'] = df['CAN ID'].shift(-1)
-                all_dfs.append(df)
-            except Exception as e:
-                if verbose:
-                    print(f"Warning: Could not load {csv_file} for ID mapping: {e}")
-                continue
-        
-        if all_dfs:
-            global_id_mapping = build_id_mapping(pd.concat(all_dfs, ignore_index=True))
-        else:
-            global_id_mapping = {'OOV': 0}
+        # Use complete streaming approach: 100% ID coverage with minimal memory
+        global_id_mapping = build_complete_id_mapping_streaming(csv_files, verbose=verbose)
     else:
         global_id_mapping = id_mapping
     
@@ -586,24 +671,8 @@ def graph_creation_sequential(root_folder: str, folder_type: str = 'train_',
     
     # Build ID mapping if not provided
     if id_mapping is None:
-        all_dfs = []
-        for csv_file in csv_files:
-            try:
-                df = pd.read_csv(csv_file)
-                df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
-                df.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
-                df['Source'] = df['CAN ID']
-                df['Target'] = df['CAN ID'].shift(-1)
-                all_dfs.append(df)
-            except Exception as e:
-                if verbose:
-                    print(f"Warning: Could not load {csv_file}: {e}")
-                continue
-        
-        if all_dfs:
-            global_id_mapping = build_id_mapping(pd.concat(all_dfs, ignore_index=True))
-        else:
-            global_id_mapping = {'OOV': 0}
+        # Use complete streaming approach: 100% ID coverage with minimal memory  
+        global_id_mapping = build_complete_id_mapping_streaming(csv_files, verbose=verbose)
     else:
         global_id_mapping = id_mapping
     

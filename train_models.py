@@ -95,10 +95,89 @@ class CANGraphLightningModule(pl.LightningModule):
     
     def setup_knowledge_distillation(self):
         """Setup teacher model for knowledge distillation."""
-        if self.training_config.teacher_model_path:
-            logger.info(f"Loading teacher model from: {self.training_config.teacher_model_path}")
-            # Load teacher model logic here
-            pass
+        if not self.training_config.teacher_model_path:
+            raise ValueError("teacher_model_path is required for knowledge distillation mode")
+            
+        logger.info(f"Loading teacher model from: {self.training_config.teacher_model_path}")
+        
+        # Create teacher model with same architecture but potentially different size
+        teacher_model_config = self.model_config.copy()
+        self.teacher_model = self._create_model()
+        
+        # Load teacher weights
+        teacher_path = Path(self.training_config.teacher_model_path)
+        if not teacher_path.exists():
+            raise FileNotFoundError(f"Teacher model not found: {teacher_path}")
+            
+        # Load state dict
+        teacher_state = torch.load(teacher_path, map_location='cpu')
+        
+        # Handle different save formats
+        if 'state_dict' in teacher_state:
+            # Lightning checkpoint format
+            state_dict = teacher_state['state_dict']
+            # Remove 'model.' prefix if present
+            state_dict = {k.replace('model.', '') if k.startswith('model.') else k: v 
+                         for k, v in state_dict.items()}
+        else:
+            # Direct state dict format
+            state_dict = teacher_state
+            
+        self.teacher_model.load_state_dict(state_dict)
+        self.teacher_model.eval()  # Set to eval mode
+        
+        # Freeze teacher parameters
+        for param in self.teacher_model.parameters():
+            param.requires_grad = False
+            
+        # Setup teacher output caching for memory optimization
+        self.teacher_cache = {}
+        self.cache_counter = 0
+        self.clear_cache_every_n_steps = self.training_config.get('memory_optimization', {}).get('clear_cache_every_n_steps', 100)
+        
+        # Scale student model if configured
+        student_scale = self.training_config.get('student_model_scale', 1.0)
+        if student_scale != 1.0:
+            self._scale_student_model(student_scale)
+            logger.info(f"Student model scaled by factor: {student_scale}")
+        
+        logger.info("Knowledge distillation setup complete")
+    
+    def _scale_student_model(self, scale: float):
+        """Scale student model size for distillation."""
+        if self.model_type == "gat":
+            # Scale hidden dimensions
+            original_hidden = self.model_config.gat.hidden_channels
+            scaled_hidden = max(8, int(original_hidden * scale))  # Minimum 8 channels
+            self.model_config.gat.hidden_channels = scaled_hidden
+            
+            # Recreate model with scaled config
+            self.model = self._create_model()
+            logger.info(f"Student GAT hidden channels scaled: {original_hidden} -> {scaled_hidden}")
+    
+    def _get_teacher_output_cached(self, batch, use_cache=True):
+        """Get teacher output with optional caching for memory efficiency."""
+        if not use_cache or self.training_config.get('memory_optimization', {}).get('use_teacher_cache', True) == False:
+            with torch.no_grad():
+                return self.teacher_model(batch)
+        
+        # Simple batch-based caching (could be improved with more sophisticated hashing)
+        batch_hash = hash(str(batch.x.shape) + str(batch.edge_index.shape) + str(batch.batch.max().item()))
+        
+        if batch_hash in self.teacher_cache:
+            return self.teacher_cache[batch_hash]
+        
+        with torch.no_grad():
+            teacher_output = self.teacher_model(batch)
+            self.teacher_cache[batch_hash] = teacher_output.clone()
+            
+        # Clear cache periodically to avoid memory buildup
+        self.cache_counter += 1
+        if self.cache_counter % self.clear_cache_every_n_steps == 0:
+            self.teacher_cache.clear()
+            torch.cuda.empty_cache() if torch.cuda.is_available() else None
+            
+        return teacher_output
     
     def forward(self, x):
         return self.model(x)
@@ -149,14 +228,30 @@ class CANGraphLightningModule(pl.LightningModule):
         # Student forward pass
         student_output = self.model(batch)
         
-        # Teacher forward pass (no gradients)
-        with torch.no_grad():
-            teacher_output = self.teacher_model(batch)
+        # Teacher forward pass with caching
+        teacher_output = self._get_teacher_output_cached(batch)
         
         # Distillation loss
         distillation_loss = self._compute_distillation_loss(
             student_output, teacher_output, batch
         )
+        
+        # Additional logging for knowledge distillation
+        if self.training_config.get('log_teacher_student_comparison', True):
+            # Log teacher-student output similarity
+            with torch.no_grad():
+                if hasattr(batch, 'y'):  # For classification
+                    teacher_acc = (teacher_output.argmax(dim=-1) == batch.y).float().mean()
+                    student_acc = (student_output.argmax(dim=-1) == batch.y).float().mean()
+                    self.log('teacher_accuracy', teacher_acc, prog_bar=False)
+                    self.log('student_accuracy', student_acc, prog_bar=False)
+                    self.log('accuracy_gap', teacher_acc - student_acc, prog_bar=False)
+                
+                # Log output similarity (cosine similarity)
+                teacher_flat = teacher_output.flatten()
+                student_flat = student_output.flatten()
+                similarity = F.cosine_similarity(teacher_flat.unsqueeze(0), student_flat.unsqueeze(0))
+                self.log('teacher_student_similarity', similarity, prog_bar=False)
         
         self.log('train_distillation_loss', distillation_loss, prog_bar=True)
         return distillation_loss
@@ -200,18 +295,34 @@ class CANGraphLightningModule(pl.LightningModule):
     
     def _compute_distillation_loss(self, student_output, teacher_output, batch):
         """Compute knowledge distillation loss."""
-        # Hard targets loss
-        hard_loss = self._compute_loss(student_output, batch)
-        
-        # Soft targets loss
         temperature = self.training_config.get('distillation_temperature', 4.0)
         alpha = self.training_config.get('distillation_alpha', 0.7)
         
-        soft_targets = torch.softmax(teacher_output / temperature, dim=-1)
-        soft_prob = torch.log_softmax(student_output / temperature, dim=-1)
-        soft_loss = nn.functional.kl_div(soft_prob, soft_targets, reduction='batchmean') * (temperature ** 2)
+        # Handle different output types
+        if hasattr(batch, 'y'):  # Supervised case
+            # Hard targets loss (standard task loss)
+            hard_loss = self._compute_loss(student_output, batch)
+            
+            # Soft targets loss (knowledge distillation)
+            if student_output.dim() > 1 and student_output.size(-1) > 1:  # Classification
+                soft_targets = torch.softmax(teacher_output / temperature, dim=-1)
+                soft_prob = torch.log_softmax(student_output / temperature, dim=-1)
+                soft_loss = nn.functional.kl_div(soft_prob, soft_targets, reduction='batchmean') * (temperature ** 2)
+            else:  # Regression-like output
+                soft_loss = nn.functional.mse_loss(student_output, teacher_output)
+            
+            # Combined loss
+            total_loss = alpha * soft_loss + (1 - alpha) * hard_loss
+            
+            # Log components for monitoring
+            self.log('hard_loss', hard_loss, prog_bar=False)
+            self.log('soft_loss', soft_loss, prog_bar=False)
+            
+        else:  # Unsupervised case (e.g., autoencoders)
+            # Direct output matching
+            total_loss = nn.functional.mse_loss(student_output, teacher_output)
         
-        return alpha * soft_loss + (1 - alpha) * hard_loss
+        return total_loss
     
     def _filter_batch_by_mask(self, batch, mask):
         """Filter graph batch by mask (for autoencoder normal samples)."""

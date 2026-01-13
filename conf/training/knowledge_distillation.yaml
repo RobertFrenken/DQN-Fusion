@@ -63,3 +63,8 @@ memory_optimization:
   offload_teacher_to_cpu: false  # Keep teacher on GPU for speed
   use_teacher_cache: true        # Cache teacher outputs to reduce computation
   clear_cache_every_n_steps: 100 # Clear caches periodically
+
+# Additional Lightning-specific settings
+enable_progress_bar: true
+num_sanity_val_steps: 2
+log_every_n_steps: 50
