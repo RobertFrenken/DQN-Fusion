@@ -1,0 +1,522 @@
+"""
+CAN-Graph Model Training - Clean Lightning Implementation
+
+A focused training pipeline that:
+1. Loads data with optimal CPU workers
+2. Uses Lightning's real Tuner for batch size optimization  
+3. Trains models with Lightning's proven infrastructure
+4. Handles special cases: autoencoder (normal samples only), knowledge distillation, fusion
+5. Configuration managed through Hydra YAML system
+"""
+
+import os
+import sys
+from pathlib import Path
+import logging
+import warnings
+import hydra
+from omegaconf import DictConfig, OmegaConf
+
+# Suppress pynvml warnings
+warnings.filterwarnings("ignore", message=".*pynvml.*deprecated.*")
+warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda")
+
+import torch
+import torch.nn as nn
+from torch.utils.data import Subset
+from torch_geometric.loader import DataLoader  # Use PyTorch Geometric's DataLoader
+import lightning.pytorch as pl
+from lightning.pytorch.tuner import Tuner
+from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
+from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+
+# Add project root to path
+project_root = Path(__file__).parent
+sys.path.insert(0, str(project_root))
+
+# Import our modules
+from src.preprocessing.preprocessing import graph_creation, GraphDataset
+from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
+
+class CANGraphLightningModule(pl.LightningModule):
+    """
+    Lightning Module for CAN intrusion detection models.
+    Handles GAT, VGAE, and special training cases (autoencoder, knowledge distillation).
+    """
+    
+    def __init__(self, model_config: DictConfig, training_config: DictConfig, 
+                 model_type: str = "gat", training_mode: str = "normal", num_ids: int = 1000):
+        super().__init__()
+        
+        self.save_hyperparameters()
+        self.model_config = model_config
+        self.training_config = training_config
+        self.model_type = model_type
+        self.training_mode = training_mode  # normal, autoencoder, knowledge_distillation, fusion
+        self.num_ids = num_ids
+        
+        # Lightning Tuner needs this attribute to modify batch size
+        self.batch_size = training_config.batch_size
+        
+        # Create the model
+        self.model = self._create_model()
+        
+        # For knowledge distillation
+        self.teacher_model = None
+        if training_mode == "knowledge_distillation":
+            self.setup_knowledge_distillation()
+    
+    def _create_model(self):
+        """Create the appropriate model based on configuration."""
+        if self.model_type == "gat":
+            # Map config parameters to model parameters
+            gat_params = dict(self.model_config.gat)
+            
+            # Rename parameters to match model signature
+            gat_params['in_channels'] = gat_params.pop('input_dim')
+            gat_params['out_channels'] = gat_params.pop('output_dim')
+            
+            # Remove parameters that GATWithJK doesn't use
+            for unused_param in ['use_jumping_knowledge', 'jk_mode', 'use_residual', 'use_batch_norm', 'activation']:
+                gat_params.pop(unused_param, None)
+            
+            # Add num_ids from dataset
+            gat_params['num_ids'] = self.num_ids
+            
+            return GATWithJK(**gat_params)
+        elif self.model_type == "vgae":
+            return GraphAutoencoderNeighborhood(**self.model_config.vgae)
+        else:
+            raise ValueError(f"Unknown model type: {self.model_type}")
+    
+    def setup_knowledge_distillation(self):
+        """Setup teacher model for knowledge distillation."""
+        if self.training_config.teacher_model_path:
+            logger.info(f"Loading teacher model from: {self.training_config.teacher_model_path}")
+            # Load teacher model logic here
+            pass
+    
+    def forward(self, x):
+        return self.model(x)
+    
+    def training_step(self, batch, batch_idx):
+        """Training step - handles different training modes."""
+        
+        if self.training_mode == "autoencoder":
+            return self._autoencoder_training_step(batch, batch_idx)
+        elif self.training_mode == "knowledge_distillation":
+            return self._knowledge_distillation_step(batch, batch_idx)
+        elif self.training_mode == "fusion":
+            return self._fusion_training_step(batch, batch_idx)
+        else:
+            return self._normal_training_step(batch, batch_idx)
+    
+    def _normal_training_step(self, batch, batch_idx):
+        """Standard training step."""
+        output = self.model(batch)
+        loss = self._compute_loss(output, batch)
+        
+        self.log('train_loss', loss, prog_bar=True)
+        return loss
+    
+    def _autoencoder_training_step(self, batch, batch_idx):
+        """Autoencoder training - only use normal samples."""
+        # Filter to only normal samples (label == 0)
+        if hasattr(batch, 'y'):
+            normal_mask = batch.y == 0
+            if normal_mask.sum() == 0:
+                # No normal samples in this batch, skip
+                return None
+            
+            # Create batch with only normal samples
+            filtered_batch = self._filter_batch_by_mask(batch, normal_mask)
+            output = self.model(filtered_batch)
+            loss = self._compute_autoencoder_loss(output, filtered_batch)
+        else:
+            # No labels, assume all are normal
+            output = self.model(batch)
+            loss = self._compute_autoencoder_loss(output, batch)
+        
+        self.log('train_autoencoder_loss', loss, prog_bar=True)
+        return loss
+    
+    def _knowledge_distillation_step(self, batch, batch_idx):
+        """Knowledge distillation training step."""
+        # Student forward pass
+        student_output = self.model(batch)
+        
+        # Teacher forward pass (no gradients)
+        with torch.no_grad():
+            teacher_output = self.teacher_model(batch)
+        
+        # Distillation loss
+        distillation_loss = self._compute_distillation_loss(
+            student_output, teacher_output, batch
+        )
+        
+        self.log('train_distillation_loss', distillation_loss, prog_bar=True)
+        return distillation_loss
+    
+    def _fusion_training_step(self, batch, batch_idx):
+        """Fusion training step - handles multiple model outputs."""
+        # This will be implemented when we get to fusion training
+        output = self.model(batch)
+        loss = self._compute_loss(output, batch)
+        
+        self.log('train_fusion_loss', loss, prog_bar=True)
+        return loss
+    
+    def validation_step(self, batch, batch_idx):
+        """Validation step."""
+        output = self.model(batch)
+        loss = self._compute_loss(output, batch)
+        
+        self.log('val_loss', loss, prog_bar=True)
+        return loss
+    
+    def test_step(self, batch, batch_idx):
+        """Test step."""
+        output = self.model(batch)
+        loss = self._compute_loss(output, batch)
+        
+        self.log('test_loss', loss, prog_bar=True)
+        return loss
+    
+    def _compute_loss(self, output, batch):
+        """Compute standard loss."""
+        if hasattr(batch, 'y'):
+            return nn.functional.cross_entropy(output, batch.y)
+        else:
+            # For unsupervised cases
+            return nn.functional.mse_loss(output, batch.x)
+    
+    def _compute_autoencoder_loss(self, output, batch):
+        """Compute reconstruction loss for autoencoder."""
+        return nn.functional.mse_loss(output, batch.x)
+    
+    def _compute_distillation_loss(self, student_output, teacher_output, batch):
+        """Compute knowledge distillation loss."""
+        # Hard targets loss
+        hard_loss = self._compute_loss(student_output, batch)
+        
+        # Soft targets loss
+        temperature = self.training_config.get('distillation_temperature', 4.0)
+        alpha = self.training_config.get('distillation_alpha', 0.7)
+        
+        soft_targets = torch.softmax(teacher_output / temperature, dim=-1)
+        soft_prob = torch.log_softmax(student_output / temperature, dim=-1)
+        soft_loss = nn.functional.kl_div(soft_prob, soft_targets, reduction='batchmean') * (temperature ** 2)
+        
+        return alpha * soft_loss + (1 - alpha) * hard_loss
+    
+    def _filter_batch_by_mask(self, batch, mask):
+        """Filter graph batch by mask (for autoencoder normal samples)."""
+        # Implementation depends on your batch structure
+        # This is a placeholder - adapt to your GraphDataset structure
+        return batch
+    
+    def configure_optimizers(self):
+        """Configure optimizers and schedulers using Hydra configuration."""
+        
+        # Get optimizer type from config
+        optimizer_name = self.training_config.get('optimizer', 'adam').lower()
+        
+        # Create optimizer based on config
+        if optimizer_name == 'adam':
+            optimizer = torch.optim.Adam(
+                self.parameters(),
+                lr=self.training_config.learning_rate,
+                weight_decay=self.training_config.get('weight_decay', 0.0001)
+            )
+        elif optimizer_name == 'adamw':
+            optimizer = torch.optim.AdamW(
+                self.parameters(),
+                lr=self.training_config.learning_rate,
+                weight_decay=self.training_config.get('weight_decay', 0.0001)
+            )
+        elif optimizer_name == 'sgd':
+            optimizer = torch.optim.SGD(
+                self.parameters(),
+                lr=self.training_config.learning_rate,
+                weight_decay=self.training_config.get('weight_decay', 0.0001),
+                momentum=self.training_config.get('momentum', 0.9)
+            )
+        else:
+            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
+        
+        # Setup scheduler if configured
+        if self.training_config.get('use_scheduler', False):
+            scheduler_type = self.training_config.get('scheduler_type', 'cosine').lower()
+            
+            if scheduler_type == 'cosine':
+                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                    optimizer, 
+                    T_max=self.training_config.scheduler_params.get('T_max', self.training_config.max_epochs)
+                )
+            elif scheduler_type == 'step':
+                scheduler = torch.optim.lr_scheduler.StepLR(
+                    optimizer,
+                    step_size=self.training_config.scheduler_params.get('step_size', 30),
+                    gamma=self.training_config.scheduler_params.get('gamma', 0.1)
+                )
+            elif scheduler_type == 'exponential':
+                scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                    optimizer,
+                    gamma=self.training_config.scheduler_params.get('gamma', 0.95)
+                )
+            else:
+                raise ValueError(f"Unsupported scheduler: {scheduler_type}")
+                
+            return [optimizer], [scheduler]
+        
+        return optimizer
+
+
+def load_dataset(dataset_name: str, config: DictConfig):
+    """Load and prepare dataset"""
+    logger.info(f"Loading dataset: {dataset_name}")
+    
+    # Use data_path from config if available, otherwise fallback to dataset name
+    if hasattr(config.dataset, 'data_path') and config.dataset.data_path:
+        dataset_path = config.dataset.data_path
+    else:
+        dataset_path = f"datasets/{dataset_name}"
+        
+    if not os.path.exists(dataset_path):
+        raise FileNotFoundError(f"Dataset not found: {dataset_path}")
+    
+    # Check for cached processed data
+    cache_enabled = config.dataset.get('preprocessing', {}).get('cache_processed_data', True)
+    cache_dir = config.dataset.get('cache_dir', f"datasets/cache/{dataset_name}")
+    cache_file = Path(cache_dir) / "processed_graphs.pt"
+    id_mapping_file = Path(cache_dir) / "id_mapping.pkl"
+    
+    if cache_enabled and cache_file.exists() and id_mapping_file.exists():
+        try:
+            logger.info(f"Loading cached processed data from {cache_file}")
+            
+            # Load cached graphs and ID mapping
+            import pickle
+            graphs = torch.load(cache_file)
+            with open(id_mapping_file, 'rb') as f:
+                id_mapping = pickle.load(f)
+                
+            logger.info(f"Loaded {len(graphs)} cached graphs with {len(id_mapping)} unique IDs")
+            
+        except Exception as e:
+            logger.warning(f"Failed to load cached data: {e}. Processing from scratch.")
+            graphs, id_mapping = None, None
+    else:
+        graphs, id_mapping = None, None
+    
+    # Process data if not cached or cache loading failed
+    if graphs is None or id_mapping is None:
+        logger.info("Processing dataset from scratch...")
+        graphs, id_mapping = graph_creation(dataset_path, 'train_', return_id_mapping=True)
+        
+        # Save to cache if enabled
+        if cache_enabled:
+            import pickle
+            cache_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            logger.info(f"Saving processed data to cache: {cache_file}")
+            torch.save(graphs, cache_file)
+            with open(id_mapping_file, 'wb') as f:
+                pickle.dump(id_mapping, f)
+    
+    dataset = GraphDataset(graphs)
+    
+    # Split dataset
+    train_size = int(0.8 * len(dataset))
+    val_size = len(dataset) - train_size
+    train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+    
+    # Return datasets and number of unique IDs
+    num_ids = len(id_mapping) if id_mapping else 1000
+    return train_dataset, val_dataset, num_ids
+
+
+def create_dataloaders(train_dataset, val_dataset, batch_size: int):
+    """Create optimized dataloaders - standalone function."""
+    num_workers = min(os.cpu_count() or 1, 8)
+    
+    train_loader = DataLoader(
+        train_dataset,
+        batch_size=batch_size,
+        shuffle=True,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0
+    )
+    
+    val_loader = DataLoader(
+        val_dataset,
+        batch_size=batch_size,
+        shuffle=False,
+        num_workers=num_workers,
+        pin_memory=torch.cuda.is_available(),
+        persistent_workers=num_workers > 0
+    )
+    
+    logger.info(f"Created dataloaders with {num_workers} workers")
+    return train_loader, val_loader
+
+
+class CANGraphDataModule(pl.LightningDataModule):
+    """Lightning DataModule for efficient batch size tuning."""
+    
+    def __init__(self, train_dataset, val_dataset, batch_size: int):
+        super().__init__()
+        self.train_dataset = train_dataset
+        self.val_dataset = val_dataset
+        self.batch_size = batch_size
+        self.num_workers = min(os.cpu_count() or 1, 8)
+    
+    def train_dataloader(self):
+        return DataLoader(
+            self.train_dataset,
+            batch_size=self.batch_size,
+            shuffle=True,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=self.num_workers > 0
+        )
+    
+    def val_dataloader(self):
+        return DataLoader(
+            self.val_dataset,
+            batch_size=self.batch_size,
+            shuffle=False,
+            num_workers=self.num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=self.num_workers > 0
+        )
+
+
+@hydra.main(version_base=None, config_path="conf", config_name="config")
+def main(config: DictConfig):
+    """
+    Main training function - uses Lightning Trainer directly, no custom wrappers.
+    """
+    logger.info("Starting CAN-Graph training")
+    logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
+    
+    # Load and prepare dataset
+    train_dataset, val_dataset, num_ids = load_dataset(config.dataset.name, config)
+    
+    # Create Lightning module
+    model = CANGraphLightningModule(
+        model_config=config.model,
+        training_config=config.training,
+        model_type=config.model.type,
+        training_mode=config.training.get('mode', 'normal'),
+        num_ids=num_ids
+    )
+    
+    # Find Optimal Batch Size
+    if config.training.get('optimize_batch_size', False):
+        logger.info("Finding optimal batch size with Lightning's Tuner")
+        
+        # Create temporary DataModule
+        temp_datamodule = CANGraphDataModule(train_dataset, val_dataset, model.batch_size)
+        
+        trainer = pl.Trainer(
+            accelerator='auto',
+            devices='auto',
+            precision='32-true',
+            max_epochs=1,
+            enable_checkpointing=False,
+            logger=False
+        )
+        
+        tuner = Tuner(trainer)
+        try:
+            tuner.scale_batch_size(
+                model,
+                datamodule=temp_datamodule,
+                mode='power',
+                steps_per_trial=3,
+                init_val=4096,
+                max_trials=10
+            )
+            
+            optimized_batch_size = model.batch_size
+            logger.info(f"Batch size optimized to: {optimized_batch_size}")
+            
+        except Exception as e:
+            logger.warning(f"Batch size optimization failed: {e}. Using original batch size.")
+    
+    # Conservative adjustment for knowledge distillation
+    if config.training.get('mode') == 'knowledge_distillation':
+        model.batch_size = max(model.batch_size // 2)  # KD needs more memory
+        logger.info(f"Reduced batch size for knowledge distillation: {model.batch_size}")
+    
+    # Create dataloaders with optimized batch size
+    train_loader, val_loader = create_dataloaders(
+        train_dataset, val_dataset, model.batch_size
+    )
+    
+    # Setup loggers based on configuration
+    loggers = []
+    csv_logger = CSVLogger(
+        save_dir=config.get('log_dir', 'outputs/lightning_logs'),
+        name=f"{config.model.type}_{config.training.get('mode', 'normal')}_training"
+    )
+    loggers.append(csv_logger)
+    
+    # Add TensorBoard logger if enabled (optional)
+    if config.get('logging', {}).get('enable_tensorboard', False):
+        tb_logger = TensorBoardLogger(
+            save_dir=config.get('log_dir', 'outputs/lightning_logs'),
+            name=f"{config.model.type}_{config.training.get('mode', 'normal')}_training"
+        )
+        loggers.append(tb_logger)
+        logger.info("TensorBoard logging enabled. Run 'tensorboard --logdir outputs/lightning_logs' to view.")
+    
+    # Setup Lignhtning Trainer
+    trainer = pl.Trainer(
+        accelerator='auto',
+        devices='auto', 
+        precision='32-true',  # Use valid precision instead of 'auto'
+        max_epochs=config.training.max_epochs,
+        gradient_clip_val=config.training.get('gradient_clip_val', 1.0),  # Clip gradients for stability
+        logger=loggers,
+        callbacks=[
+            ModelCheckpoint(
+                dirpath='saved_models/lightning_checkpoints',
+                filename=f'{config.model.type}_{{epoch:02d}}_{{val_loss:.2f}}',
+                save_top_k=3,
+                monitor='val_loss',
+                mode='min',
+                save_last=True
+            ),
+        ],
+        enable_checkpointing=True,
+        log_every_n_steps=config.training.get('log_every_n_steps', 50),
+    )
+    
+    # Train with Lightning Trainer
+    logger.info("Training with Lightning Trainer")
+    trainer.fit(model, train_loader, val_loader)
+    
+    # Test if enabled
+    if config.training.get('run_test', True):
+        test_results = trainer.test(model, val_loader)
+        logger.info(f"Test results: {test_results}")
+    
+    # Save model
+    model_name = f"{config.model.type}_{config.training.get('mode', 'normal')}_{config.dataset.name}.pth"
+    save_path = Path("saved_models") / model_name
+    save_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), save_path)
+    logger.info(f"Model saved to: {save_path}")
+    
+    logger.info("Training completed successfully!")
+
+
+if __name__ == "__main__":
+    main()

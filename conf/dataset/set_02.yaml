@@ -1,0 +1,6 @@
+# Set 02 dataset - inherits from universal template
+defaults:
+  - can_universal
+
+name: set_02
+description: "CAN dataset set 02 - auto-discovers train_ folders"

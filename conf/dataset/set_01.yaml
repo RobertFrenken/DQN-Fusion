@@ -1,0 +1,9 @@
+# Set 01 dataset - inherits from universal template
+defaults:
+  - can_universal
+
+name: set_01
+description: "CAN dataset set 01 - auto-discovers train_ folders"
+
+# Override any specific settings for set_01 if needed
+# (Your preprocessing handles everything automatically)

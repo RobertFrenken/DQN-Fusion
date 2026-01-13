@@ -1,0 +1,65 @@
+# Knowledge distillation training configuration
+mode: knowledge_distillation  
+type: "student_teacher_training"
+description: "Knowledge distillation from teacher to student model"
+
+# Training parameters
+max_epochs: 80                  # Usually needs fewer epochs than training from scratch
+batch_size: 32                  
+learning_rate: 0.002            # Slightly higher LR for distillation
+weight_decay: 0.0001
+
+# Knowledge distillation parameters
+teacher_model_path: null        # Path to trained teacher model (required)
+distillation_temperature: 4.0   # Softmax temperature for knowledge distillation
+distillation_alpha: 0.7         # Weight for soft targets vs hard targets
+                                # Loss = alpha * soft_loss + (1-alpha) * hard_loss
+
+# Student model scaling (optional - can train smaller student)
+student_model_scale: 1.0        # 1.0 = same size, 0.5 = half size, etc.
+
+# Memory management (important for distillation - both models in GPU memory)
+gradient_accumulation_steps: 2   # Accumulate gradients to handle memory pressure
+enable_gradient_checkpointing: true  # Trade compute for memory
+
+# Optimization
+optimizer: "adam"
+use_scheduler: true
+scheduler_type: "cosine"
+scheduler_params:
+  T_max: 80
+
+# Lightning Tuner settings (may need smaller batch sizes due to memory)
+optimize_batch_size: true
+batch_size_mode: "power"
+max_batch_size_trials: 15       # Fewer trials due to memory constraints
+
+# Training behavior  
+early_stopping_patience: 12
+gradient_clip_val: 1.0
+accumulate_grad_batches: 2      # Accumulate to handle both models in memory
+
+# Evaluation
+run_test: true
+test_every_n_epochs: 10
+compare_with_teacher: true      # Compare student performance to teacher
+
+# Checkpointing
+save_top_k: 3
+monitor_metric: "val_loss"
+monitor_mode: "min"
+
+# Hardware optimization
+precision: "16-mixed"           # Mixed precision helps with memory for distillation
+find_unused_parameters: false
+
+# Logging
+log_every_n_steps: 50
+save_hyperparameters: true
+log_teacher_student_comparison: true
+
+# Memory optimization for distillation
+memory_optimization:
+  offload_teacher_to_cpu: false  # Keep teacher on GPU for speed
+  use_teacher_cache: true        # Cache teacher outputs to reduce computation
+  clear_cache_every_n_steps: 100 # Clear caches periodically

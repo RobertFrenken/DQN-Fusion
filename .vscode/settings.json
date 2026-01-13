@@ -11,5 +11,8 @@
     "terminal.integrated.env.windows": {
         "CUDA_PATH": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.8",
         "CUDA_HOME": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.8"
+    },
+    "chat.tools.terminal.autoApprove": {
+        "conda": true
     }
 }

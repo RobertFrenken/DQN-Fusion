@@ -1,0 +1,29 @@
+# GAT model configuration - Lightning optimized
+type: gat
+name: "Graph Attention Network with Jumping Knowledge"
+description: "Lightning-optimized GAT with auto-configuration"
+
+# GAT architecture parameters
+gat:
+  input_dim: 11                 # Verified feature count for CAN data
+  hidden_channels: 64
+  num_layers: 5
+  heads: 8                      # Multi-head attention
+  embedding_dim: 16
+  dropout: 0.2
+  output_dim: 4                 # Multi-class classification (normal/DoS/Fuzzy/Gear)
+  
+  # Jumping Knowledge Network settings  
+  use_jumping_knowledge: true
+  jk_mode: "max"               # max, lstm, cat
+  
+  # Advanced settings
+  use_residual: true
+  
+# Lightning-specific optimizations
+lightning:
+  compile_model: false          # PyTorch 2.0 compile
+  sync_batchnorm: false        # Multi-GPU batch normalization
+  gradient_checkpointing: false # Memory vs speed tradeoff
+  use_batch_norm: true
+  activation: "relu"

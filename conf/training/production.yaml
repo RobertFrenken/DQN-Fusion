@@ -1,0 +1,54 @@
+# Production-ready Lightning configuration
+mode: "production"
+description: "Optimized for deployment and inference speed"
+
+# Training parameters (focused on robustness)
+learning_rate: 0.0005          # Conservative learning rate
+weight_decay: 1e-3             # Stronger regularization
+scheduler: 
+  type: "plateau"
+  factor: 0.5
+  patience: 5
+  threshold: 0.001
+
+# Batch configuration (stable sizes)
+batch_size: 4096               # Fixed size for consistent memory usage
+accumulate_grad_batches: 1
+gradient_clip_val: 0.5         # Conservative clipping
+
+# Data loading (optimized for consistency)
+dataloader:
+  num_workers: 4               # Fixed for reproducibility
+  persistent_workers: true
+  pin_memory: true
+  drop_last: true              # Consistent batch sizes
+
+# Model optimization
+model_optimization:
+  use_torchscript: false       # Enable for production deployment
+  quantization: false          # Enable for mobile/edge deployment
+  optimize_for_inference: true
+
+# Validation and testing
+validation:
+  check_val_every_n_epoch: 1
+  limit_val_batches: 1.0
+  
+# Production callbacks
+callbacks:
+  model_checkpoint:
+    save_top_k: 1              # Only save best model
+    monitor: "val_accuracy"    # Focus on accuracy
+    mode: "max" 
+    save_last: false           # Don't save last model
+  early_stopping:
+    monitor: "val_accuracy"
+    patience: 20               # More patience for stability
+    min_delta: 0.005
+    mode: "max"
+
+# Logging (minimal for production)
+logging:
+  log_every_n_steps: 100       # Less frequent logging
+  enable_tensorboard: false
+  save_hyperparameters: true

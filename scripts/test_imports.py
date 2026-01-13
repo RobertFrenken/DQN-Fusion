@@ -27,7 +27,7 @@ try:
     
     # Test utility imports  
     print("3️⃣ Testing utility imports...")
-    from src.utils.gpu_utils import detect_gpu_capabilities_unified
+    # GPU utilities are now handled by PyTorch Lightning
     from src.utils.utils_logging import setup_gpu_optimization, log_memory_usage
     print("   ✅ Utilities imported successfully")
     

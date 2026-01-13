@@ -43,7 +43,7 @@ from src.utils.utils_logging import setup_gpu_optimization, log_memory_usage, cl
 # Import new optimization modules
 from src.utils.adaptive_memory_manager import AdaptiveMemoryManager
 from src.training.gpu_monitor import GPUMonitor
-from src.utils.gpu_utils import detect_gpu_capabilities_unified
+from src.utils.legacy_compatibility import detect_gpu_capabilities_unified
 
 warnings.filterwarnings('ignore', category=UserWarning)
 

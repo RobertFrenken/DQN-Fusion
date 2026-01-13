@@ -31,7 +31,7 @@ import psutil
 import numpy as np
 from omegaconf import DictConfig, OmegaConf
 
-from src.utils.gpu_utils import detect_gpu_capabilities_unified
+from src.utils.legacy_compatibility import detect_gpu_capabilities_unified
 from src.training.gpu_monitor import GPUMonitor
 from src.utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
 

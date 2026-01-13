@@ -49,7 +49,7 @@ from src.utils.plotting_utils import (
 )
 from src.training.gpu_monitor import GPUMonitor
 from src.training.fusion_extractor import FusionDataExtractor
-from src.utils.gpu_utils import detect_gpu_capabilities_unified, create_optimized_data_loaders
+from src.utils.legacy_compatibility import detect_gpu_capabilities_unified, create_optimized_data_loaders
 
 warnings.filterwarnings('ignore', category=UserWarning)
 

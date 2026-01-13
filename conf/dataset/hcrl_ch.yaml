@@ -1,0 +1,6 @@
+# HCRL-CH dataset - inherits from universal template
+defaults:
+  - can_universal
+
+name: hcrl_ch  
+description: "HCRL Channel dataset - auto-discovers train_ folders"

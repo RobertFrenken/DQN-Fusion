@@ -1,0 +1,37 @@
+# HCRL SA Dataset Configuration - Lightning optimized
+name: "hcrl_sa"
+type: "graph"
+description: "CAN attack detection dataset with graph structure"
+
+# Data paths
+data_path: "datasets/can-train-and-test-v1.5/hcrl-sa"
+train_file: "attacks_train.csv"
+test_file: "attacks_test.csv"
+
+# Data properties
+num_features: 11                 # Verified feature count
+num_classes: 4                   # Normal, DoS, Fuzzy, Gear
+target_column: "label"
+id_column: "can_id"
+
+# Preprocessing
+normalization: "minmax"          # minmax, standard, robust, none
+handle_missing: "drop"           # drop, mean, median, forward
+validation_split: 0.2            # Fraction for validation
+
+# Graph construction
+edge_threshold: 0.5              # Correlation threshold for edges
+add_self_loops: true
+directed: false
+
+# Lightning DataModule settings
+batch_size_limits:
+  min: 32
+  max: 16384                     # Maximum for memory constraints
+  default: 1024                  # Starting point for auto-tuning
+
+# Memory optimization
+prefetch_factor: 2               # Batches to prefetch
+drop_last: false                 # Keep incomplete batches
+shuffle_train: true
+shuffle_val: false

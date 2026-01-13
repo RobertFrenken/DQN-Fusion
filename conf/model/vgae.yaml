@@ -1,0 +1,26 @@
+# VGAE model configuration  
+type: vgae
+name: "Variational Graph Autoencoder with Neighborhood"
+
+# VGAE architecture parameters
+vgae:
+  input_dim: 29                 # CAN message features
+  hidden_dim: 128
+  latent_dim: 64
+  output_dim: 2                 # For classification after reconstruction
+  
+  # Encoder settings
+  encoder_layers: 3
+  encoder_dropout: 0.1
+  
+  # Decoder settings
+  decoder_layers: 2
+  decoder_dropout: 0.1
+  
+  # Variational settings
+  beta: 1.0                     # KL divergence weight
+  use_neighborhood: true        # Neighborhood-based reconstruction
+  
+  # Advanced settings
+  use_edge_attr: true
+  activation: "relu"

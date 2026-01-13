@@ -1,0 +1,44 @@
+# Normal training configuration
+mode: normal
+type: "standard_training"
+description: "Standard supervised training"
+
+# Training parameters
+max_epochs: 100
+batch_size: 32                  # Will be optimized by Lightning Tuner if enabled
+learning_rate: 0.001
+weight_decay: 0.0001
+
+# Optimization
+optimizer: "adam"
+use_scheduler: true
+scheduler_type: "cosine"
+scheduler_params:
+  T_max: 100                    # Same as max_epochs
+
+# Lightning Tuner settings
+optimize_batch_size: true       # Use Lightning's real Tuner
+batch_size_mode: "power"        # power, binsearch
+max_batch_size_trials: 25
+
+# Training behavior
+early_stopping_patience: 15
+gradient_clip_val: 1.0
+accumulate_grad_batches: 1
+
+# Evaluation
+run_test: true
+test_every_n_epochs: 10
+
+# Checkpointing
+save_top_k: 3
+monitor_metric: "val_loss"
+monitor_mode: "min"
+
+# Hardware optimization
+precision: "auto"               # Let Lightning choose optimal precision
+find_unused_parameters: false
+
+# Logging
+log_every_n_steps: 50
+save_hyperparameters: true

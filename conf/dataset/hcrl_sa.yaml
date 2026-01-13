@@ -1,0 +1,35 @@
+# HCRL-SA dataset configuration
+name: hcrl_sa
+type: "graph_dataset"
+description: "HCRL Synthetic Attack dataset"
+
+# Data paths
+data_path: "datasets/can-train-and-test-v1.5/hcrl-sa"
+cache_dir: "datasets/cache/hcrl_sa"
+
+# Data processing parameters
+preprocessing:
+  time_window: 1.0              # seconds
+  max_nodes_per_graph: 1000
+  min_nodes_per_graph: 10
+  feature_dim: 11               # NODE_FEATURE_COUNT from preprocessing (CAN_ID + 8 data bytes + count + position)
+  
+  # Graph construction
+  edge_threshold: 0.5           # Similarity threshold for edges
+  max_edges_per_node: 20
+  use_temporal_edges: true
+  
+  # Normalization
+  normalize_features: true
+  feature_scaling: "standard"   # standard, minmax, robust
+
+# Dataset splits
+splits:
+  train: 0.8
+  val: 0.2
+  test: 0.0                     # Use validation as test for now
+
+# Data loading
+batch_processing: true
+cache_processed_data: true
+num_workers: auto               # Will be set based on CPU cores
