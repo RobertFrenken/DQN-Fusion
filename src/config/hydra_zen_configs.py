@@ -56,7 +56,7 @@ class MemoryOptimizationConfig:
 class GATConfig:
     """Graph Attention Network configuration."""
     type: str = "gat"
-    input_dim: int = 8
+    input_dim: int = 11
     hidden_channels: int = 64
     output_dim: int = 2
     num_layers: int = 3
@@ -75,7 +75,7 @@ class GATConfig:
 class VGAEConfig:
     """Variational Graph Autoencoder configuration."""
     type: str = "vgae"
-    input_dim: int = 8
+    input_dim: int = 11
     hidden_channels: int = 64
     latent_dim: int = 32
     num_layers: int = 2
