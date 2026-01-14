@@ -353,8 +353,8 @@ class HydraZenTrainer:
         
         logger.info("✅ Fusion training completed successfully!")
         return fusion_model, trainer
-     
-                           train_dataset, val_dataset) -> CANGraphLightningModule:
+    
+    def _optimize_batch_size(self, model, train_dataset, val_dataset) -> CANGraphLightningModule:
         """Optimize batch size using Lightning's Tuner."""
         logger.info("🔧 Optimizing batch size...")
         
