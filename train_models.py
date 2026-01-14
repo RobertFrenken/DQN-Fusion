@@ -190,7 +190,10 @@ class CANGraphLightningModule(pl.LightningModule):
         """Get teacher output with optional caching for memory efficiency."""
         if not use_cache or self.training_config.get('memory_optimization', {}).get('use_teacher_cache', True) == False:
             with torch.no_grad():
-                return self.teacher_model(batch)
+                if self.model_type == "vgae":
+                    return self.teacher_model(batch.x, batch.edge_index, batch.batch)
+                else:
+                    return self.teacher_model(batch)
         
         # Simple batch-based caching (could be improved with more sophisticated hashing)
         batch_hash = hash(str(batch.x.shape) + str(batch.edge_index.shape) + str(batch.batch.max().item()))
@@ -199,8 +202,11 @@ class CANGraphLightningModule(pl.LightningModule):
             return self.teacher_cache[batch_hash]
         
         with torch.no_grad():
-            teacher_output = self.teacher_model(batch)
-            self.teacher_cache[batch_hash] = teacher_output.clone()
+            if self.model_type == "vgae":
+                teacher_output = self.teacher_model(batch.x, batch.edge_index, batch.batch)
+            else:
+                teacher_output = self.teacher_model(batch)
+            self.teacher_cache[batch_hash] = teacher_output
             
         # Clear cache periodically to avoid memory buildup
         self.cache_counter += 1
@@ -211,7 +217,13 @@ class CANGraphLightningModule(pl.LightningModule):
         return teacher_output
     
     def forward(self, x):
-        return self.model(x)
+        """Forward pass - handles different model calling conventions."""
+        if self.model_type == "vgae":
+            # VGAE models expect separate arguments
+            return self.model(x.x, x.edge_index, x.batch)
+        else:
+            # GAT models expect the full batch object
+            return self.model(x)
     
     def training_step(self, batch, batch_idx):
         """Training step - handles different training modes."""
@@ -227,7 +239,7 @@ class CANGraphLightningModule(pl.LightningModule):
     
     def _normal_training_step(self, batch, batch_idx):
         """Standard training step."""
-        output = self.model(batch)
+        output = self.model(batch) if self.model_type == "gat" else self.forward(batch)
         loss = self._compute_loss(output, batch)
         
         self.log('train_loss', loss, prog_bar=True)
@@ -244,11 +256,11 @@ class CANGraphLightningModule(pl.LightningModule):
             
             # Create batch with only normal samples
             filtered_batch = self._filter_batch_by_mask(batch, normal_mask)
-            output = self.model(filtered_batch)
+            output = self.forward(filtered_batch)
             loss = self._compute_autoencoder_loss(output, filtered_batch)
         else:
             # No labels, assume all are normal
-            output = self.model(batch)
+            output = self.forward(batch)
             loss = self._compute_autoencoder_loss(output, batch)
         
         self.log('train_autoencoder_loss', loss, prog_bar=True)
@@ -257,7 +269,7 @@ class CANGraphLightningModule(pl.LightningModule):
     def _knowledge_distillation_step(self, batch, batch_idx):
         """Knowledge distillation training step."""
         # Student forward pass
-        student_output = self.model(batch)
+        student_output = self.forward(batch)
         
         # Teacher forward pass with caching
         teacher_output = self._get_teacher_output_cached(batch)
@@ -272,15 +284,23 @@ class CANGraphLightningModule(pl.LightningModule):
             # Log teacher-student output similarity
             with torch.no_grad():
                 if hasattr(batch, 'y'):  # For classification
-                    teacher_acc = (teacher_output.argmax(dim=-1) == batch.y).float().mean()
-                    student_acc = (student_output.argmax(dim=-1) == batch.y).float().mean()
+                    # Handle different output formats
+                    if isinstance(teacher_output, tuple):
+                        teacher_logits = teacher_output[1]  # canid_logits for VGAE
+                        student_logits = student_output[1] if isinstance(student_output, tuple) else student_output
+                    else:
+                        teacher_logits = teacher_output
+                        student_logits = student_output[1] if isinstance(student_output, tuple) else student_output
+                        
+                    teacher_acc = (teacher_logits.argmax(dim=-1) == batch.y).float().mean()
+                    student_acc = (student_logits.argmax(dim=-1) == batch.y).float().mean()
                     self.log('teacher_accuracy', teacher_acc, prog_bar=False)
                     self.log('student_accuracy', student_acc, prog_bar=False)
                     self.log('accuracy_gap', teacher_acc - student_acc, prog_bar=False)
                 
                 # Log output similarity (cosine similarity)
-                teacher_flat = teacher_output.flatten()
-                student_flat = student_output.flatten()
+                teacher_flat = teacher_output[0].flatten() if isinstance(teacher_output, tuple) else teacher_output.flatten()
+                student_flat = student_output[0].flatten() if isinstance(student_output, tuple) else student_output.flatten()
                 similarity = F.cosine_similarity(teacher_flat.unsqueeze(0), student_flat.unsqueeze(0))
                 self.log('teacher_student_similarity', similarity, prog_bar=False)
         
@@ -290,7 +310,7 @@ class CANGraphLightningModule(pl.LightningModule):
     def _fusion_training_step(self, batch, batch_idx):
         """Fusion training step - handles multiple model outputs."""
         # This will be implemented when we get to fusion training
-        output = self.model(batch)
+        output = self.forward(batch)
         loss = self._compute_loss(output, batch)
         
         self.log('train_fusion_loss', loss, prog_bar=True)
@@ -298,7 +318,7 @@ class CANGraphLightningModule(pl.LightningModule):
     
     def validation_step(self, batch, batch_idx):
         """Validation step."""
-        output = self.model(batch)
+        output = self.forward(batch)
         loss = self._compute_loss(output, batch)
         
         self.log('val_loss', loss, prog_bar=True)
@@ -306,7 +326,7 @@ class CANGraphLightningModule(pl.LightningModule):
     
     def test_step(self, batch, batch_idx):
         """Test step."""
-        output = self.model(batch)
+        output = self.forward(batch)
         loss = self._compute_loss(output, batch)
         
         self.log('test_loss', loss, prog_bar=True)
@@ -314,15 +334,53 @@ class CANGraphLightningModule(pl.LightningModule):
     
     def _compute_loss(self, output, batch):
         """Compute standard loss."""
-        if hasattr(batch, 'y'):
-            return nn.functional.cross_entropy(output, batch.y)
+        if self.model_type == "vgae":
+            # VGAE outputs: (cont_out, canid_logits, neighbor_logits, z, kl_loss)
+            cont_out, canid_logits, neighbor_logits, z, kl_loss = output
+            
+            if hasattr(batch, 'y'):
+                # Classification loss using CAN ID logits
+                classification_loss = nn.functional.cross_entropy(canid_logits, batch.y)
+                
+                # Add KL divergence loss
+                total_loss = classification_loss + 0.01 * kl_loss  # Small weight for KL
+                return total_loss
+            else:
+                # Reconstruction loss
+                reconstruction_loss = nn.functional.mse_loss(cont_out, batch.x[:, 1:])
+                
+                # Add KL divergence loss
+                total_loss = reconstruction_loss + 0.01 * kl_loss
+                return total_loss
         else:
-            # For unsupervised cases
-            return nn.functional.mse_loss(output, batch.x)
+            # GAT standard output
+            if hasattr(batch, 'y'):
+                return nn.functional.cross_entropy(output, batch.y)
+            else:
+                # For unsupervised cases
+                return nn.functional.mse_loss(output, batch.x)
     
     def _compute_autoencoder_loss(self, output, batch):
         """Compute reconstruction loss for autoencoder."""
-        return nn.functional.mse_loss(output, batch.x)
+        if self.model_type == "vgae":
+            # VGAE outputs: (cont_out, canid_logits, neighbor_logits, z, kl_loss)
+            cont_out, canid_logits, neighbor_logits, z, kl_loss = output
+            
+            # Reconstruction loss for continuous features (excluding CAN ID)
+            reconstruction_loss = nn.functional.mse_loss(cont_out, batch.x[:, 1:])
+            
+            # CAN ID prediction loss
+            canid_loss = nn.functional.cross_entropy(canid_logits, batch.x[:, 0].long())
+            
+            # Neighborhood prediction loss (if we have edges to predict)
+            # This is more complex and would require creating target neighborhood matrices
+            # For now, just use reconstruction + canid + KL
+            
+            total_loss = reconstruction_loss + canid_loss + 0.01 * kl_loss
+            return total_loss
+        else:
+            # GAT autoencoder (if implemented)
+            return nn.functional.mse_loss(output, batch.x)
     
     def _compute_distillation_loss(self, student_output, teacher_output, batch):
         """Compute knowledge distillation loss."""
