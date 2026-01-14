@@ -74,8 +74,22 @@ class CANGraphLightningModule(pl.LightningModule):
     def _create_model(self):
         """Create the appropriate model based on configuration."""
         if self.model_type == "gat":
-            # Map config parameters to model parameters
-            gat_params = dict(self.model_config.gat)
+            # Handle both old dict config and new dataclass config
+            if hasattr(self.model_config, 'gat'):
+                # Old config format
+                gat_params = dict(self.model_config.gat)
+            else:
+                # New dataclass format - convert to dict
+                gat_params = {
+                    'input_dim': self.model_config.input_dim,
+                    'hidden_channels': self.model_config.hidden_channels,
+                    'output_dim': self.model_config.output_dim,
+                    'num_layers': self.model_config.num_layers,
+                    'heads': self.model_config.heads,
+                    'dropout': self.model_config.dropout,
+                    'num_fc_layers': self.model_config.num_fc_layers,
+                    'embedding_dim': self.model_config.embedding_dim,
+                }
             
             # Rename parameters to match model signature
             gat_params['in_channels'] = gat_params.pop('input_dim')
@@ -90,7 +104,16 @@ class CANGraphLightningModule(pl.LightningModule):
             
             return GATWithJK(**gat_params)
         elif self.model_type == "vgae":
-            return GraphAutoencoderNeighborhood(**self.model_config.vgae)
+            # Handle both old dict config and new dataclass config
+            if hasattr(self.model_config, 'vgae'):
+                vgae_params = self.model_config.vgae
+            else:
+                vgae_params = {
+                    'input_dim': self.model_config.input_dim,
+                    'hidden_channels': self.model_config.hidden_channels,
+                    'latent_dim': getattr(self.model_config, 'latent_dim', 32),
+                }
+            return GraphAutoencoderNeighborhood(**vgae_params)
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
     
@@ -334,61 +357,106 @@ class CANGraphLightningModule(pl.LightningModule):
     def configure_optimizers(self):
         """Configure optimizers and schedulers using Hydra configuration."""
         
-        # Get optimizer type from config
-        optimizer_name = self.training_config.get('optimizer', 'adam').lower()
+        # Handle both old dict config and new dataclass config
+        def get_config_value(key, default=None):
+            if hasattr(self.training_config, 'get'):
+                return self.training_config.get(key, default)
+            else:
+                return getattr(self.training_config, key, default)
+        
+        # Get optimizer configuration
+        if hasattr(self.training_config, 'optimizer'):
+            # New dataclass format with nested optimizer config
+            optimizer_config = self.training_config.optimizer
+            optimizer_name = optimizer_config.name.lower()
+            learning_rate = optimizer_config.lr
+            weight_decay = optimizer_config.weight_decay
+        else:
+            # Old dict format or simple dataclass
+            optimizer_name = get_config_value('optimizer', 'adam').lower()
+            learning_rate = get_config_value('learning_rate', 0.001)
+            weight_decay = get_config_value('weight_decay', 0.0001)
         
         # Create optimizer based on config
         if optimizer_name == 'adam':
             optimizer = torch.optim.Adam(
                 self.parameters(),
-                lr=self.training_config.learning_rate,
-                weight_decay=self.training_config.get('weight_decay', 0.0001)
+                lr=learning_rate,
+                weight_decay=weight_decay
             )
         elif optimizer_name == 'adamw':
             optimizer = torch.optim.AdamW(
                 self.parameters(),
-                lr=self.training_config.learning_rate,
-                weight_decay=self.training_config.get('weight_decay', 0.0001)
+                lr=learning_rate,
+                weight_decay=weight_decay
             )
         elif optimizer_name == 'sgd':
+            momentum = get_config_value('momentum', 0.9)
             optimizer = torch.optim.SGD(
                 self.parameters(),
-                lr=self.training_config.learning_rate,
-                weight_decay=self.training_config.get('weight_decay', 0.0001),
-                momentum=self.training_config.get('momentum', 0.9)
+                lr=learning_rate,
+                weight_decay=weight_decay,
+                momentum=momentum
             )
         else:
             raise ValueError(f"Unsupported optimizer: {optimizer_name}")
         
         # Setup scheduler if configured
-        if self.training_config.get('use_scheduler', False):
-            scheduler_type = self.training_config.get('scheduler_type', 'cosine').lower()
+        use_scheduler = get_config_value('use_scheduler', False)
+        if hasattr(self.training_config, 'scheduler') and self.training_config.scheduler:
+            # New dataclass format with nested scheduler config
+            scheduler_config = self.training_config.scheduler
+            use_scheduler = scheduler_config.use_scheduler
             
-            if scheduler_type == 'cosine':
-                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer, 
-                    T_max=self.training_config.scheduler_params.get('T_max', self.training_config.max_epochs)
-                )
-            elif scheduler_type == 'step':
-                scheduler = torch.optim.lr_scheduler.StepLR(
-                    optimizer,
-                    step_size=self.training_config.scheduler_params.get('step_size', 30),
-                    gamma=self.training_config.scheduler_params.get('gamma', 0.1)
-                )
-            elif scheduler_type == 'exponential':
-                scheduler = torch.optim.lr_scheduler.ExponentialLR(
-                    optimizer,
-                    gamma=self.training_config.scheduler_params.get('gamma', 0.95)
-                )
+        if use_scheduler:
+            if hasattr(self.training_config, 'scheduler'):
+                # New dataclass format
+                scheduler_config = self.training_config.scheduler
+                scheduler_type = scheduler_config.scheduler_type.lower()
+                scheduler_params = scheduler_config.params
+                
+                if scheduler_type == 'cosine':
+                    T_max = scheduler_params.get('T_max', self.training_config.max_epochs)
+                    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max)
+                elif scheduler_type == 'step':
+                    step_size = scheduler_params.get('step_size', 30)
+                    gamma = scheduler_params.get('gamma', 0.1)
+                    scheduler = torch.optim.lr_scheduler.StepLR(optimizer, step_size=step_size, gamma=gamma)
+                elif scheduler_type == 'exponential':
+                    gamma = scheduler_params.get('gamma', 0.95)
+                    scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
+                else:
+                    raise ValueError(f"Unsupported scheduler: {scheduler_type}")
             else:
-                raise ValueError(f"Unsupported scheduler: {scheduler_type}")
+                # Old dict format
+                scheduler_type = get_config_value('scheduler_type', 'cosine').lower()
+                scheduler_params = get_config_value('scheduler_params', {})
+                
+                if scheduler_type == 'cosine':
+                    scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
+                        optimizer, 
+                        T_max=scheduler_params.get('T_max', self.training_config.max_epochs)
+                    )
+                elif scheduler_type == 'step':
+                    scheduler = torch.optim.lr_scheduler.StepLR(
+                        optimizer,
+                        step_size=scheduler_params.get('step_size', 30),
+                        gamma=scheduler_params.get('gamma', 0.1)
+                    )
+                elif scheduler_type == 'exponential':
+                    scheduler = torch.optim.lr_scheduler.ExponentialLR(
+                        optimizer,
+                        gamma=scheduler_params.get('gamma', 0.95)
+                    )
+                else:
+                    raise ValueError(f"Unsupported scheduler: {scheduler_type}")
                 
             return [optimizer], [scheduler]
         
         return optimizer
 
 
-def load_dataset(dataset_name: str, config: DictConfig):
+def load_dataset(dataset_name: str, config):
     """Load and prepare dataset"""
     logger.info(f"Loading dataset: {dataset_name}")
     
@@ -401,9 +469,16 @@ def load_dataset(dataset_name: str, config: DictConfig):
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
     
-    # Check for cached processed data
-    cache_enabled = config.dataset.get('preprocessing', {}).get('cache_processed_data', True)
-    cache_dir = config.dataset.get('cache_dir', f"datasets/cache/{dataset_name}")
+    # Check for cached processed data - handle both dict and dataclass configs
+    if hasattr(config.dataset, 'get'):  # Dictionary config
+        cache_enabled = config.dataset.get('preprocessing', {}).get('cache_processed_data', True)
+        cache_dir = config.dataset.get('cache_dir', f"datasets/cache/{dataset_name}")
+    else:  # Dataclass config
+        cache_enabled = getattr(config.dataset, 'cache_processed_data', True)
+        cache_dir = getattr(config.dataset, 'cache_dir', None)
+        if cache_dir is None:
+            cache_dir = f"datasets/cache/{dataset_name}"
+    
     cache_file = Path(cache_dir) / "processed_graphs.pt"
     id_mapping_file = Path(cache_dir) / "id_mapping.pkl"
     
