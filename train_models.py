@@ -106,13 +106,20 @@ class CANGraphLightningModule(pl.LightningModule):
         elif self.model_type == "vgae":
             # Handle both old dict config and new dataclass config
             if hasattr(self.model_config, 'vgae'):
-                vgae_params = self.model_config.vgae
+                vgae_params = dict(self.model_config.vgae)
             else:
+                # New dataclass format - convert to dict with correct parameter names
                 vgae_params = {
-                    'input_dim': self.model_config.input_dim,
-                    'hidden_channels': self.model_config.hidden_channels,
+                    'in_channels': self.model_config.input_dim,  # Note: in_channels not input_dim
+                    'hidden_dim': self.model_config.hidden_channels,  # Note: hidden_dim not hidden_channels
                     'latent_dim': getattr(self.model_config, 'latent_dim', 32),
+                    'num_ids': self.num_ids,
                 }
+            
+            # Ensure num_ids is added if not present
+            if 'num_ids' not in vgae_params:
+                vgae_params['num_ids'] = self.num_ids
+                
             return GraphAutoencoderNeighborhood(**vgae_params)
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
