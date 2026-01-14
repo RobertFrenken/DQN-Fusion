@@ -138,6 +138,10 @@ class HydraZenTrainer:
         logger.info(f"Experiment: {self.config.experiment_name}")
         logger.info(f"Mode: {self.config.training.mode}")
         
+        # Check if fusion mode
+        if self.config.training.mode == "fusion":
+            return self._train_fusion()
+        
         # Load dataset
         train_dataset, val_dataset, num_ids = load_dataset(self.config.dataset.name, self.config)
         
@@ -175,7 +179,181 @@ class HydraZenTrainer:
         logger.info("✅ Training completed successfully!")
         return model, trainer
     
-    def _optimize_batch_size(self, model: CANGraphLightningModule, 
+    def _train_fusion(self):
+        """Fusion training using cached VGAE and GAT predictions."""
+        logger.info("🔀 Training fusion agent with cached predictions")
+        
+        from src.training.fusion_lightning import FusionLightningModule, FusionPredictionCache
+        from src.training.prediction_cache import create_fusion_prediction_cache
+        
+        # Validate fusion config
+        if not hasattr(self.config.training, 'fusion_agent_config'):
+            raise ValueError("Fusion config missing. Use create_fusion_config() or set fusion_agent_config")
+        
+        fusion_cfg = self.config.training.fusion_agent_config
+        
+        # Load pre-trained models for prediction caching
+        logger.info("📦 Loading pre-trained models for prediction caching")
+        
+        ae_path = getattr(self.config.training, 'autoencoder_path', 
+                         f'saved_models/autoencoder_{self.config.dataset.name}.pth')
+        classifier_path = getattr(self.config.training, 'classifier_path',
+                                 f'saved_models/best_teacher_model_{self.config.dataset.name}.pth')
+        
+        # Check if paths exist
+        if not Path(ae_path).exists():
+            raise FileNotFoundError(f"Autoencoder not found: {ae_path}")
+        if not Path(classifier_path).exists():
+            raise FileNotFoundError(f"Classifier not found: {classifier_path}")
+        
+        logger.info(f"  Autoencoder: {ae_path}")
+        logger.info(f"  Classifier: {classifier_path}")
+        
+        # Load dataset for inference
+        train_dataset, val_dataset, num_ids = load_dataset(self.config.dataset.name, self.config)
+        train_loader, val_loader = create_dataloaders(
+            train_dataset, val_dataset, batch_size=64  # Smaller batch for extraction
+        )
+        
+        # Load model checkpoints
+        ae_ckpt = torch.load(ae_path, map_location='cpu')
+        classifier_ckpt = torch.load(classifier_path, map_location='cpu')
+        
+        # Create models for extraction
+        ae_model = self.setup_model(num_ids).model
+        classifier_model = self.setup_model(num_ids).model
+        
+        # Load weights
+        if isinstance(ae_ckpt, dict) and 'state_dict' in ae_ckpt:
+            ae_model.load_state_dict(ae_ckpt['state_dict'])
+        else:
+            ae_model.load_state_dict(ae_ckpt)
+        
+        if isinstance(classifier_ckpt, dict) and 'state_dict' in classifier_ckpt:
+            classifier_model.load_state_dict(classifier_ckpt['state_dict'])
+        else:
+            classifier_model.load_state_dict(classifier_ckpt)
+        
+        logger.info("✓ Models loaded")
+        
+        # Build prediction caches
+        logger.info("🔄 Building prediction caches")
+        train_anomaly, train_gat, train_labels, val_anomaly, val_gat, val_labels = \
+            create_fusion_prediction_cache(
+                autoencoder=ae_model,
+                classifier=classifier_model,
+                train_loader=train_loader,
+                val_loader=val_loader,
+                dataset_name=self.config.dataset.name,
+                device='cuda' if torch.cuda.is_available() else 'cpu',
+                cache_dir='cache/fusion'
+            )
+        
+        logger.info(f"✓ Caches built: {len(train_anomaly)} train, {len(val_anomaly)} val samples")
+        
+        # Create fusion datasets
+        train_fusion_dataset = FusionPredictionCache(
+            anomaly_scores=train_anomaly,
+            gat_probs=train_gat,
+            labels=train_labels
+        )
+        
+        val_fusion_dataset = FusionPredictionCache(
+            anomaly_scores=val_anomaly,
+            gat_probs=val_gat,
+            labels=val_labels
+        )
+        
+        # Create fusion dataloaders
+        from torch.utils.data import DataLoader
+        fusion_train_loader = DataLoader(
+            train_fusion_dataset,
+            batch_size=fusion_cfg.fusion_batch_size,
+            shuffle=True,
+            num_workers=0
+        )
+        
+        fusion_val_loader = DataLoader(
+            val_fusion_dataset,
+            batch_size=fusion_cfg.fusion_batch_size,
+            shuffle=False,
+            num_workers=0
+        )
+        
+        logger.info(f"✓ Fusion dataloaders created (batch size: {fusion_cfg.fusion_batch_size})")
+        
+        # Create fusion Lightning module
+        logger.info("⚙️  Creating fusion Lightning module")
+        fusion_model = FusionLightningModule(
+            fusion_config={
+                'alpha_steps': fusion_cfg.alpha_steps,
+                'fusion_lr': fusion_cfg.fusion_lr,
+                'gamma': fusion_cfg.gamma,
+                'fusion_epsilon': fusion_cfg.fusion_epsilon,
+                'fusion_epsilon_decay': fusion_cfg.fusion_epsilon_decay,
+                'fusion_min_epsilon': fusion_cfg.fusion_min_epsilon,
+                'fusion_buffer_size': fusion_cfg.fusion_buffer_size,
+                'fusion_batch_size': fusion_cfg.fusion_batch_size,
+                'target_update_freq': fusion_cfg.target_update_freq
+            },
+            num_ids=num_ids
+        )
+        
+        # Setup trainer for fusion
+        logger.info("🏋️  Setting up Lightning trainer for fusion")
+        
+        # Model checkpoint
+        checkpoint_callback = ModelCheckpoint(
+            dirpath=f'{self.config.model_save_dir}/fusion_checkpoints',
+            filename=f'fusion_{self.config.dataset.name}_{{epoch:02d}}_{{val_accuracy:.3f}}',
+            save_top_k=3,
+            monitor='val_accuracy',
+            mode='max',
+            auto_insert_metric_name=False
+        )
+        
+        # Early stopping
+        early_stop = EarlyStopping(
+            monitor='val_accuracy',
+            patience=15,
+            mode='max',
+            verbose=True
+        )
+        
+        # CSV Logger
+        csv_logger = CSVLogger(
+            save_dir=self.config.log_dir,
+            name=f'fusion_{self.config.dataset.name}'
+        )
+        
+        # Create trainer
+        trainer = pl.Trainer(
+            accelerator=self.config.trainer.accelerator,
+            devices=self.config.trainer.devices,
+            max_epochs=self.config.training.max_epochs,
+            callbacks=[checkpoint_callback, early_stop],
+            logger=csv_logger,
+            log_every_n_steps=10,
+            enable_progress_bar=True
+        )
+        
+        # Train fusion agent
+        logger.info("🚀 Starting fusion training")
+        trainer.fit(fusion_model, fusion_train_loader, fusion_val_loader)
+        
+        # Validate
+        logger.info("📊 Running validation")
+        val_results = trainer.validate(fusion_model, fusion_val_loader, verbose=True)
+        logger.info(f"Validation results: {val_results}")
+        
+        # Save fusion agent
+        agent_path = f'{self.config.model_save_dir}/fusion_agent_{self.config.dataset.name}.pth'
+        fusion_model.fusion_agent.save_agent(agent_path)
+        logger.info(f"✓ Fusion agent saved to {agent_path}")
+        
+        logger.info("✅ Fusion training completed successfully!")
+        return fusion_model, trainer
+     
                            train_dataset, val_dataset) -> CANGraphLightningModule:
         """Optimize batch size using Lightning's Tuner."""
         logger.info("🔧 Optimizing batch size...")
@@ -279,11 +457,20 @@ Examples:
   python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training knowledge_distillation \\
       --teacher_path saved_models/teacher.pth --student_scale 0.5
   
+  # Fusion training (uses pre-cached predictions)
+  python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training fusion
+  
   # Using preset
   python train_with_hydra_zen.py --preset gat_normal_hcrl_sa
   
+  # Fusion preset
+  python train_with_hydra_zen.py --preset fusion_hcrl_sa
+  
   # List presets
   python train_with_hydra_zen.py --list-presets
+  
+  # Alternatively, use dedicated fusion training script:
+  python train_fusion_lightning.py --dataset hcrl_sa --max-epochs 50
         """
     )
     
