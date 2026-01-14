@@ -37,6 +37,8 @@ from src.config.hydra_zen_configs import (
     validate_config
 )
 from train_models import CANGraphLightningModule, load_dataset, create_dataloaders, CANGraphDataModule
+from src.training.fusion_lightning import FusionLightningModule
+from src.training.prediction_cache import create_fusion_prediction_cache
 
 # Suppress warnings
 warnings.filterwarnings("ignore", message=".*pynvml.*deprecated.*")
@@ -58,16 +60,23 @@ class HydraZenTrainer:
         if not validate_config(self.config):
             raise ValueError("Configuration validation failed")
     
-    def setup_model(self, num_ids: int) -> CANGraphLightningModule:
+    def setup_model(self, num_ids: int) -> pl.LightningModule:
         """Create the Lightning module from config."""
-        model = CANGraphLightningModule(
-            model_config=self.config.model,
-            training_config=self.config.training,
-            model_type=self.config.model.type,
-            training_mode=self.config.training.mode,
-            num_ids=num_ids
-        )
-        return model
+        if self.config.training.mode == "fusion":
+            # Create fusion model with DQN agent
+            fusion_config = dict(self.config.training)
+            model = FusionLightningModule(fusion_config, num_ids)
+            return model
+        else:
+            # Standard GAT/VGAE models
+            model = CANGraphLightningModule(
+                model_config=self.config.model,
+                training_config=self.config.training,
+                model_type=self.config.model.type,
+                training_mode=self.config.training.mode,
+                num_ids=num_ids
+            )
+            return model
     
     def setup_trainer(self) -> pl.Trainer:
         """Create the Lightning trainer from config."""

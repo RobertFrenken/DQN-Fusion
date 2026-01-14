@@ -120,6 +120,11 @@ class FusionLightningModule(pl.LightningModule):
         
         # Batch tracking for effective episodes
         self.batch_count = 0
+        
+        # Memory optimization settings
+        self.memory_optimization = fusion_config.get('memory_optimization', {})
+        self.empty_cache_every_n_steps = self.memory_optimization.get('empty_cache_every_n_steps', 100)
+        self.use_gradient_checkpointing = self.memory_optimization.get('gradient_checkpointing', False)
     
     def configure_optimizers(self):
         """Configure optimizer for fusion agent Q-network."""

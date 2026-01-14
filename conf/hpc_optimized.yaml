@@ -1,0 +1,51 @@
+hardware:
+  accelerator: auto
+  devices: auto
+  num_workers: 8
+  persistent_workers: true
+  pin_memory: true
+  strategy: ddp_find_unused_parameters_false
+logging:
+  enable_progress_bar: false
+  log_every_n_steps: 100
+  save_top_k: 2
+# Training optimizations for high-performance computing
+training:
+  # Mixed precision training (2x speedup on A100s)
+  precision: "16-mixed"
+  
+  # Automatic batch size optimization
+  optimize_batch_size: true
+  batch_size_mode: "power"  # Exponential scaling
+  max_batch_size_trials: 15
+  
+  # Gradient accumulation for effective large batch sizes
+  accumulate_grad_batches: 4
+  gradient_clip_val: 1.0
+  
+  # Memory optimizations
+  find_unused_parameters: false  # DDP optimization
+  sync_batchnorm: true           # Multi-GPU consistency
+  
+  # Reduced logging for SLURM environments
+  log_every_n_steps: 100
+  enable_progress_bar: false
+  
+  # Knowledge distillation optimizations
+  memory_optimization:
+    use_teacher_cache: true
+    clear_cache_every_n_steps: 50
+    offload_teacher_to_cpu: false  # Keep on GPU for speed
+    gradient_checkpointing: true   # Trade compute for memory
+    
+  # Fusion training optimizations
+  fusion_agent_config:
+    alpha_steps: 21
+    fusion_lr: 0.001
+    gamma: 0.9
+    fusion_epsilon: 0.9
+    fusion_epsilon_decay: 0.995
+    fusion_min_epsilon: 0.2
+    fusion_buffer_size: 200000  # Larger for HPC
+    fusion_batch_size: 512      # Larger batch for efficiency
+    target_update_freq: 50
