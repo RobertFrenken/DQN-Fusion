@@ -44,7 +44,7 @@ class OSCJobManager:
         self.osc_settings = {
             "account": "PAS3209",  # Your account
             "email": "frenken.2@osu.edu",  # Your email
-            "project_path": "/users/PAS2022/rf15/CAN-Graph",  # Your project path
+            "project_path": "/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT",  # Your project path
             "conda_env": "gnn-gpu",  # Your conda environment
         }
         
