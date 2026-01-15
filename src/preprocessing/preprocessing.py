@@ -612,7 +612,12 @@ def graph_creation_parallel(root_folder: str, folder_type: str = 'train_',
     
     # Configure parallel processing
     if max_workers is None:
-        max_workers = min(mp.cpu_count(), len(csv_files))
+        # Respect SLURM allocation if available, otherwise use all CPUs
+        slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK') or os.environ.get('SLURM_CPUS_ON_NODE')
+        if slurm_cpus:
+            max_workers = min(int(slurm_cpus), len(csv_files))
+        else:
+            max_workers = min(mp.cpu_count(), len(csv_files))
     
     print(f"Processing {len(csv_files)} files using {max_workers} CPU cores...")
     print(f"Configuration: window_size={window_size}, stride={stride}")

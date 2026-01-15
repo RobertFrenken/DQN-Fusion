@@ -8,9 +8,17 @@
 
 ## MLflow Dashboard Access
 ```bash
-# After training, view results:
-mlflow ui --backend-store-uri file://./outputs/mlruns
+# Activate conda environment first (on OSC)
+module load miniconda3/24.1.2-py310
+source activate gnn-gpu
+
+# After training, view results (use absolute path):
+mlflow ui --backend-store-uri file://$PWD/outputs/lightning_logs/mlruns
 # Open: http://localhost:5000
+
+# For remote access from your local machine:
+# ssh -L 5000:localhost:5000 rf15@pitzer.osc.edu
+# Then open http://localhost:5000 in your browser
 ```
 
 ## Configuration System

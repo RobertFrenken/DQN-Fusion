@@ -22,7 +22,7 @@ import torch
 import torch.nn as nn
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger, MLFlowLogger
-from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
+from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, DeviceStatsMonitor
 from lightning.pytorch.tuner import Tuner
 
 # Add project root to path
@@ -95,6 +95,10 @@ class HydraZenTrainer:
         )
         callbacks.append(checkpoint_callback)
         
+        # GPU/CPU monitoring (logs to MLflow automatically)
+        device_stats = DeviceStatsMonitor()
+        callbacks.append(device_stats)
+        
         # Early stopping
         if hasattr(self.config.training, 'early_stopping_patience'):
             early_stop_callback = EarlyStopping(
@@ -108,25 +112,22 @@ class HydraZenTrainer:
         # Setup loggers
         loggers = []
         
+        # Ensure log_dir is absolute path
+        log_dir = Path(self.config.log_dir).absolute()
+        log_dir.mkdir(parents=True, exist_ok=True)
+        
         # CSV logger
         csv_logger = CSVLogger(
-            save_dir=self.config.log_dir,
+            save_dir=str(log_dir),
             name=self.config.experiment_name
         )
         loggers.append(csv_logger)
         
-        # MLflow logger with comprehensive system metrics
+        # MLflow logger
         mlflow_logger = MLFlowLogger(
             experiment_name="CAN-Graph-Training",
-            tracking_uri=f"file://{self.config.log_dir}/mlruns",
+            tracking_uri=f"file://{log_dir}/mlruns",
             log_model=True,  # Log model artifacts
-            log_system_metrics=True,  # 🚀 Enable comprehensive hardware monitoring
-            system_metrics_kwargs={
-                "log_cpu_usage": True,
-                "log_disk_usage": True, 
-                "log_gpu_usage": True,  # Requires nvidia-ml-py
-                "sampling_interval": 30,  # Log every 30 seconds
-            }
         )
         loggers.append(mlflow_logger)
         
@@ -150,7 +151,7 @@ class HydraZenTrainer:
             callbacks=callbacks,
             enable_checkpointing=self.config.trainer.enable_checkpointing,
             log_every_n_steps=self.config.training.log_every_n_steps,
-            enable_progress_bar=self.config.trainer.enable_progress_bar,
+            enable_progress_bar=False,  # Disable progress bar for cleaner SLURM logs
             num_sanity_val_steps=self.config.trainer.num_sanity_val_steps
         )
         
