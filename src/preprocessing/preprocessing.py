@@ -263,7 +263,7 @@ def find_csv_files(root_folder: str, folder_type: str = 'train_') -> List[str]:
     
     Args:
         root_folder: Root directory to search
-        folder_type: Type of folder to include in search
+        folder_type: Type of folder to include in search (e.g. 'train_')
         
     Returns:
         List of CSV file paths
@@ -271,7 +271,9 @@ def find_csv_files(root_folder: str, folder_type: str = 'train_') -> List[str]:
     csv_files = []
     
     for dirpath, dirnames, filenames in os.walk(root_folder):
-        if folder_type.lower() in dirpath.lower():
+        # Check if current directory contains the folder_type pattern
+        dir_basename = os.path.basename(dirpath).lower()
+        if folder_type.lower().rstrip('_') in dir_basename:
             for filename in filenames:
                 if (filename.endswith('.csv') and 
                     not any(attack_type in filename.lower() for attack_type in EXCLUDED_ATTACK_TYPES)):
