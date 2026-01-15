@@ -128,7 +128,7 @@ class BaseTrainingConfig:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     
     # Training behavior
-    early_stopping_patience: int = 15
+    early_stopping_patience: int = 25  # Increased for more robust training
     gradient_clip_val: float = 1.0
     accumulate_grad_batches: int = 1
     
@@ -171,6 +171,7 @@ class AutoencoderTrainingConfig(BaseTrainingConfig):
     learning_rate: float = 0.0005
     reconstruction_loss: str = "mse"
     use_normal_samples_only: bool = True
+    early_stopping_patience: int = 30  # Longer patience for autoencoder convergence
 
 
 @dataclass

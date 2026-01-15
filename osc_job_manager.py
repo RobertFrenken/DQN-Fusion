@@ -248,6 +248,9 @@ echo "✅ Job {job_name} completed successfully!"
         # Add extra arguments
         for key, value in extra_args.items():
             cmd_parts.append(f"--{key} {value}")
+            
+        # Add standard debugging for dataset loading
+        cmd_parts.append("--debug-graph-count")
         
         return " ".join(cmd_parts)
     
@@ -557,6 +560,10 @@ def main():
                        help="Class imbalance handling method for complex datasets")
     parser.add_argument("--extra-args", type=str,
                        help="Extra arguments to pass to training command (format: 'key1=value1,key2=value2')")
+    parser.add_argument("--early-stopping-patience", type=int,
+                       help="Early stopping patience (epochs to wait without improvement)")
+    parser.add_argument("--force-rebuild-cache", action="store_true",
+                       help="Force rebuild of dataset cache (use if graphs count is wrong)")
     parser.add_argument("--generate-summary", action="store_true",
                        help="Generate job management summary")
     
@@ -579,6 +586,14 @@ def main():
     if args.submit_individual:
         logger.info("🚀 Submitting individual training jobs...")
         extra_args = manager.parse_extra_args(args.extra_args) if args.extra_args else {}
+        
+        # Add force rebuild cache option if requested
+        if args.force_rebuild_cache:
+            extra_args['force-rebuild-cache'] = True
+            
+        # Add early stopping patience if specified
+        if args.early_stopping_patience:
+            extra_args['early-stopping-patience'] = str(args.early_stopping_patience)
         training_types = [args.training] if args.training else None
         jobs = manager.submit_individual_jobs(datasets, training_types=training_types, extra_args=extra_args)
         logger.info(f"✅ Submitted {len(jobs)} individual jobs")

@@ -523,7 +523,7 @@ class CANGraphLightningModule(pl.LightningModule):
         return optimizer
 
 
-def load_dataset(dataset_name: str, config):
+def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
     """Load and prepare dataset"""
     logger.info(f"Loading dataset: {dataset_name}")
     
@@ -549,7 +549,7 @@ def load_dataset(dataset_name: str, config):
     cache_file = Path(cache_dir) / "processed_graphs.pt"
     id_mapping_file = Path(cache_dir) / "id_mapping.pkl"
     
-    if cache_enabled and cache_file.exists() and id_mapping_file.exists():
+    if cache_enabled and cache_file.exists() and id_mapping_file.exists() and not force_rebuild_cache:
         try:
             logger.info(f"Loading cached processed data from {cache_file}")
             
@@ -561,6 +561,25 @@ def load_dataset(dataset_name: str, config):
                 
             logger.info(f"Loaded {len(graphs)} cached graphs with {len(id_mapping)} unique IDs")
             
+            # Validate cache size - detect if cache is corrupted or incomplete
+            expected_sizes = {
+                'set_01': 300000, 'set_02': 400000, 'set_03': 330000, 'set_04': 240000,
+                'hcrl_sa': 18000, 'hcrl_ch': 290000
+            }
+            
+            if dataset_name in expected_sizes:
+                expected = expected_sizes[dataset_name]
+                actual = len(graphs)
+                if actual < expected * 0.1:  # Less than 10% of expected
+                    logger.warning(f"🚨 CACHE ISSUE DETECTED: Only {actual} graphs found, expected ~{expected}")
+                    logger.warning(f"Cache appears corrupted or incomplete. Rebuilding from scratch.")
+                    graphs, id_mapping = None, None
+                elif actual < expected * 0.5:  # Less than 50% of expected  
+                    logger.warning(f"⚠️  Cache has fewer graphs than expected: {actual} vs ~{expected}")
+                    logger.warning(f"This might be a debug/test cache. Use --force-rebuild to recreate.")
+                else:
+                    logger.info(f"✅ Cache size looks good: {actual} graphs (expected ~{expected})")
+            
         except Exception as e:
             logger.warning(f"Failed to load cached data: {e}. Processing from scratch.")
             graphs, id_mapping = None, None
@@ -569,7 +588,8 @@ def load_dataset(dataset_name: str, config):
     
     # Process data if not cached or cache loading failed
     if graphs is None or id_mapping is None:
-        logger.info("Processing dataset from scratch...")
+        rebuild_reason = "forced rebuild" if force_rebuild_cache else "processing dataset from scratch"
+        logger.info(f"Processing dataset: {rebuild_reason}...")
         graphs, id_mapping = graph_creation(dataset_path, 'train_', return_id_mapping=True)
         
         # Save to cache if enabled
@@ -583,11 +603,14 @@ def load_dataset(dataset_name: str, config):
                 pickle.dump(id_mapping, f)
     
     dataset = GraphDataset(graphs)
+    logger.info(f"📊 Created dataset with {len(dataset)} total graphs")
     
     # Split dataset
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(dataset, [train_size, val_size])
+    
+    logger.info(f"📊 Dataset split: {len(train_dataset)} training, {len(val_dataset)} validation")
     
     # Return datasets and number of unique IDs
     num_ids = len(id_mapping) if id_mapping else 1000

@@ -95,8 +95,12 @@ class HydraZenTrainer:
         )
         callbacks.append(checkpoint_callback)
         
-        # GPU/CPU monitoring (logs to MLflow automatically)
-        device_stats = DeviceStatsMonitor()
+        # GPU/CPU monitoring with selective metrics to avoid MLFlow spam
+        # Only logs essential resource metrics: GPU memory, utilization, temperature
+        device_stats = DeviceStatsMonitor(
+            cpu_stats=True,   # CPU utilization and memory
+            gpu_stats=True    # GPU utilization, memory, temperature  
+        )
         callbacks.append(device_stats)
         
         # Early stopping
@@ -123,11 +127,12 @@ class HydraZenTrainer:
         )
         loggers.append(csv_logger)
         
-        # MLflow logger
+        # MLflow logger with reduced logging
         mlflow_logger = MLFlowLogger(
             experiment_name="CAN-Graph-Training",
             tracking_uri=f"file://{log_dir}/mlruns",
-            log_model=True,  # Log model artifacts
+            log_model=False,  # Disable model artifacts to reduce logging
+            # Only log essential metrics: train/val loss, accuracy, epoch time
         )
         loggers.append(mlflow_logger)
         
@@ -168,7 +173,10 @@ class HydraZenTrainer:
             return self._train_fusion()
         
         # Load dataset
-        train_dataset, val_dataset, num_ids = load_dataset(self.config.dataset.name, self.config)
+        force_rebuild = hasattr(self.config, 'force_rebuild_cache') and self.config.force_rebuild_cache
+        train_dataset, val_dataset, num_ids = load_dataset(self.config.dataset.name, self.config, force_rebuild_cache=force_rebuild)
+        
+        logger.info(f"📊 Dataset loaded: {len(train_dataset)} training + {len(val_dataset)} validation = {len(train_dataset) + len(val_dataset)} total graphs")
         
         # Setup model
         model = self.setup_model(num_ids)
@@ -531,6 +539,12 @@ Examples:
     parser.add_argument('--learning_rate', type=float, help='Learning rate')
     parser.add_argument('--tensorboard', action='store_true',
                       help='Enable TensorBoard logging')
+    parser.add_argument('--force-rebuild-cache', action='store_true',
+                      help='Force rebuild of cached processed data')
+    parser.add_argument('--debug-graph-count', action='store_true',
+                      help='Show detailed graph count diagnostics')
+    parser.add_argument('--early-stopping-patience', type=int,
+                      help='Early stopping patience (default: 25 for normal, 30 for autoencoder)')
     
     args = parser.parse_args()
     
@@ -572,6 +586,8 @@ Examples:
             overrides['batch_size'] = args.batch_size
         if args.learning_rate:
             overrides['learning_rate'] = args.learning_rate
+        if args.early_stopping_patience:
+            overrides['early_stopping_patience'] = args.early_stopping_patience
         
         config = store_manager.create_config(args.model, args.dataset, args.training, **overrides)
     
