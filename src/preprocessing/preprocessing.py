@@ -20,9 +20,6 @@ import torch
 from torch_geometric.data import Dataset, Data
 import os
 import unittest
-import multiprocessing as mp
-from concurrent.futures import ProcessPoolExecutor, as_completed
-from functools import partial
 from typing import List, Dict, Tuple, Optional, Union
 import warnings
 
@@ -306,60 +303,90 @@ def pad_data_field(df: pd.DataFrame) -> pd.DataFrame:
     
     return df
 
-def dataset_creation_vectorized(csv_path: str, id_mapping: Optional[Dict] = None) -> pd.DataFrame:
+def dataset_creation_streaming(csv_path: str, id_mapping: Optional[Dict] = None, chunk_size: int = 10000) -> pd.DataFrame:
     """
-    Process a single CSV file into a structured DataFrame with normalized features.
+    Process a CSV file in chunks to reduce memory usage.
     
     Args:
         csv_path: Path to CSV file
         id_mapping: Pre-built CAN ID mapping for categorical encoding
+        chunk_size: Number of rows to process at once
         
     Returns:
         Processed DataFrame ready for graph construction
     """
-    # Load and structure the data
-    df = pd.read_csv(csv_path)
-    df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
-    df.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
+    processed_chunks = []
     
+    try:
+        # Read CSV in chunks to reduce memory usage
+        for chunk in pd.read_csv(csv_path, chunksize=chunk_size):
+            chunk.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
+            chunk.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
+            
+            # Process this chunk
+            processed_chunk = _process_dataframe_chunk(chunk, id_mapping)
+            processed_chunks.append(processed_chunk)
+    
+    except Exception as e:
+        print(f"Error processing {csv_path}: {e}")
+        return pd.DataFrame()  # Return empty DataFrame on error
+    
+    # Combine all chunks
+    if processed_chunks:
+        return pd.concat(processed_chunks, ignore_index=True)
+    else:
+        return pd.DataFrame()
+
+def _process_dataframe_chunk(chunk: pd.DataFrame, id_mapping: Optional[Dict] = None) -> pd.DataFrame:
+    """
+    Process a single chunk of DataFrame.
+    
+    Args:
+        chunk: DataFrame chunk to process
+        id_mapping: Pre-built CAN ID mapping
+        
+    Returns:
+        Processed DataFrame chunk
+    """
     # Handle data field parsing
-    df['data_field'] = df['data_field'].astype(str).fillna('')
-    df['DLC'] = df['data_field'].apply(lambda x: len(x) // 2)
+    chunk['data_field'] = chunk['data_field'].astype(str).fillna('')
+    chunk['DLC'] = chunk['data_field'].apply(lambda x: len(x) // 2)
     
     # Split data field into individual bytes
-    df['data_field'] = df['data_field'].str.strip()
-    df['bytes'] = df['data_field'].apply(lambda x: [x[i:i+2] for i in range(0, len(x), 2)])
+    chunk['data_field'] = chunk['data_field'].str.strip()
+    chunk['bytes'] = chunk['data_field'].apply(lambda x: [x[i:i+2] for i in range(0, len(x), 2)])
     
     # Create Data1-Data8 columns
     for i in range(MAX_DATA_BYTES):
-        df[f'Data{i+1}'] = df['bytes'].apply(lambda x: x[i] if i < len(x) else '00')
+        chunk[f'Data{i+1}'] = chunk['bytes'].apply(lambda x: x[i] if i < len(x) else '00')
     
     # Add graph structure columns
-    df['Source'] = df['CAN ID']
-    df['Target'] = df['CAN ID'].shift(-1)
+    chunk['Source'] = chunk['CAN ID']
+    chunk['Target'] = chunk['CAN ID'].shift(-1)
     
     # Pad and clean data
-    df = pad_data_field(df)
+    chunk = pad_data_field(chunk)
     
     # Convert hex values to decimal
     hex_columns = ['CAN ID', 'Source', 'Target'] + [f'Data{i+1}' for i in range(MAX_DATA_BYTES)]
     for col in hex_columns:
-        df[col] = df[col].apply(safe_hex_to_int)
+        chunk[col] = chunk[col].apply(safe_hex_to_int)
     
     # Apply dynamic ID mapping (handles new IDs gracefully)
     if id_mapping is not None:
-        df, updated_mapping = apply_dynamic_id_mapping(df, id_mapping, verbose=False)
+        chunk, _ = apply_dynamic_id_mapping(chunk, id_mapping, verbose=False)
     
     # Clean up and normalize
-    df = df.iloc[:-1]  # Remove last row (no target)
-    df['label'] = df['attack'].astype(int)
+    chunk = chunk.iloc[:-1]  # Remove last row (no target)
+    chunk['label'] = chunk['attack'].astype(int)
     
     # Normalize payload bytes to [0, 1]
     byte_columns = [f'Data{i+1}' for i in range(MAX_DATA_BYTES)]
-    df = normalize_payload_bytes(df, byte_columns)
+    chunk = normalize_payload_bytes(chunk, byte_columns)
     
     # Return essential columns
-    return df[['CAN ID'] + byte_columns + ['Source', 'Target', 'label']]
+    return chunk[['CAN ID'] + byte_columns + ['Source', 'Target', 'label']]
+
 
 # ==================== Graph Construction Functions ====================
 
@@ -538,189 +565,25 @@ def compute_node_features(window_data: np.ndarray, nodes: np.ndarray,
     
     return node_features
 
-# ==================== Parallel Processing Functions ====================
+# ==================== Optimized Processing Functions ====================
 
-def process_single_file(args: Tuple) -> List[Data]:
-    """
-    Process a single CSV file into graphs - designed for multiprocessing.
-    
-    Args:
-        args: Tuple containing (csv_file, id_mapping, window_size, stride, verbose)
-        
-    Returns:
-        List of graph Data objects
-    """
-    csv_file, id_mapping, window_size, stride, verbose = args
-    
-    if verbose:
-        print(f"Processing file: {os.path.basename(csv_file)}")
-    
-    try:
-        # Process file
-        df = dataset_creation_vectorized(csv_file, id_mapping=id_mapping)
-        
-        # Handle missing values
-        if df.isnull().values.any():
-            if verbose:
-                print(f"Warning: NaN values found in {os.path.basename(csv_file)}, filling with 0")
-            df.fillna(0, inplace=True)
-        
-        # Create graphs
-        graphs = create_graphs_numpy(df, window_size=window_size, stride=stride)
-        
-        if verbose:
-            print(f"Completed {os.path.basename(csv_file)}: {len(graphs)} graphs")
-        
-        return graphs
-        
-    except Exception as e:
-        print(f"Error processing {csv_file}: {e}")
-        return []
 
-def graph_creation_parallel(root_folder: str, folder_type: str = 'train_', 
-                          window_size: int = DEFAULT_WINDOW_SIZE, stride: int = DEFAULT_STRIDE,
-                          verbose: bool = False, return_id_mapping: bool = False,
-                          id_mapping: Optional[Dict] = None, max_workers: Optional[int] = None) -> Union[List[Data], Tuple[List[Data], Dict]]:
-    """
-    Create graphs using parallel processing for improved performance.
-    
-    Args:
-        root_folder: Path to root folder containing CSV files
-        folder_type: Type of folder to process
-        window_size: Size of sliding window
-        stride: Stride for sliding window
-        verbose: Whether to print verbose output
-        return_id_mapping: Whether to return ID mapping
-        id_mapping: Pre-built ID mapping (optional)
-        max_workers: Maximum number of worker processes
-        
-    Returns:
-        GraphDataset or tuple of (GraphDataset, id_mapping)
-    """
-    # Find CSV files
-    csv_files = find_csv_files(root_folder, folder_type)
-    
-    if not csv_files:
-        print(f"No CSV files found in {root_folder}")
-        dataset = GraphDataset([])
-        return (dataset, {'OOV': 0}) if return_id_mapping else dataset
-    
-    # Build ID mapping if not provided
-    if id_mapping is None:
-        # Use complete streaming approach: 100% ID coverage with minimal memory
-        global_id_mapping = build_complete_id_mapping_streaming(csv_files, verbose=verbose)
-    else:
-        global_id_mapping = id_mapping
-    
-    # Configure parallel processing
-    if max_workers is None:
-        # Respect SLURM allocation if available, otherwise use all CPUs
-        slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK') or os.environ.get('SLURM_CPUS_ON_NODE')
-        if slurm_cpus:
-            max_workers = min(int(slurm_cpus), len(csv_files))
-        else:
-            max_workers = min(mp.cpu_count(), len(csv_files))
-    
-    print(f"Processing {len(csv_files)} files using {max_workers} CPU cores...")
-    print(f"Configuration: window_size={window_size}, stride={stride}")
-    
-    # Prepare arguments for parallel processing
-    file_args = [(csv_file, global_id_mapping, window_size, stride, verbose) 
-                 for csv_file in csv_files]
-    
-    # Process files in parallel
-    all_graphs = []
-    
-    with ProcessPoolExecutor(max_workers=max_workers) as executor:
-        # Submit all jobs
-        future_to_file = {executor.submit(process_single_file, args): args[0] 
-                         for args in file_args}
-        
-        # Collect results
-        for future in as_completed(future_to_file):
-            file_path = future_to_file[future]
-            try:
-                graphs = future.result()
-                all_graphs.extend(graphs)
-                if verbose:
-                    print(f"Collected {len(graphs)} graphs from {os.path.basename(file_path)}")
-            except Exception as e:
-                print(f"Error collecting results from {file_path}: {e}")
-    
-    print(f"Total graphs created: {len(all_graphs)}")
-    
-    dataset = GraphDataset(all_graphs)
-    
-    if return_id_mapping:
-        return dataset, global_id_mapping
-    return dataset
 
-def graph_creation_sequential(root_folder: str, folder_type: str = 'train_',
-                            window_size: int = DEFAULT_WINDOW_SIZE, stride: int = DEFAULT_STRIDE,
-                            verbose: bool = False, return_id_mapping: bool = False,
-                            id_mapping: Optional[Dict] = None) -> Union[List[Data], Tuple[List[Data], Dict]]:
-    """
-    Create graphs using sequential processing (fallback for single-core systems).
-    
-    Args:
-        root_folder: Path to root folder containing CSV files
-        folder_type: Type of folder to process
-        window_size: Size of sliding window
-        stride: Stride for sliding window
-        verbose: Whether to print verbose output
-        return_id_mapping: Whether to return ID mapping
-        id_mapping: Pre-built ID mapping (optional)
-        
-    Returns:
-        GraphDataset or tuple of (GraphDataset, id_mapping)
-    """
-    csv_files = find_csv_files(root_folder, folder_type)
-    
-    # Build ID mapping if not provided
-    if id_mapping is None:
-        # Use complete streaming approach: 100% ID coverage with minimal memory  
-        global_id_mapping = build_complete_id_mapping_streaming(csv_files, verbose=verbose)
-    else:
-        global_id_mapping = id_mapping
-    
-    # Process files sequentially
-    all_graphs = []
-    
-    for csv_file in csv_files:
-        if verbose:
-            print(f"Processing file: {os.path.basename(csv_file)}")
-        
-        try:
-            df = dataset_creation_vectorized(csv_file, id_mapping=global_id_mapping)
-            
-            if df.isnull().values.any():
-                if verbose:
-                    print(f"NaN values found in {os.path.basename(csv_file)}, filling with 0")
-                df.fillna(0, inplace=True)
-            
-            graphs = create_graphs_numpy(df, window_size=window_size, stride=stride)
-            all_graphs.extend(graphs)
-            
-        except Exception as e:
-            print(f"Error processing {csv_file}: {e}")
-    
-    dataset = GraphDataset(all_graphs)
-    
-    if return_id_mapping:
-        return dataset, global_id_mapping
-    return dataset
+
+
+
 
 # ==================== Main Interface Function ====================
 
 def graph_creation(root_folder: str, folder_type: str = 'train_',
                   window_size: int = DEFAULT_WINDOW_SIZE, stride: int = DEFAULT_STRIDE,
                   verbose: bool = False, return_id_mapping: bool = False,
-                  id_mapping: Optional[Dict] = None, parallel: bool = True) -> Union[List[Data], Tuple[List[Data], Dict]]:
+                  id_mapping: Optional[Dict] = None, parallel: bool = False) -> Union[List[Data], Tuple[List[Data], Dict]]:
     """
-    Create graphs from CAN bus data with automatic parallel/sequential processing selection.
+    Create graphs from CAN bus data with optimized sequential processing.
     
-    This is the main entry point for graph creation. It automatically chooses between
-    parallel and sequential processing based on system capabilities and user preferences.
+    Lightning DataLoader handles parallelism, so we use single-threaded preprocessing
+    to avoid conflicts and reduce memory usage.
     
     Args:
         root_folder: Path to root folder containing CSV files
@@ -730,42 +593,144 @@ def graph_creation(root_folder: str, folder_type: str = 'train_',
         verbose: Whether to print detailed processing information
         return_id_mapping: Whether to return the CAN ID mapping dictionary
         id_mapping: Pre-built CAN ID mapping (optional, will build if None)
-        parallel: Whether to use parallel processing (auto-disabled on single-core)
+        parallel: Ignored - always uses sequential processing
         
     Returns:
         GraphDataset or tuple of (GraphDataset, id_mapping) if return_id_mapping=True
-        
-    Examples:
-        >>> # Basic usage
-        >>> dataset = graph_creation("path/to/data")
-        
-        >>> # With custom parameters
-        >>> dataset, id_map = graph_creation(
-        ...     "path/to/data", 
-        ...     window_size=100, 
-        ...     stride=50,
-        ...     return_id_mapping=True
-        ... )
-        
-        >>> # Using pre-built ID mapping
-        >>> test_dataset = graph_creation(
-        ...     "path/to/test", 
-        ...     folder_type="test_",
-        ...     id_mapping=id_map
-        ... )
     """
-    if parallel and mp.cpu_count() > 1:
-        return graph_creation_parallel(
-            root_folder, folder_type, window_size, stride,
-            verbose, return_id_mapping, id_mapping
-        )
-    else:
-        return graph_creation_sequential(
-            root_folder, folder_type, window_size, stride,
-            verbose, return_id_mapping, id_mapping
-        )
+    # Always use optimized sequential processing
+    return graph_creation_optimized(
+        root_folder, folder_type, window_size, stride,
+        verbose, return_id_mapping, id_mapping
+    )
 
-# ==================== Dataset Class ====================
+def graph_creation_optimized(root_folder: str, folder_type: str = 'train_',
+                           window_size: int = DEFAULT_WINDOW_SIZE, stride: int = DEFAULT_STRIDE,
+                           verbose: bool = False, return_id_mapping: bool = False,
+                           id_mapping: Optional[Dict] = None) -> Union[List[Data], Tuple[List[Data], Dict]]:
+    """
+    Optimized graph creation with streaming and reduced memory usage.
+    
+    Args:
+        root_folder: Path to root folder containing CSV files
+        folder_type: Type of folder to process
+        window_size: Size of sliding window
+        stride: Stride for sliding window
+        verbose: Whether to print verbose output
+        return_id_mapping: Whether to return ID mapping
+        id_mapping: Pre-built ID mapping (optional)
+        
+    Returns:
+        GraphDataset or tuple of (GraphDataset, id_mapping)
+    """
+    csv_files = find_csv_files(root_folder, folder_type)
+    
+    if not csv_files:
+        if verbose:
+            print(f"No CSV files found in {root_folder}")
+        dataset = GraphDataset([])
+        return (dataset, {'OOV': 0}) if return_id_mapping else dataset
+    
+    if verbose:
+        print(f"Found {len(csv_files)} CSV files to process")
+    
+    # Build ID mapping if not provided
+    if id_mapping is None:
+        # Use lightweight ID mapping (just scan for IDs, don't load full files)
+        global_id_mapping = build_lightweight_id_mapping(csv_files, verbose=verbose)
+    else:
+        global_id_mapping = id_mapping
+    
+    # Process files with streaming to reduce memory usage
+    all_graphs = []
+    
+    for i, csv_file in enumerate(csv_files):
+        if verbose:
+            print(f"Processing file {i+1}/{len(csv_files)}: {os.path.basename(csv_file)}")
+        
+        try:
+            # Use streaming processing to reduce memory usage
+            df = dataset_creation_streaming(csv_file, id_mapping=global_id_mapping, chunk_size=5000)
+            
+            if df.empty:
+                continue
+                
+            if df.isnull().values.any():
+                if verbose:
+                    print(f"  Warning: NaN values found, filling with 0")
+                df.fillna(0, inplace=True)
+            
+            # Create graphs from processed DataFrame
+            graphs = create_graphs_numpy(df, window_size=window_size, stride=stride)
+            all_graphs.extend(graphs)
+            
+            if verbose:
+                print(f"  Created {len(graphs)} graphs ({len(all_graphs)} total so far)")
+            
+        except Exception as e:
+            if verbose:
+                print(f"  Error processing {csv_file}: {e}")
+    
+    if verbose:
+        print(f"Total graphs created: {len(all_graphs)}")
+    
+    dataset = GraphDataset(all_graphs)
+    
+    if return_id_mapping:
+        return dataset, global_id_mapping
+    return dataset
+
+def build_lightweight_id_mapping(csv_files: List[str], verbose: bool = False) -> Dict[Union[int, str], int]:
+    """
+    Build ID mapping with minimal memory usage by only scanning CAN ID column.
+    
+    Args:
+        csv_files: List of CSV file paths
+        verbose: Whether to print progress
+        
+    Returns:
+        Dictionary mapping CAN IDs to integer indices
+    """
+    unique_ids = set()
+    
+    if verbose:
+        print(f"Building lightweight ID mapping from {len(csv_files)} files...")
+    
+    for i, csv_file in enumerate(csv_files):
+        if verbose and i % 10 == 0:
+            print(f"  Scanning file {i+1}/{len(csv_files)} for CAN IDs...")
+        
+        try:
+            # Only read the CAN ID column to minimize memory usage
+            df_ids = pd.read_csv(csv_file, usecols=[1])  # arbitration_id is column 1
+            df_ids.columns = ['arbitration_id']
+            
+            # Extract unique CAN IDs
+            can_ids = df_ids['arbitration_id'].dropna().unique()
+            file_ids = set()
+            
+            for can_id in can_ids:
+                converted_id = safe_hex_to_int(can_id)
+                if converted_id is not None:
+                    file_ids.add(converted_id)
+            
+            unique_ids.update(file_ids)
+            del df_ids  # Free memory immediately
+            
+        except Exception as e:
+            if verbose:
+                print(f"    Warning: Could not scan {csv_file}: {e}")
+            continue
+    
+    # Create mapping
+    sorted_ids = sorted(list(unique_ids))
+    id_mapping = {can_id: idx for idx, can_id in enumerate(sorted_ids)}
+    id_mapping['OOV'] = len(id_mapping)
+    
+    if verbose:
+        print(f"✅ Built ID mapping with {len(id_mapping)} entries")
+    
+    return id_mapping
 
 class GraphDataset(Dataset):
     """
@@ -948,7 +913,7 @@ class TestPreprocessing(unittest.TestCase):
         test_file = csv_files[0]
         id_mapping = build_id_mapping_from_normal(self.test_root)
         
-        df = dataset_creation_vectorized(test_file, id_mapping=id_mapping)
+        df = dataset_creation_streaming(test_file, id_mapping=id_mapping)
         
         # Validate DataFrame structure
         expected_columns = ['CAN ID'] + [f'Data{i+1}' for i in range(8)] + ['Source', 'Target', 'label']
@@ -970,8 +935,7 @@ class TestPreprocessing(unittest.TestCase):
         dataset = graph_creation(
             self.test_root,
             window_size=self.small_window_size,
-            stride=self.test_stride,
-            parallel=False  # Use sequential for testing
+            stride=self.test_stride
         )
         
         self.assertIsInstance(dataset, GraphDataset)
@@ -986,8 +950,7 @@ class TestPreprocessing(unittest.TestCase):
         dataset = graph_creation(
             self.test_root,
             window_size=self.small_window_size,
-            stride=self.test_stride,
-            parallel=False
+            stride=self.test_stride
         )
         
         for i, graph in enumerate(dataset):
@@ -1031,34 +994,21 @@ class TestPreprocessing(unittest.TestCase):
         
         print("✓ Graph structure validation passed")
     
-    def test_parallel_vs_sequential(self):
-        """Test that parallel and sequential processing produce consistent results."""
-        print("Testing parallel vs sequential consistency...")
+    def test_optimized_processing(self):
+        """Test optimized processing with streaming."""
+        print("Testing optimized processing...")
         
-        # Sequential processing
-        dataset_seq = graph_creation(
+        # Test optimized processing
+        dataset = graph_creation(
             self.test_root,
             window_size=self.small_window_size,
-            stride=self.test_stride,
-            parallel=False
+            stride=self.test_stride
         )
         
-        # Parallel processing (if available)
-        if mp.cpu_count() > 1:
-            dataset_par = graph_creation(
-                self.test_root,
-                window_size=self.small_window_size,
-                stride=self.test_stride,
-                parallel=True
-            )
-            
-            # Should produce same number of graphs
-            self.assertEqual(len(dataset_seq), len(dataset_par),
-                           "Parallel and sequential processing produced different graph counts")
-            
-            print("✓ Parallel and sequential processing consistency verified")
-        else:
-            print("✓ Single-core system: parallel processing test skipped")
+        self.assertIsInstance(dataset, GraphDataset)
+        self.assertGreater(len(dataset), 0)
+        
+        print(f"✓ Optimized processing created {len(dataset)} graphs")
     
     def test_dataset_statistics(self):
         """Test dataset statistics computation."""
@@ -1067,8 +1017,7 @@ class TestPreprocessing(unittest.TestCase):
         dataset = graph_creation(
             self.test_root,
             window_size=self.small_window_size,
-            stride=self.test_stride,
-            parallel=False
+            stride=self.test_stride
         )
         
         stats = dataset.get_stats()
@@ -1091,7 +1040,7 @@ class TestPreprocessing(unittest.TestCase):
         print("Testing edge cases...")
         
         # Test with non-existent directory
-        empty_dataset = graph_creation("/non/existent/path", parallel=False)
+        empty_dataset = graph_creation("/non/existent/path")
         self.assertEqual(len(empty_dataset), 0)
         
         # Test with empty ID mapping
@@ -1100,8 +1049,7 @@ class TestPreprocessing(unittest.TestCase):
             self.test_root,
             window_size=self.small_window_size,
             stride=self.test_stride,
-            id_mapping=empty_mapping,
-            parallel=False
+            id_mapping=empty_mapping
         )
         self.assertIsInstance(dataset, GraphDataset)
         
@@ -1116,8 +1064,7 @@ class TestPreprocessing(unittest.TestCase):
             self.test_root,
             window_size=self.small_window_size,
             stride=self.test_stride,
-            return_id_mapping=True,
-            parallel=False
+            return_id_mapping=True
         )
         
         self.assertIsInstance(dataset, GraphDataset)
@@ -1129,8 +1076,7 @@ class TestPreprocessing(unittest.TestCase):
             self.test_root,
             window_size=self.small_window_size,
             stride=self.test_stride,
-            id_mapping=id_mapping,
-            parallel=False
+            id_mapping=id_mapping
         )
         
         self.assertIsInstance(dataset2, GraphDataset)

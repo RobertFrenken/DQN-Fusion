@@ -618,7 +618,16 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
         # Check if dataset path exists and log file count
         if os.path.exists(dataset_path):
             import glob
-            csv_files = glob.glob(os.path.join(dataset_path, '**', '*train_*.csv'), recursive=True)
+            # Search for CSV files in train folders (train_01_attack_free, train_02_with_attacks, etc.)
+            csv_files = []
+            for train_folder in ['train_01_attack_free', 'train_02_with_attacks', 'train_*']:
+                pattern = os.path.join(dataset_path, train_folder, '*.csv')
+                csv_files.extend(glob.glob(pattern))
+            
+            # Also try the generic pattern for other dataset structures
+            if not csv_files:
+                csv_files = glob.glob(os.path.join(dataset_path, '**', '*train*.csv'), recursive=True)
+                
             logger.info(f"Found {len(csv_files)} CSV files in {dataset_path}")
             if len(csv_files) == 0:
                 logger.error(f"🚨 NO CSV FILES FOUND in {dataset_path}!")
@@ -626,6 +635,15 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
                 all_files = glob.glob(os.path.join(dataset_path, '**', '*.csv'), recursive=True)[:20]
                 for f in all_files:
                     logger.error(f"  - {f}")
+                    
+                # Check for training folders
+                train_folders = glob.glob(os.path.join(dataset_path, 'train*'))
+                if train_folders:
+                    logger.error(f"Found training folders: {train_folders}")
+                    for folder in train_folders:
+                        folder_files = glob.glob(os.path.join(folder, '*.csv'))
+                        logger.error(f"  {folder}: {len(folder_files)} CSV files")
+                        
                 raise FileNotFoundError(f"No train CSV files found in {dataset_path}")
             elif len(csv_files) < 50:  # Log first few files for debugging
                 logger.info(f"CSV files found: {csv_files[:10]}")
@@ -633,6 +651,7 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
             logger.error(f"Dataset path does not exist: {dataset_path}")
             raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
             
+        # Use sequential processing - Lightning DataLoader handles parallelism
         graphs, id_mapping = graph_creation(dataset_path, 'train_', return_id_mapping=True)
         
         # Save to cache if enabled
