@@ -338,19 +338,21 @@ class CANGraphLightningModule(pl.LightningModule):
             # VGAE outputs: (cont_out, canid_logits, neighbor_logits, z, kl_loss)
             cont_out, canid_logits, neighbor_logits, z, kl_loss = output
             
-            if hasattr(batch, 'y'):
-                # Classification loss using CAN ID logits
-                classification_loss = nn.functional.cross_entropy(canid_logits, batch.y)
-                
-                # Add KL divergence loss
-                total_loss = classification_loss + 0.01 * kl_loss  # Small weight for KL
+            # For VGAE, we should only use classification loss for supervised tasks
+            # In autoencoder mode, this shouldn't be called - use _compute_autoencoder_loss instead
+            if hasattr(batch, 'y') and self.training_mode != "autoencoder":
+                # Classification loss using graph-level labels (not CAN ID logits)
+                # This would need proper graph-level prediction from VGAE
+                # For now, return reconstruction loss as fallback
+                reconstruction_loss = nn.functional.mse_loss(cont_out, batch.x[:, 1:])
+                canid_loss = nn.functional.cross_entropy(canid_logits, batch.x[:, 0].long())
+                total_loss = reconstruction_loss + 0.1 * canid_loss + 0.01 * kl_loss
                 return total_loss
             else:
                 # Reconstruction loss
                 reconstruction_loss = nn.functional.mse_loss(cont_out, batch.x[:, 1:])
-                
-                # Add KL divergence loss
-                total_loss = reconstruction_loss + 0.01 * kl_loss
+                canid_loss = nn.functional.cross_entropy(canid_logits, batch.x[:, 0].long())
+                total_loss = reconstruction_loss + 0.1 * canid_loss + 0.01 * kl_loss
                 return total_loss
         else:
             # GAT standard output
@@ -366,17 +368,17 @@ class CANGraphLightningModule(pl.LightningModule):
             # VGAE outputs: (cont_out, canid_logits, neighbor_logits, z, kl_loss)
             cont_out, canid_logits, neighbor_logits, z, kl_loss = output
             
+            # For autoencoder training, we reconstruct node features, not classify graphs
             # Reconstruction loss for continuous features (excluding CAN ID)
-            reconstruction_loss = nn.functional.mse_loss(cont_out, batch.x[:, 1:])
+            continuous_features = batch.x[:, 1:]  # Skip CAN ID column
+            reconstruction_loss = nn.functional.mse_loss(cont_out, continuous_features)
             
-            # CAN ID prediction loss
-            canid_loss = nn.functional.cross_entropy(canid_logits, batch.x[:, 0].long())
+            # CAN ID reconstruction loss - predict the CAN ID from node features
+            canid_targets = batch.x[:, 0].long()  # CAN IDs from input features
+            canid_loss = nn.functional.cross_entropy(canid_logits, canid_targets)
             
-            # Neighborhood prediction loss (if we have edges to predict)
-            # This is more complex and would require creating target neighborhood matrices
-            # For now, just use reconstruction + canid + KL
-            
-            total_loss = reconstruction_loss + canid_loss + 0.01 * kl_loss
+            # Combined loss: reconstruction + CAN ID prediction + KL regularization
+            total_loss = reconstruction_loss + 0.1 * canid_loss + 0.01 * kl_loss
             return total_loss
         else:
             # GAT autoencoder (if implemented)

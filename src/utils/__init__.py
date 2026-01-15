@@ -2,15 +2,14 @@
 Utility functions and helpers for CAN-Graph.
 
 Includes:
-- Plotting and visualization functions  
-- Logging and performance monitoring
+- Lightning-native GPU utilities
 - Cache management
+- Other modern utility functions
 """
 
-# Import only existing utilities (removed legacy GPU optimization imports)
+# Import only Lightning-native utilities (legacy functions removed)
 try:
-    from .utils_logging import log_memory_usage
-    from .legacy_compatibility import detect_gpu_capabilities_unified, create_optimized_data_loaders
-    __all__ = ["log_memory_usage", "detect_gpu_capabilities_unified", "create_optimized_data_loaders"]
+    from .lightning_gpu_utils import LightningGPUOptimizer, LightningDataLoader
+    __all__ = ["LightningGPUOptimizer", "LightningDataLoader"]
 except ImportError:
     __all__ = []

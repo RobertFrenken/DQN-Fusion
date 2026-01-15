@@ -3,12 +3,7 @@ PyTorch Lightning Module for Fusion Training
 
 Implements DQN-based fusion of VGAE and GAT outputs using PyTorch Lightning.
 Pre-caches predictions from both models to eliminate redundant computation.
-
-Key Benefits:
-- Lightning handles training loop, checkpointing, logging
-- Pre-cached predictions reduce complexity
-- Vectorized GPU operations for fusion agent training
-- Seamless integration with Hydra-Zen configs
+Lightning-native implementation replacing legacy training patterns.
 """
 
 import torch
@@ -21,6 +16,7 @@ from pathlib import Path
 import logging
 
 from src.models.adaptive_fusion import EnhancedDQNFusionAgent
+from src.utils.lightning_gpu_utils import LightningGPUOptimizer
 
 logger = logging.getLogger(__name__)
 

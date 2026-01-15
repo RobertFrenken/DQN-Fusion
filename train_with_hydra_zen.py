@@ -21,7 +21,7 @@ from typing import Optional, Dict, Any
 import torch
 import torch.nn as nn
 import lightning.pytorch as pl
-from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger
+from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger, MLFlowLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.tuner import Tuner
 
@@ -114,6 +114,21 @@ class HydraZenTrainer:
             name=self.config.experiment_name
         )
         loggers.append(csv_logger)
+        
+        # MLflow logger with comprehensive system metrics
+        mlflow_logger = MLFlowLogger(
+            experiment_name="CAN-Graph-Training",
+            tracking_uri=f"file://{self.config.log_dir}/mlruns",
+            log_model=True,  # Log model artifacts
+            log_system_metrics=True,  # 🚀 Enable comprehensive hardware monitoring
+            system_metrics_kwargs={
+                "log_cpu_usage": True,
+                "log_disk_usage": True, 
+                "log_gpu_usage": True,  # Requires nvidia-ml-py
+                "sampling_interval": 30,  # Log every 30 seconds
+            }
+        )
+        loggers.append(mlflow_logger)
         
         # TensorBoard logger
         if self.config.logging.get("enable_tensorboard", False):

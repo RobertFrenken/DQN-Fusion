@@ -36,8 +36,8 @@ import random
 from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
 from src.models.adaptive_fusion import EnhancedDQNFusionAgent
 from src.preprocessing.preprocessing import graph_creation, build_id_mapping_from_normal
-from src.utils.utils_logging import setup_gpu_optimization, log_memory_usage, cleanup_memory
-from src.utils.cache.cache_manager import CacheManager
+# Removed legacy utils_logging - functionality moved to Lightning-native patterns
+from src.utils.cache_manager import CacheManager
 
 # Import new organized modules
 from src.config.fusion_config import DATASET_PATHS, FUSION_WEIGHTS
@@ -47,9 +47,10 @@ from src.utils.plotting_utils import (
     plot_fusion_analysis, 
     plot_enhanced_fusion_training_progress
 )
-from src.training.gpu_monitor import GPUMonitor
+# Removed legacy GPUMonitor - using direct PyTorch memory tracking
 from src.training.fusion_extractor import FusionDataExtractor
-from src.utils.legacy_compatibility import detect_gpu_capabilities_unified, create_optimized_data_loaders
+# Lightning-native utilities (replacing legacy)
+from src.utils.lightning_gpu_utils import LightningGPUOptimizer, LightningDataLoader
 
 warnings.filterwarnings('ignore', category=UserWarning)
 
@@ -67,8 +68,7 @@ class FusionTrainingPipeline:
         self.embedding_dim = embedding_dim
         self.gpu_info = self._detect_gpu_capabilities()
         
-        # Initialize GPU monitoring
-        self.gpu_monitor = GPUMonitor(self.device)
+        # Note: Hardware monitoring handled by MLflow system metrics
         
         # Models (will be loaded)
         self.autoencoder = None
@@ -87,8 +87,19 @@ class FusionTrainingPipeline:
         print(f"  GPU tracking enabled")
     
     def _detect_gpu_capabilities(self):
-        """Detect GPU capabilities using the unified configuration function."""
-        return detect_gpu_capabilities_unified(str(self.device))
+        """Detect GPU capabilities using Lightning-native methods."""
+        if torch.cuda.is_available():
+            device_props = torch.cuda.get_device_properties(str(self.device))
+            return {
+                'device': str(self.device),
+                'memory_gb': device_props.total_memory / 1024**3,
+                'multiprocessor_count': device_props.multiprocessor_count,
+                'batch_size': 1024,
+                'num_workers': min(8, torch.get_num_threads()),
+                'pin_memory': True
+            }
+        else:
+            return {'device': 'cpu', 'batch_size': 512, 'num_workers': 4, 'pin_memory': False}
 
     def load_pretrained_models(self, autoencoder_path: str, classifier_path: str):
         """
@@ -520,9 +531,8 @@ class FusionTrainingPipeline:
             if (episode + 1) % 50 == 0:  # Fixed save interval
                 self.save_fusion_agent(checkpoint_dir, f"checkpoint_ep{episode}", dataset_key)
             
-            # GPU monitoring
+            # Hardware monitoring handled automatically by MLflow system metrics
             if episode % 10 == 0:
-                self.gpu_monitor.record_gpu_stats(episode)
                 episode_time = time.time() - episode_start_time
                 if episode > 0:
                     print(f"  ⏱️  Episode time: {episode_time:.2f}s, "
@@ -533,8 +543,9 @@ class FusionTrainingPipeline:
         print(f"\n✅ Fusion agent training completed in {total_training_time/60:.1f} minutes!")
         print(f"🏆 Best validation accuracy: {best_validation_score:.4f}")
         
-        # Performance summary
-        self.gpu_monitor.print_performance_summary()
+        # Hardware performance metrics logged automatically by MLflow
+        print(f"\n📊 Performance metrics logged to MLflow experiment tracking")
+        print(f"   View comprehensive system metrics in MLflow UI")
         
         # Generate training plots
         plot_enhanced_fusion_training_progress(
@@ -550,7 +561,7 @@ class FusionTrainingPipeline:
             'action_distributions': action_distributions,
             'validation_scores': validation_scores,
             'best_validation_score': best_validation_score,
-            'performance_summary': self.gpu_monitor.get_performance_summary(),
+            'note': 'System metrics logged automatically by MLflow',
             'total_training_time_minutes': total_training_time / 60
         }
 
@@ -697,7 +708,11 @@ def main(config: DictConfig):
     print(f"{'='*80}")
     
     # Setup
-    setup_gpu_optimization()
+    # Configure GPU memory optimization
+    if torch.cuda.is_available():
+        os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:128'
+        torch.cuda.empty_cache()
+        print("✓ GPU memory optimization enabled")
     config_dict = OmegaConf.to_container(config, resolve=True)
     
     if not torch.cuda.is_available():
@@ -777,8 +792,19 @@ def main(config: DictConfig):
     
     # Create GPU-optimized data loaders
     print("🔧 Creating GPU-optimized data loaders...")
-    train_loader = create_optimized_data_loaders(train_dataset, None, None, device=str(device))
-    test_loader = create_optimized_data_loaders(None, test_dataset, None, device=str(device))
+    lightning_loader = LightningDataLoader()
+    train_loader = lightning_loader.create_dataloader(
+        train_dataset, 
+        batch_size=1024,  # Fusion training can handle larger batches
+        shuffle=True,
+        dataset_size=len(train_dataset)
+    )
+    test_loader = lightning_loader.create_dataloader(
+        test_dataset, 
+        batch_size=1024,
+        shuffle=False,
+        dataset_size=len(test_dataset)
+    )
     
     print(f"✓ Data split: {len(train_dataset)} train, {len(test_dataset)} test")
     
@@ -790,7 +816,20 @@ def main(config: DictConfig):
     )
     
     # Store dataloader config for fusion training optimization
-    resource_config = detect_gpu_capabilities_unified(str(device))
+    # Use Lightning-native resource detection
+    if torch.cuda.is_available():
+        device_props = torch.cuda.get_device_properties(str(device))
+        resource_config = {
+            'device': str(device),
+            'memory_gb': device_props.total_memory / 1024**3,
+            'multiprocessor_count': device_props.multiprocessor_count,
+            'batch_size': 1024,
+            'num_workers': min(8, torch.get_num_threads()),
+            'pin_memory': True
+        }
+        print(f"✓ Detected GPU: {device_props.name}, {resource_config['memory_gb']:.1f}GB")
+    else:
+        resource_config = {'device': 'cpu', 'batch_size': 512, 'num_workers': 4, 'pin_memory': False}
     pipeline._dataloader_config = resource_config
     
     # === Load Pre-trained Models ===
@@ -846,7 +885,9 @@ def main(config: DictConfig):
     best_method = max(evaluation_results.items(), key=lambda x: x[1]['accuracy'])
     print(f"Best fusion method: {best_method[1]['method']} (Acc: {best_method[1]['accuracy']:.4f})")
     
-    log_memory_usage("Final")
+    # Log final memory usage
+    if torch.cuda.is_available():
+        print(f"[Final] GPU Memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB cached")
 
 if __name__ == "__main__":
     start_time = time.time()
@@ -860,4 +901,8 @@ if __name__ == "__main__":
     finally:
         end_time = time.time()
         print(f"\n⏱️  Total runtime: {end_time - start_time:.2f} seconds")
-        cleanup_memory()
+        # Cleanup memory
+        import gc
+        gc.collect()
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()

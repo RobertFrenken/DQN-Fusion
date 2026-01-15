@@ -14,5 +14,9 @@
     },
     "chat.tools.terminal.autoApprove": {
         "conda": true
-    }
+    },
+    "github.copilot.chat.instructions": "Be concise and direct. Only show code changes, no explanations unless asked. Don't overwrite existing code unnecessarily.",
+    "claude.instructions": "Keep responses brief. Focus on code implementation only. Avoid verbose explanations.",
+    "ai.assistant.concise": true,
+    "ai.assistant.explainChanges": false
 }

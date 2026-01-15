@@ -1,0 +1,62 @@
+# Class Imbalance Handling Strategies for Complex CAN Datasets
+
+defaults:
+  - _self_
+
+# Base class imbalance handling configuration
+class_imbalance:
+  # Strategy selection: focal, weighted, undersample, oversample, smote, adaptive
+  strategy: focal
+  
+  # Dataset-specific imbalance ratios (approximate)
+  imbalance_ratios:
+    set_01: 0.02  # ~2% attack samples
+    set_02: 0.05  # ~5% attack samples  
+    set_03: 0.01  # ~1% attack samples (most imbalanced)
+    set_04: 0.03  # ~3% attack samples
+    
+  # Strategy-specific parameters
+  focal_loss:
+    alpha: 0.95  # Weight for positive class (attacks)
+    gamma: 2.0   # Focusing parameter
+    label_smoothing: 0.1  # Prevents overconfidence
+    
+  weighted_loss:
+    auto_weight: true  # Compute class weights automatically
+    pos_weight: null   # Override for positive class weight
+    
+  undersampling:
+    method: "random"  # random, cluster_centroids, neighbourhood_cleaning
+    ratio: 0.1       # Target ratio of majority to minority
+    random_state: 42
+    
+  oversampling:
+    method: "smote"   # smote, adasyn, borderline_smote
+    ratio: 0.2       # Target ratio after oversampling
+    k_neighbors: 5
+    random_state: 42
+    
+  adaptive:
+    # Combines multiple strategies based on dataset characteristics
+    primary_strategy: focal
+    fallback_strategy: weighted
+    threshold_samples: 1000  # Switch strategies if class has fewer samples
+    
+  # Advanced techniques
+  cost_sensitive:
+    enable: false
+    false_positive_cost: 1.0
+    false_negative_cost: 10.0  # Higher cost for missing attacks
+    
+  ensemble:
+    enable: false
+    methods: ["focal", "weighted", "undersample"]
+    voting: "soft"  # soft, hard
+    
+  # Two-stage framework (your previous approach)
+  two_stage:
+    enable: false
+    stage1_model: "vgae"  # First stage: VGAE for representation
+    stage1_undersample: true
+    stage2_model: "gat"   # Second stage: GAT classifier
+    transfer_representations: true
