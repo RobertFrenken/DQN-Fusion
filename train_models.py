@@ -531,7 +531,30 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
     if hasattr(config.dataset, 'data_path') and config.dataset.data_path:
         dataset_path = config.dataset.data_path
     else:
-        dataset_path = f"datasets/{dataset_name}"
+        # Try multiple possible dataset paths
+        possible_paths = [
+            f"datasets/can-train-and-test-v1.5/{dataset_name}",
+            f"datasets/{dataset_name}",
+            f"../datasets/{dataset_name}",
+            f"data/{dataset_name}"
+        ]
+        
+        dataset_path = None
+        for path in possible_paths:
+            if os.path.exists(path):
+                # Check if it has CSV files
+                import glob
+                csv_files = glob.glob(os.path.join(path, '**', '*train_*.csv'), recursive=True)
+                if csv_files:
+                    dataset_path = path
+                    logger.info(f"Found valid dataset path: {dataset_path} with {len(csv_files)} CSV files")
+                    break
+                else:
+                    logger.warning(f"Path exists but no CSV files found: {path}")
+        
+        if not dataset_path:
+            dataset_path = f"datasets/{dataset_name}"  # Fallback
+            logger.error(f"No valid dataset path found! Using fallback: {dataset_path}")
         
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
@@ -597,10 +620,18 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
             import glob
             csv_files = glob.glob(os.path.join(dataset_path, '**', '*train_*.csv'), recursive=True)
             logger.info(f"Found {len(csv_files)} CSV files in {dataset_path}")
-            if len(csv_files) < 50:  # Log first few files for debugging
+            if len(csv_files) == 0:
+                logger.error(f"🚨 NO CSV FILES FOUND in {dataset_path}!")
+                logger.error(f"Available files:")
+                all_files = glob.glob(os.path.join(dataset_path, '**', '*.csv'), recursive=True)[:20]
+                for f in all_files:
+                    logger.error(f"  - {f}")
+                raise FileNotFoundError(f"No train CSV files found in {dataset_path}")
+            elif len(csv_files) < 50:  # Log first few files for debugging
                 logger.info(f"CSV files found: {csv_files[:10]}")
         else:
             logger.error(f"Dataset path does not exist: {dataset_path}")
+            raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
             
         graphs, id_mapping = graph_creation(dataset_path, 'train_', return_id_mapping=True)
         

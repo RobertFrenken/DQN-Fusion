@@ -44,7 +44,11 @@ from src.training.prediction_cache import create_fusion_prediction_cache
 warnings.filterwarnings("ignore", message=".*pynvml.*deprecated.*")
 warnings.filterwarnings("ignore", message=".*torch-scatter.*")
 warnings.filterwarnings("ignore", message=".*GLIBCXX.*")
+warnings.filterwarnings("ignore", message=".*Trying to infer.*batch_size.*")
+warnings.filterwarnings("ignore", message=".*Checkpoint directory.*exists.*")
 warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda")
+warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
+warnings.filterwarnings("ignore", category=UserWarning, module="lightning")
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)

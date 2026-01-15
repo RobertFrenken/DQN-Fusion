@@ -160,9 +160,14 @@ mkdir -p {output_dir}
 # Dataset diagnostics
 echo "=== DATASET DIAGNOSTICS ==="
 echo "Checking dataset structure for {dataset}..."
+echo "Current directory: $(pwd)"
 ls -la datasets/ 2>/dev/null || echo "datasets/ not found"
-ls -la datasets/can-train-and-test-v1.5/{dataset}/ 2>/dev/null || echo "Dataset folder not found"
-find datasets/can-train-and-test-v1.5/{dataset}/ -name "*train_*.csv" | wc -l 2>/dev/null || echo "No train CSV files found"
+ls -la datasets/can-train-and-test-v1.5/ 2>/dev/null || echo "can-train-and-test-v1.5/ not found"
+ls -la datasets/can-train-and-test-v1.5/{dataset}/ 2>/dev/null || echo "Dataset folder {dataset}/ not found"
+echo "CSV files in dataset:"
+find datasets/ -name "*train_*.csv" -type f | head -10 2>/dev/null || echo "No train CSV files found anywhere"
+echo "All CSV files:"
+find datasets/ -name "*.csv" -type f | wc -l 2>/dev/null || echo "No CSV files found"
 echo "=============================="
 
 # Clear dataset cache before processing to ensure fresh data
