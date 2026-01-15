@@ -652,7 +652,8 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
             raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
             
         # Use sequential processing - Lightning DataLoader handles parallelism
-        graphs, id_mapping = graph_creation(dataset_path, 'train_', return_id_mapping=True)
+        logger.info("🔄 Starting graph creation from CSV files (this may take several minutes for large datasets)...")
+        graphs, id_mapping = graph_creation(dataset_path, 'train_', return_id_mapping=True, verbose=True)
         
         # Save to cache if enabled
         if cache_enabled:
