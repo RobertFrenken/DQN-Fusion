@@ -157,6 +157,18 @@ export PYTORCH_CUDA_ALLOC_CONF=max_split_size_mb:512
 # Create output directory on compute node
 mkdir -p {output_dir}
 
+# Dataset diagnostics
+echo "=== DATASET DIAGNOSTICS ==="
+echo "Checking dataset structure for {dataset}..."
+ls -la datasets/ 2>/dev/null || echo "datasets/ not found"
+ls -la datasets/can-train-and-test-v1.5/{dataset}/ 2>/dev/null || echo "Dataset folder not found"
+find datasets/can-train-and-test-v1.5/{dataset}/ -name "*train_*.csv" | wc -l 2>/dev/null || echo "No train CSV files found"
+echo "=============================="
+
+# Clear dataset cache before processing to ensure fresh data
+rm -rf datasets/cache/{dataset} 2>/dev/null || true
+echo "Cleared cache for {dataset}"
+
 # Change to project directory
 cd {self.osc_settings["project_path"]}
 
@@ -181,7 +193,7 @@ end_time=$(date +%s)
 elapsed=$((end_time - start_time))
 
 echo "=== JOB COMPLETED ==="
-echo "Elapsed: ${{elapsed}}s (${{elapsed / 3600}}h ${{elapsed % 3600 / 60}}m)"
+echo "Elapsed: ${{elapsed}}s ($((elapsed / 3600))h $((elapsed % 3600 / 60))m)"
 echo "Finished: $(date)"
 echo "===================="
 

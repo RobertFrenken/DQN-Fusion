@@ -590,6 +590,18 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
     if graphs is None or id_mapping is None:
         rebuild_reason = "forced rebuild" if force_rebuild_cache else "processing dataset from scratch"
         logger.info(f"Processing dataset: {rebuild_reason}...")
+        logger.info(f"Dataset path: {dataset_path}")
+        
+        # Check if dataset path exists and log file count
+        if os.path.exists(dataset_path):
+            import glob
+            csv_files = glob.glob(os.path.join(dataset_path, '**', '*train_*.csv'), recursive=True)
+            logger.info(f"Found {len(csv_files)} CSV files in {dataset_path}")
+            if len(csv_files) < 50:  # Log first few files for debugging
+                logger.info(f"CSV files found: {csv_files[:10]}")
+        else:
+            logger.error(f"Dataset path does not exist: {dataset_path}")
+            
         graphs, id_mapping = graph_creation(dataset_path, 'train_', return_id_mapping=True)
         
         # Save to cache if enabled

@@ -42,6 +42,8 @@ from src.training.prediction_cache import create_fusion_prediction_cache
 
 # Suppress warnings
 warnings.filterwarnings("ignore", message=".*pynvml.*deprecated.*")
+warnings.filterwarnings("ignore", message=".*torch-scatter.*")
+warnings.filterwarnings("ignore", message=".*GLIBCXX.*")
 warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda")
 
 logging.basicConfig(level=logging.INFO)
@@ -95,12 +97,9 @@ class HydraZenTrainer:
         )
         callbacks.append(checkpoint_callback)
         
-        # GPU/CPU monitoring with selective metrics to avoid MLFlow spam
-        # Only logs essential resource metrics: GPU memory, utilization, temperature
-        device_stats = DeviceStatsMonitor(
-            cpu_stats=True,   # CPU utilization and memory
-            gpu_stats=True    # GPU utilization, memory, temperature  
-        )
+        # GPU/CPU monitoring - logs essential resource metrics
+        # Note: DeviceStatsMonitor automatically detects and logs available metrics
+        device_stats = DeviceStatsMonitor()
         callbacks.append(device_stats)
         
         # Early stopping
