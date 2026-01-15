@@ -305,18 +305,27 @@ class HydraZenTrainer:
         
         # Create fusion dataloaders
         from torch.utils.data import DataLoader
+        
+        # Use SLURM allocation or default to 8 workers
+        slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK') or os.environ.get('SLURM_CPUS_ON_NODE')
+        num_workers = int(slurm_cpus) if slurm_cpus else min(os.cpu_count() or 1, 8)
+        
         fusion_train_loader = DataLoader(
             train_fusion_dataset,
             batch_size=fusion_cfg.fusion_batch_size,
             shuffle=True,
-            num_workers=0
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=num_workers > 0
         )
         
         fusion_val_loader = DataLoader(
             val_fusion_dataset,
             batch_size=fusion_cfg.fusion_batch_size,
             shuffle=False,
-            num_workers=0
+            num_workers=num_workers,
+            pin_memory=torch.cuda.is_available(),
+            persistent_workers=num_workers > 0
         )
         
         logger.info(f"✓ Fusion dataloaders created (batch size: {fusion_cfg.fusion_batch_size})")

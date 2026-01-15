@@ -119,7 +119,7 @@ class BaseTrainingConfig:
     """Base training configuration."""
     mode: str = "normal"
     max_epochs: int = 100
-    batch_size: int = 32
+    batch_size: int = 64  # Starting point for Lightning Tuner
     learning_rate: float = 0.001
     weight_decay: float = 0.0001
     
@@ -136,8 +136,8 @@ class BaseTrainingConfig:
     precision: str = "32-true"
     find_unused_parameters: bool = False
     
-    # Lightning Tuner - disabled to avoid batch size warnings
-    optimize_batch_size: bool = False
+    # Lightning Tuner - enabled for optimal batch size
+    optimize_batch_size: bool = True
     batch_size_mode: str = "power"
     max_batch_size_trials: int = 10
     
@@ -188,7 +188,7 @@ class KnowledgeDistillationConfig(BaseTrainingConfig):
     
     # Adjusted defaults for distillation
     max_epochs: int = 80
-    batch_size: int = 32
+    batch_size: int = 64  # Starting point for Lightning Tuner
     learning_rate: float = 0.002
     precision: str = "16-mixed"
     accumulate_grad_batches: int = 2
