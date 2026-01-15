@@ -184,9 +184,12 @@ class HydraZenTrainer:
         # Setup model
         model = self.setup_model(num_ids)
         
-        # Optimize batch size if requested
-        if self.config.training.optimize_batch_size:
+        # Optimize batch size if requested (disabled by default to avoid warnings)
+        if getattr(self.config.training, 'optimize_batch_size', False):
+            logger.info("Running batch size optimization...")
             model = self._optimize_batch_size(model, train_dataset, val_dataset)
+        else:
+            logger.info(f"Using fixed batch size: {model.batch_size}")
         
         # Create dataloaders
         train_loader, val_loader = create_dataloaders(

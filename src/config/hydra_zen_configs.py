@@ -136,7 +136,7 @@ class BaseTrainingConfig:
     precision: str = "32-true"
     find_unused_parameters: bool = False
     
-    # Lightning Tuner
+    # Lightning Tuner - disabled to avoid batch size warnings
     optimize_batch_size: bool = False
     batch_size_mode: str = "power"
     max_batch_size_trials: int = 10

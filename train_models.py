@@ -242,7 +242,7 @@ class CANGraphLightningModule(pl.LightningModule):
         output = self.model(batch) if self.model_type == "gat" else self.forward(batch)
         loss = self._compute_loss(output, batch)
         
-        self.log('train_loss', loss, prog_bar=True)
+        self.log('train_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
         return loss
     
     def _autoencoder_training_step(self, batch, batch_idx):
@@ -263,7 +263,7 @@ class CANGraphLightningModule(pl.LightningModule):
             output = self.forward(batch)
             loss = self._compute_autoencoder_loss(output, batch)
         
-        self.log('train_autoencoder_loss', loss, prog_bar=True)
+        self.log('train_autoencoder_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
         return loss
     
     def _knowledge_distillation_step(self, batch, batch_idx):
@@ -294,17 +294,17 @@ class CANGraphLightningModule(pl.LightningModule):
                         
                     teacher_acc = (teacher_logits.argmax(dim=-1) == batch.y).float().mean()
                     student_acc = (student_logits.argmax(dim=-1) == batch.y).float().mean()
-                    self.log('teacher_accuracy', teacher_acc, prog_bar=False)
-                    self.log('student_accuracy', student_acc, prog_bar=False)
-                    self.log('accuracy_gap', teacher_acc - student_acc, prog_bar=False)
+                    self.log('teacher_accuracy', teacher_acc, prog_bar=False, batch_size=batch.y.size(0))
+                    self.log('student_accuracy', student_acc, prog_bar=False, batch_size=batch.y.size(0))
+                    self.log('accuracy_gap', teacher_acc - student_acc, prog_bar=False, batch_size=batch.y.size(0))
                 
                 # Log output similarity (cosine similarity)
                 teacher_flat = teacher_output[0].flatten() if isinstance(teacher_output, tuple) else teacher_output.flatten()
                 student_flat = student_output[0].flatten() if isinstance(student_output, tuple) else student_output.flatten()
                 similarity = F.cosine_similarity(teacher_flat.unsqueeze(0), student_flat.unsqueeze(0))
-                self.log('teacher_student_similarity', similarity, prog_bar=False)
+                self.log('teacher_student_similarity', similarity, prog_bar=False, batch_size=batch.y.size(0))
         
-        self.log('train_distillation_loss', distillation_loss, prog_bar=True)
+        self.log('train_distillation_loss', distillation_loss, prog_bar=True, batch_size=batch.y.size(0))
         return distillation_loss
     
     def _fusion_training_step(self, batch, batch_idx):
@@ -313,7 +313,7 @@ class CANGraphLightningModule(pl.LightningModule):
         output = self.forward(batch)
         loss = self._compute_loss(output, batch)
         
-        self.log('train_fusion_loss', loss, prog_bar=True)
+        self.log('train_fusion_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -321,7 +321,7 @@ class CANGraphLightningModule(pl.LightningModule):
         output = self.forward(batch)
         loss = self._compute_loss(output, batch)
         
-        self.log('val_loss', loss, prog_bar=True)
+        self.log('val_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
         return loss
     
     def test_step(self, batch, batch_idx):
@@ -329,7 +329,7 @@ class CANGraphLightningModule(pl.LightningModule):
         output = self.forward(batch)
         loss = self._compute_loss(output, batch)
         
-        self.log('test_loss', loss, prog_bar=True)
+        self.log('test_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
         return loss
     
     def _compute_loss(self, output, batch):
@@ -406,8 +406,8 @@ class CANGraphLightningModule(pl.LightningModule):
             total_loss = alpha * soft_loss + (1 - alpha) * hard_loss
             
             # Log components for monitoring
-            self.log('hard_loss', hard_loss, prog_bar=False)
-            self.log('soft_loss', soft_loss, prog_bar=False)
+            self.log('hard_loss', hard_loss, prog_bar=False, batch_size=student_logits.size(0))
+            self.log('soft_loss', soft_loss, prog_bar=False, batch_size=student_logits.size(0))
             
         else:  # Unsupervised case (e.g., autoencoders)
             # Direct output matching
