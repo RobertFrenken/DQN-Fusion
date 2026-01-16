@@ -174,8 +174,10 @@ class HydraZenTrainer:
         # Check if fusion mode
         if self.config.training.mode == "fusion":
             return self._train_fusion()
+        elif self.config.training.mode == "curriculum":
+            return self.train_with_curriculum()
         
-        # Load dataset
+        # Standard training - Load dataset
         force_rebuild = hasattr(self.config, 'force_rebuild_cache') and self.config.force_rebuild_cache
         train_dataset, val_dataset, num_ids = load_dataset(self.config.dataset.name, self.config, force_rebuild_cache=force_rebuild)
         
@@ -401,6 +403,137 @@ class HydraZenTrainer:
         
         logger.info("✅ Fusion training completed successfully!")
         return fusion_model, trainer
+
+    def train_with_curriculum(self):
+        """Train GAT with curriculum learning and dynamic hard mining."""
+        logger.info("🎓 Starting GAT training with curriculum learning + hard mining")
+        
+        # Load dataset - keep separate normal/attack for sampling
+        force_rebuild = hasattr(self.config, 'force_rebuild_cache') and self.config.force_rebuild_cache
+        full_dataset, val_dataset, num_ids = load_dataset(self.config.dataset.name, self.config, force_rebuild_cache=force_rebuild)
+        
+        # Separate normal and attack graphs
+        train_normal = [g for g in full_dataset if g.y.item() == 0]  
+        train_attack = [g for g in full_dataset if g.y.item() == 1]
+        val_normal = [g for g in val_dataset if g.y.item() == 0]
+        val_attack = [g for g in val_dataset if g.y.item() == 1]
+        
+        logger.info(f"📊 Separated dataset: {len(train_normal)} normal + {len(train_attack)} attack training")
+        logger.info(f"📊 Validation: {len(val_normal)} normal + {len(val_attack)} attack")
+        
+        # Load trained VGAE for hard mining (if available)
+        vgae_model = None
+        vgae_path = f"saved_models/vgae_{self.config.dataset.name}_autoencoder.pth"
+        if os.path.exists(vgae_path):
+            logger.info(f"🔄 Loading trained VGAE from {vgae_path}")
+            try:
+                from train_models import CANGraphLightningModule
+                vgae_checkpoint = torch.load(vgae_path, map_location='cpu')
+                vgae_model = CANGraphLightningModule.load_from_checkpoint(
+                    vgae_path, map_location='cpu'
+                )
+                vgae_model.eval()
+                logger.info("✅ VGAE loaded for hard mining")
+            except Exception as e:
+                logger.warning(f"Could not load VGAE: {e}. Using random sampling.")
+        else:
+            logger.warning("No trained VGAE found. Using random sampling instead of hard mining.")
+        
+        # Create enhanced datamodule
+        from src.training.enhanced_datamodule import EnhancedCANGraphDataModule, CurriculumCallback
+        
+        datamodule = EnhancedCANGraphDataModule(
+            train_normal=train_normal,
+            train_attack=train_attack, 
+            val_normal=val_normal,
+            val_attack=val_attack,
+            vgae_model=vgae_model,
+            batch_size=64,  # Starting batch size for Lightning tuner
+            num_workers=min(8, os.cpu_count() or 1),
+            total_epochs=self.config.training.max_epochs
+        )
+        
+        # Setup GAT model
+        model = self.setup_model(num_ids)
+        
+        # Optimize batch size if requested
+        if getattr(self.config.training, 'optimize_batch_size', False):
+            logger.info("🔧 Running batch size optimization...")
+            model = self._optimize_batch_size_with_datamodule(model, datamodule)
+        
+        # Setup trainer with curriculum callback
+        curriculum_callback = CurriculumCallback()
+        trainer = self.setup_trainer(extra_callbacks=[curriculum_callback])
+        
+        # Train model
+        logger.info("🚀 Starting curriculum-enhanced training...")
+        trainer.fit(model, datamodule=datamodule)
+        
+        # Save final model
+        model_path = f"saved_models/gat_{self.config.dataset.name}_curriculum.pth"
+        trainer.save_checkpoint(model_path)
+        logger.info(f"💾 Model saved to {model_path}")
+        
+        return model, trainer
+
+    def _optimize_batch_size_with_datamodule(self, model, datamodule):
+        """Optimize batch size using custom datamodule."""
+        logger.info("🔧 Optimizing batch size with curriculum datamodule...")
+        
+        trainer = pl.Trainer(
+            accelerator=self.config.trainer.accelerator,
+            devices=self.config.trainer.devices,
+            precision='32-true',
+            max_epochs=1,
+            enable_checkpointing=False,
+            logger=False
+        )
+        
+        from lightning.pytorch.tuner import Tuner
+        tuner = Tuner(trainer)
+        
+        try:
+            tuner.scale_batch_size(
+                model,
+                datamodule=datamodule,
+                mode=self.config.training.batch_size_mode,
+                steps_per_trial=3,
+                init_val=datamodule.batch_size,
+                max_trials=getattr(self.config.training, 'max_batch_size_trials', 10)
+            )
+            
+            # Update datamodule batch size
+            datamodule.batch_size = model.batch_size
+            logger.info(f"✅ Batch size optimized to: {model.batch_size}")
+            
+        except Exception as e:
+            logger.warning(f"Batch size optimization failed: {e}. Using default.")
+        
+        return model
+        
+    def setup_trainer(self, extra_callbacks=None):
+        """Setup trainer with optional extra callbacks."""
+        callbacks = [
+            ModelCheckpoint(
+                monitor='val_loss',
+                filename='gat_curriculum-{epoch:02d}-{val_loss:.2f}',
+                save_top_k=3,
+                mode='min'
+            ),
+            EarlyStopping(
+                monitor='val_loss',
+                patience=getattr(self.config.training, 'early_stopping_patience', 25),
+                mode='min'
+            )
+        ]
+        
+        # Add device stats monitor if requested
+        if getattr(self.config.trainer, 'enable_device_stats', False):
+            callbacks.append(DeviceStatsMonitor())
+        
+        # Add extra callbacks
+        if extra_callbacks:
+            callbacks.extend(extra_callbacks)
     
     def _optimize_batch_size(self, model, train_dataset, val_dataset) -> CANGraphLightningModule:
         """Optimize batch size using Lightning's Tuner."""
