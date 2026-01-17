@@ -36,10 +36,27 @@ class AdaptiveGraphDataset(Dataset):
         self._generate_epoch_samples()
     
     def _compute_curriculum_ratio(self) -> float:
-        """Compute current normal:attack ratio based on curriculum."""
-        progress = min(self.current_epoch / self.total_epochs, 1.0)
-        # Exponential increase: slow start, rapid ramp-up
-        ratio = self.start_ratio * (self.end_ratio / self.start_ratio) ** (progress ** 1.5)
+        """Compute current normal:attack ratio using momentum curriculum."""
+        if not hasattr(self, 'momentum_scheduler'):
+            from src.training.momentum_curriculum import MomentumCurriculumScheduler
+            self.momentum_scheduler = MomentumCurriculumScheduler(
+                total_epochs=self.total_epochs,
+                initial_ratio=self.start_ratio,  # Use configured start ratio
+                target_ratio=self.end_ratio,     # Use configured end ratio
+                momentum=0.9,
+                confidence_threshold=0.75,
+                warmup_epochs=max(10, int(self.total_epochs * 0.1))
+            )
+            
+        # Use GAT confidence from callback if available
+        confidence = getattr(self, 'last_confidence', 0.5)
+        
+        # Get momentum-based ratio
+        ratio, metrics = self.momentum_scheduler.update_ratio(self.current_epoch, confidence)
+        
+        # Store metrics for logging
+        self.curriculum_metrics = metrics
+        
         return ratio
     
     def _get_difficulty_scores(self, graphs: List) -> np.ndarray:
@@ -122,12 +139,23 @@ class AdaptiveGraphDataset(Dataset):
         self.epoch_samples = self.attack_graphs + selected_normals
         np.random.shuffle(self.epoch_samples)
         
-        print(f"Epoch {self.current_epoch}: Ratio {current_ratio:.2f}:1 "
+        print(f"🌊 Epoch {self.current_epoch}: Momentum Curriculum - Ratio {current_ratio:.3f}:1 "
               f"({len(selected_normals)} normals, {len(self.attack_graphs)} attacks)")
+        
+        # Log momentum metrics if available
+        if hasattr(self, 'curriculum_metrics'):
+            metrics = self.curriculum_metrics
+            momentum = metrics.get('momentum_accumulator', 0.0)
+            progress = metrics.get('progress_signal', 0.0)
+            print(f"   Momentum: {momentum:.3f}, Progress Signal: {progress:+.3f}")
     
     def update_epoch(self, epoch: int, gat_confidence: float = None):
         """Update epoch and difficulty based on GAT performance."""
         self.current_epoch = epoch
+        
+        # Store confidence for momentum curriculum
+        if gat_confidence is not None:
+            self.last_confidence = gat_confidence
         
         # Adaptive difficulty based on GAT confidence
         if gat_confidence is not None:
@@ -209,28 +237,84 @@ class CurriculumCallback(pl.Callback):
     def __init__(self):
         super().__init__()
         self.normal_confidences = []
-    
+        self.balanced_phase_buffer = []  # Store early balanced examples
+        self.ewc_initialized = False
+        
     def on_train_epoch_start(self, trainer, pl_module):
         """Update curriculum at start of each epoch."""
         datamodule = trainer.datamodule
+        
+        # Store samples from balanced phase for replay (first 20% of training)
+        current_epoch = trainer.current_epoch
+        if current_epoch < trainer.max_epochs * 0.2:  # First 20% = balanced phase
+            # Sample some examples to store in buffer
+            train_loader = datamodule.train_dataloader()
+            if len(self.balanced_phase_buffer) < 1000:  # Limit buffer size
+                batch = next(iter(train_loader))
+                self.balanced_phase_buffer.extend(batch.to_data_list()[:10])  # Store 10 per epoch
+        
+        # Initialize EWC after balanced phase (20% instead of 30% for smoother momentum)
+        elif not self.ewc_initialized and current_epoch == int(trainer.max_epochs * 0.2):
+            self._initialize_memory_preservation(trainer, pl_module)
+            self.ewc_initialized = True
         
         # Calculate GAT confidence on normals (if we have history)
         avg_confidence = None
         if len(self.normal_confidences) > 0:
             avg_confidence = np.mean(self.normal_confidences[-10:])  # Last 10 batches
         
-        # Update curriculum
+        # Update curriculum with momentum scheduling
         datamodule.update_training_epoch(trainer.current_epoch, avg_confidence)
         
-        # Clear confidence history for new epoch
-        self.normal_confidences = []
+        # Log momentum curriculum metrics to Lightning
+        if hasattr(datamodule.train_dataset, 'curriculum_metrics'):
+            metrics = datamodule.train_dataset.curriculum_metrics
+            
+            # Get current ratio from dataset
+            current_ratio = datamodule.train_dataset._compute_curriculum_ratio()
+            normal_percentage = (current_ratio / (1 + current_ratio)) * 100
+            
+            pl_module.log('curriculum/normal_ratio', current_ratio)
+            pl_module.log('curriculum/normal_percentage', normal_percentage)
+            pl_module.log('curriculum/momentum', metrics.get('momentum_accumulator', 0.0))
+            pl_module.log('curriculum/progress_signal', metrics.get('progress_signal', 0.0))
+        
+        if avg_confidence is not None:
+            pl_module.log('curriculum/normal_confidence', avg_confidence)
+    
+    def _initialize_memory_preservation(self, trainer, pl_module):
+        """Initialize memory preservation mechanisms."""
+        print(f"🧠 Initializing memory preservation at epoch {trainer.current_epoch}")
+        
+        # Add EWC if not already present
+        if not hasattr(pl_module, 'ewc'):
+            from src.training.memory_preserving_curriculum import ElasticWeightConsolidation
+            pl_module.ewc = ElasticWeightConsolidation(pl_module.model)
+            
+            # Compute Fisher Information on balanced examples
+            if len(self.balanced_phase_buffer) > 0:
+                # Create temporary dataloader with balanced examples
+                from torch.utils.data import DataLoader
+                from torch_geometric.data import Batch
+                
+                def collate_fn(batch):
+                    return Batch.from_data_list(batch)
+                
+                balanced_loader = DataLoader(
+                    self.balanced_phase_buffer, 
+                    batch_size=32, 
+                    collate_fn=collate_fn
+                )
+                
+                pl_module.ewc.compute_fisher_information(balanced_loader, pl_module.device)
+                print("✅ EWC initialized with balanced examples")
     
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
-        """Track model confidence on normal examples."""
+        """Track model confidence and add EWC loss if needed."""
         if batch_idx % 10 != 0:  # Sample every 10 batches to avoid overhead
             return
             
-        # Get predictions and targets
+        # Track normal confidence
         with torch.no_grad():
             logits = pl_module(batch.x, batch.edge_index, batch.batch)
             probs = torch.sigmoid(logits)
@@ -240,6 +324,16 @@ class CurriculumCallback(pl.Callback):
             if normal_mask.sum() > 0:
                 normal_confidence = probs[normal_mask].mean().item()
                 self.normal_confidences.append(normal_confidence)
+        
+        # Add EWC loss after balanced phase
+        if hasattr(pl_module, 'ewc') and trainer.current_epoch > trainer.max_epochs * 0.3:
+            ewc_loss = pl_module.ewc.compute_ewc_loss()
+            
+            # Add to the loss (this modifies the training step loss)
+            if 'loss' in outputs:
+                outputs['loss'] += ewc_loss * 0.1  # Weight the EWC loss
+            
+            pl_module.log('ewc_loss', ewc_loss)
     
     def on_train_epoch_end(self, trainer, pl_module):
         """Log curriculum statistics."""

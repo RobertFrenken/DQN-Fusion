@@ -211,7 +211,7 @@ class HydraZenTrainer:
             logger.info(f"Test results: {test_results}")
         
         # Save final model
-        model_name = f"{self.config.experiment_name}.pth"
+        model_name = f"{self.config.model.type}_{self.config.dataset.name}_{self.config.training.mode}_{self.config.experiment_name}.pth"
         save_path = Path(self.config.model_save_dir) / model_name
         save_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), save_path)
@@ -354,7 +354,7 @@ class HydraZenTrainer:
         
         # Model checkpoint
         checkpoint_callback = ModelCheckpoint(
-            dirpath=f'{self.config.model_save_dir}/fusion_checkpoints',
+            dirpath=f'{self.config.model_save_dir}/fusion_checkpoints_{self.config.dataset.name}',
             filename=f'fusion_{self.config.dataset.name}_{{epoch:02d}}_{{val_accuracy:.3f}}',
             save_top_k=3,
             monitor='val_accuracy',
@@ -373,7 +373,7 @@ class HydraZenTrainer:
         # CSV Logger
         csv_logger = CSVLogger(
             save_dir=self.config.log_dir,
-            name=f'fusion_{self.config.dataset.name}'
+            name=f'fusion_{self.config.dataset.name}_{self.config.experiment_name}'
         )
         
         # Create trainer
@@ -397,7 +397,7 @@ class HydraZenTrainer:
         logger.info(f"Validation results: {val_results}")
         
         # Save fusion agent
-        agent_path = f'{self.config.model_save_dir}/fusion_agent_{self.config.dataset.name}.pth'
+        agent_path = f'{self.config.model_save_dir}/fusion_agent_{self.config.dataset.name}_{self.config.experiment_name}.pth'
         fusion_model.fusion_agent.save_agent(agent_path)
         logger.info(f"✓ Fusion agent saved to {agent_path}")
         
@@ -470,7 +470,7 @@ class HydraZenTrainer:
         trainer.fit(model, datamodule=datamodule)
         
         # Save final model
-        model_path = f"saved_models/gat_{self.config.dataset.name}_curriculum.pth"
+        model_path = f"{self.config.model_save_dir}/gat_{self.config.dataset.name}_curriculum_{self.config.experiment_name}.pth"
         trainer.save_checkpoint(model_path)
         logger.info(f"💾 Model saved to {model_path}")
         
@@ -516,7 +516,8 @@ class HydraZenTrainer:
         callbacks = [
             ModelCheckpoint(
                 monitor='val_loss',
-                filename='gat_curriculum-{epoch:02d}-{val_loss:.2f}',
+                dirpath=f'{self.config.model_save_dir}/lightning_checkpoints_{self.config.dataset.name}',
+                filename=f'{self.config.model.type}_{self.config.dataset.name}_curriculum-{{epoch:02d}}-{{val_loss:.2f}}',
                 save_top_k=3,
                 mode='min'
             ),
