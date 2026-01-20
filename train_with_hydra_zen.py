@@ -66,6 +66,42 @@ class HydraZenTrainer:
         if not validate_config(self.config):
             raise ValueError("Configuration validation failed")
     
+    def get_hierarchical_paths(self):
+        """Create hierarchical directory structure: osc_jobs/dataset/model/mode"""
+        # Use absolute paths to avoid any path resolution issues
+        base_dir = Path.cwd() / "osc_jobs"
+        dataset_name = self.config.dataset.name
+        model_type = self.config.model.type  # 'gat' or 'vgae'
+        training_mode = self.config.training.mode  # 'autoencoder', 'normal', 'curriculum', etc.
+        
+        # Debug logging
+        logger.info(f"Creating paths - CWD: {Path.cwd()}")
+        logger.info(f"Dataset: {dataset_name}, Model: {model_type}, Mode: {training_mode}")
+        
+        # Create the hierarchical path (absolute)
+        experiment_dir = base_dir / dataset_name / model_type / training_mode
+        logger.info(f"Experiment directory: {experiment_dir}")
+        
+        # Create directories
+        experiment_dir.mkdir(parents=True, exist_ok=True)
+        (experiment_dir / "lightning_checkpoints").mkdir(exist_ok=True)
+        (experiment_dir / "mlruns").mkdir(exist_ok=True)
+        
+        paths = {
+            'experiment_dir': experiment_dir.resolve(),
+            'model_save_dir': experiment_dir.resolve(),
+            'log_dir': experiment_dir.resolve(),
+            'checkpoint_dir': (experiment_dir / "lightning_checkpoints").resolve(),
+            'mlruns_dir': (experiment_dir / "mlruns").resolve()
+        }
+        
+        # Debug log all paths
+        logger.info("Generated hierarchical paths:")
+        for key, path in paths.items():
+            logger.info(f"  {key}: {path}")
+            
+        return paths
+    
     def setup_model(self, num_ids: int) -> pl.LightningModule:
         """Create the Lightning module from config."""
         if self.config.training.mode == "fusion":
@@ -86,12 +122,15 @@ class HydraZenTrainer:
     
     def setup_trainer(self) -> pl.Trainer:
         """Create the Lightning trainer from config."""
+        # Get hierarchical paths
+        paths = self.get_hierarchical_paths()
+        
         # Setup callbacks
         callbacks = []
         
         # Model checkpointing
         checkpoint_callback = ModelCheckpoint(
-            dirpath=f'{self.config.model_save_dir}/lightning_checkpoints',
+            dirpath=str(paths['checkpoint_dir']),
             filename=f'{self.config.experiment_name}_{{epoch:02d}}_{{val_loss:.3f}}',
             save_top_k=self.config.logging.get("save_top_k", 3),
             monitor=self.config.logging.get("monitor_metric", "val_loss"),
@@ -119,21 +158,21 @@ class HydraZenTrainer:
         # Setup loggers
         loggers = []
         
-        # Ensure log_dir is absolute path
-        log_dir = Path(self.config.log_dir).absolute()
-        log_dir.mkdir(parents=True, exist_ok=True)
-        
         # CSV logger
         csv_logger = CSVLogger(
-            save_dir=str(log_dir),
+            save_dir=str(paths['log_dir']),
             name=self.config.experiment_name
         )
         loggers.append(csv_logger)
         
         # MLflow logger with reduced logging
+        # Ensure we have an absolute path and log it for debugging
+        mlruns_path = paths['mlruns_dir'].resolve()  # resolve() makes it fully absolute
+        logger.info(f"Setting up MLflow with path: {mlruns_path}")
+        
         mlflow_logger = MLFlowLogger(
-            experiment_name="CAN-Graph-Training",
-            tracking_uri=f"file://{log_dir}/mlruns",
+            experiment_name=f"CAN-Graph-{self.config.dataset.name}",
+            tracking_uri=mlruns_path.as_uri(),  # Use as_uri() for proper file URI format
             log_model=False,  # Disable model artifacts to reduce logging
             # Only log essential metrics: train/val loss, accuracy, epoch time
         )
@@ -142,7 +181,7 @@ class HydraZenTrainer:
         # TensorBoard logger
         if self.config.logging.get("enable_tensorboard", False):
             tb_logger = TensorBoardLogger(
-                save_dir=self.config.log_dir,
+                save_dir=str(paths['log_dir']),
                 name=self.config.experiment_name
             )
             loggers.append(tb_logger)
@@ -211,8 +250,9 @@ class HydraZenTrainer:
             logger.info(f"Test results: {test_results}")
         
         # Save final model
+        paths = self.get_hierarchical_paths()
         model_name = f"{self.config.experiment_name}.pth"
-        save_path = Path(self.config.model_save_dir) / model_name
+        save_path = paths['model_save_dir'] / model_name
         save_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), save_path)
         logger.info(f"Model saved to: {save_path}")
@@ -236,10 +276,11 @@ class HydraZenTrainer:
         # Load pre-trained models for prediction caching
         logger.info("📦 Loading pre-trained models for prediction caching")
         
+        paths = self.get_hierarchical_paths()
         ae_path = getattr(self.config.training, 'autoencoder_path', 
-                         f'saved_models/autoencoder_{self.config.dataset.name}.pth')
+                         paths['model_save_dir'] / f'autoencoder_{self.config.dataset.name}.pth')
         classifier_path = getattr(self.config.training, 'classifier_path',
-                                 f'saved_models/best_teacher_model_{self.config.dataset.name}.pth')
+                                 paths['model_save_dir'] / f'best_teacher_model_{self.config.dataset.name}.pth')
         
         # Check if paths exist
         if not Path(ae_path).exists():
@@ -352,9 +393,12 @@ class HydraZenTrainer:
         # Setup trainer for fusion
         logger.info("🏋️  Setting up Lightning trainer for fusion")
         
+        # Get hierarchical paths
+        paths = self.get_hierarchical_paths()
+        
         # Model checkpoint
         checkpoint_callback = ModelCheckpoint(
-            dirpath=f'{self.config.model_save_dir}/fusion_checkpoints',
+            dirpath=str(paths['checkpoint_dir']),
             filename=f'fusion_{self.config.dataset.name}_{{epoch:02d}}_{{val_accuracy:.3f}}',
             save_top_k=3,
             monitor='val_accuracy',
@@ -372,7 +416,7 @@ class HydraZenTrainer:
         
         # CSV Logger
         csv_logger = CSVLogger(
-            save_dir=self.config.log_dir,
+            save_dir=str(paths['log_dir']),
             name=f'fusion_{self.config.dataset.name}'
         )
         
@@ -397,8 +441,9 @@ class HydraZenTrainer:
         logger.info(f"Validation results: {val_results}")
         
         # Save fusion agent
-        agent_path = f'{self.config.model_save_dir}/fusion_agent_{self.config.dataset.name}.pth'
-        fusion_model.fusion_agent.save_agent(agent_path)
+        paths = self.get_hierarchical_paths()
+        agent_path = paths['model_save_dir'] / f'fusion_agent_{self.config.dataset.name}.pth'
+        fusion_model.fusion_agent.save_agent(str(agent_path))
         logger.info(f"✓ Fusion agent saved to {agent_path}")
         
         logger.info("✅ Fusion training completed successfully!")
@@ -423,14 +468,16 @@ class HydraZenTrainer:
         
         # Load trained VGAE for hard mining (if available)
         vgae_model = None
-        vgae_path = f"saved_models/vgae_{self.config.dataset.name}_autoencoder.pth"
-        if os.path.exists(vgae_path):
+        # Look for VGAE model in the hierarchical structure
+        vgae_dir = Path("osc_jobs") / self.config.dataset.name / "vgae" / "autoencoder"
+        vgae_path = vgae_dir / f"vgae_{self.config.dataset.name}_autoencoder.pth"
+        if vgae_path.exists():
             logger.info(f"🔄 Loading trained VGAE from {vgae_path}")
             try:
                 from train_models import CANGraphLightningModule
-                vgae_checkpoint = torch.load(vgae_path, map_location='cpu')
+                vgae_checkpoint = torch.load(str(vgae_path), map_location='cpu')
                 vgae_model = CANGraphLightningModule.load_from_checkpoint(
-                    vgae_path, map_location='cpu'
+                    str(vgae_path), map_location='cpu'
                 )
                 vgae_model.eval()
                 logger.info("✅ VGAE loaded for hard mining")
@@ -463,14 +510,15 @@ class HydraZenTrainer:
         
         # Setup trainer with curriculum callback
         curriculum_callback = CurriculumCallback()
-        trainer = self.setup_trainer(extra_callbacks=[curriculum_callback])
+        trainer = self.setup_curriculum_trainer(extra_callbacks=[curriculum_callback])
         
         # Train model
         logger.info("🚀 Starting curriculum-enhanced training...")
         trainer.fit(model, datamodule=datamodule)
         
         # Save final model
-        model_path = f"saved_models/gat_{self.config.dataset.name}_curriculum.pth"
+        paths = self.get_hierarchical_paths()
+        model_path = paths['model_save_dir'] / f"gat_{self.config.dataset.name}_curriculum.pth"
         trainer.save_checkpoint(model_path)
         logger.info(f"💾 Model saved to {model_path}")
         
@@ -511,10 +559,14 @@ class HydraZenTrainer:
         
         return model
         
-    def setup_trainer(self, extra_callbacks=None):
-        """Setup trainer with optional extra callbacks."""
+    def setup_curriculum_trainer(self, extra_callbacks=None):
+        """Setup trainer with optional extra callbacks for curriculum learning."""
+        # Get hierarchical paths
+        paths = self.get_hierarchical_paths()
+        
         callbacks = [
             ModelCheckpoint(
+                dirpath=str(paths['checkpoint_dir']),
                 monitor='val_loss',
                 filename='gat_curriculum-{epoch:02d}-{val_loss:.2f}',
                 save_top_k=3,
@@ -534,6 +586,46 @@ class HydraZenTrainer:
         # Add extra callbacks
         if extra_callbacks:
             callbacks.extend(extra_callbacks)
+        
+        # Setup loggers
+        loggers = []
+        
+        # CSV logger
+        csv_logger = CSVLogger(
+            save_dir=str(paths['log_dir']),
+            name=self.config.experiment_name
+        )
+        loggers.append(csv_logger)
+        
+        # MLflow logger
+        # Ensure we have an absolute path and log it for debugging
+        mlruns_path = paths['mlruns_dir'].resolve()
+        logger.info(f"Setting up curriculum MLflow with path: {mlruns_path}")
+        
+        mlflow_logger = MLFlowLogger(
+            experiment_name=f"CAN-Graph-{self.config.dataset.name}",
+            tracking_uri=mlruns_path.as_uri(),  # Use as_uri() for proper file URI format
+            log_model=False,
+        )
+        loggers.append(mlflow_logger)
+        
+        # Create trainer
+        trainer = pl.Trainer(
+            accelerator=self.config.trainer.accelerator,
+            devices=self.config.trainer.devices,
+            precision=self.config.training.precision,
+            max_epochs=self.config.training.max_epochs,
+            gradient_clip_val=self.config.training.gradient_clip_val,
+            accumulate_grad_batches=self.config.training.accumulate_grad_batches,
+            logger=loggers,
+            callbacks=callbacks,
+            enable_checkpointing=self.config.trainer.enable_checkpointing,
+            log_every_n_steps=self.config.training.log_every_n_steps,
+            enable_progress_bar=False,
+            num_sanity_val_steps=self.config.trainer.num_sanity_val_steps
+        )
+        
+        return trainer
     
     def _optimize_batch_size(self, model, train_dataset, val_dataset) -> CANGraphLightningModule:
         """Optimize batch size using Lightning's Tuner."""
@@ -590,7 +682,7 @@ def get_preset_configs() -> Dict[str, CANGraphConfig]:
             presets[name] = create_distillation_config(
                 dataset=dataset, 
                 student_scale=scale,
-                teacher_model_path=f"saved_models/best_teacher_model_{dataset}.pth"
+                teacher_model_path=f"osc_jobs/{dataset}/vgae/autoencoder/best_teacher_model_{dataset}.pth"
             )
     
     # Fusion presets

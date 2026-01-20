@@ -3,6 +3,7 @@
 OSC Job Manager for CAN-Graph Training
 
 Automates SLURM job submission on Ohio Supercomputer Center with:
+- Hierarchical directory organization (osc_jobs/{dataset}/{model}/{mode}/)
 - Parameterized job generation
 - Batch job submission  
 - Organized output management
@@ -10,10 +11,16 @@ Automates SLURM job submission on Ohio Supercomputer Center with:
 - Easy parameter sweeps
 
 Usage:
-    python scripts/osc_job_manager.py --submit-individual --datasets hcrl_sa,set_04
-    python scripts/osc_job_manager.py --submit-fusion --all-datasets
-    python scripts/osc_job_manager.py --parameter-sweep --training fusion
-    python scripts/osc_job_manager.py --monitor-jobs
+    python osc_job_manager.py --submit-individual --datasets hcrl_sa,set_04
+    python osc_job_manager.py --submit-fusion --all-datasets
+    python osc_job_manager.py --parameter-sweep --training gat_curriculum
+    python osc_job_manager.py --monitor-jobs
+
+Training Types:
+    - gat_normal: Standard GAT training
+    - vgae_autoencoder: VGAE autoencoder training
+    - gat_curriculum: GAT with curriculum learning (requires VGAE)
+    - gat_fusion: GAT fusion training (requires GAT + VGAE)
 """
 
 import os
@@ -56,7 +63,7 @@ class OSCJobManager:
         
         # Training configurations
         self.training_configs = {
-            "individual_gat": {
+            "gat_normal": {
                 "time": "2:00:00",
                 "time_complex": "8:00:00",  # Longer for complex datasets
                 "mem": "32G", 
@@ -66,7 +73,7 @@ class OSCJobManager:
                 "mode": "normal",
                 "model": "gat"
             },
-            "individual_vgae": {
+            "vgae_autoencoder": {
                 "time": "2:00:00", 
                 "time_complex": "8:00:00",  # Longer for complex datasets
                 "mem": "32G",
@@ -76,17 +83,17 @@ class OSCJobManager:
                 "mode": "autoencoder", 
                 "model": "vgae"
             },
-            "knowledge_distillation": {
+            "gat_curriculum": {
                 "time": "4:00:00",
                 "time_complex": "12:00:00",  # Much longer for complex datasets
                 "mem": "48G",
                 "mem_complex": "80G",  # More memory for complex datasets
                 "cpus": 8, 
                 "gpus": 1,
-                "mode": "knowledge_distillation",
+                "mode": "curriculum",
                 "model": "gat"
             },
-            "fusion": {
+            "gat_fusion": {
                 "time": "3:00:00",
                 "mem": "48G",
                 "cpus": 8,
@@ -110,8 +117,8 @@ class OSCJobManager:
         time_limit = config.get("time_complex" if is_complex else "time", config["time"])
         memory = config.get("mem_complex" if is_complex else "mem", config["mem"])
         
-        # Create job-specific output directory
-        output_dir = f"{self.osc_settings['project_path']}/osc_jobs/{job_name}"
+        # Create hierarchical output directory: osc_jobs/{dataset}/{model}/{mode}/
+        output_dir = f"{self.osc_settings['project_path']}/osc_jobs/{dataset}/{config['model']}/{config['mode']}"
         
         # Build training command
         training_cmd = self._build_training_command(training_type, dataset, extra_args)
@@ -250,16 +257,19 @@ echo "✅ Job {job_name} completed successfully!"
             cmd_parts.append(f"--model {config['model']}")
         
         # Add mode-specific arguments
-        if training_type == "knowledge_distillation":
-            teacher_path = f"saved_models/best_teacher_model_{dataset}.pth"
+        if training_type == "gat_curriculum":
+            # For curriculum learning, look for VGAE model in hierarchical structure
+            vgae_path = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{dataset}_autoencoder.pth"
             cmd_parts.extend([
-                f"--teacher_path {teacher_path}",
-                "--student_scale 0.5"
+                f"--vgae_path {vgae_path}"
             ])
-        elif training_type == "fusion":
+        elif training_type == "gat_fusion":
+            # For fusion, look for models in hierarchical structure
+            autoencoder_path = f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{dataset}.pth"
+            classifier_path = f"osc_jobs/{dataset}/vgae/autoencoder/best_teacher_model_{dataset}.pth"
             cmd_parts.extend([
-                f"--autoencoder_path saved_models/autoencoder_{dataset}.pth",
-                f"--classifier_path saved_models/classifier_{dataset}.pth"
+                f"--autoencoder_path {autoencoder_path}",
+                f"--classifier_path {classifier_path}"
             ])
         
         # Add extra arguments
@@ -277,7 +287,7 @@ echo "✅ Job {job_name} completed successfully!"
         """Submit individual training jobs."""
         
         datasets = datasets or self.datasets
-        training_types = training_types or ["individual_gat", "individual_vgae"]
+        training_types = training_types or ["gat_normal", "vgae_autoencoder"]
         extra_args = extra_args or {}
         
         submitted_jobs = []
@@ -305,32 +315,32 @@ echo "✅ Job {job_name} completed successfully!"
         return submitted_jobs
     
     def submit_pipeline_jobs(self, datasets: List[str] = None) -> List[str]:
-        """Submit complete pipeline jobs (individual -> distillation -> fusion)."""
+        """Submit complete pipeline jobs (individual -> curriculum -> fusion)."""
         
         datasets = datasets or self.datasets
         submitted_jobs = []
         
         for dataset in datasets:
             # Stage 1: Individual models (parallel)
-            gat_job_id = self._submit_single_job("individual_gat", dataset)
-            vgae_job_id = self._submit_single_job("individual_vgae", dataset)
+            gat_job_id = self._submit_single_job("gat_normal", dataset)
+            vgae_job_id = self._submit_single_job("vgae_autoencoder", dataset)
             
             if not (gat_job_id and vgae_job_id):
                 logger.error(f"❌ Failed to submit individual jobs for {dataset}")
                 continue
             
-            # Stage 2: Knowledge distillation (depends on GAT)
-            kd_job_id = self._submit_single_job("knowledge_distillation", dataset, 
-                                              dependency=gat_job_id)
+            # Stage 2: Curriculum learning (depends on VGAE for hard mining)
+            curriculum_job_id = self._submit_single_job("gat_curriculum", dataset, 
+                                                       dependency=vgae_job_id)
             
             # Stage 3: Fusion (depends on both individual models)
-            fusion_job_id = self._submit_single_job("fusion", dataset,
-                                                  dependency=f"{gat_job_id}:{vgae_job_id}")
+            fusion_job_id = self._submit_single_job("gat_fusion", dataset,
+                                                   dependency=f"{gat_job_id}:{vgae_job_id}")
             
             submitted_jobs.extend([
                 (f"pipeline_{dataset}_gat", gat_job_id),
                 (f"pipeline_{dataset}_vgae", vgae_job_id), 
-                (f"pipeline_{dataset}_kd", kd_job_id),
+                (f"pipeline_{dataset}_curriculum", curriculum_job_id),
                 (f"pipeline_{dataset}_fusion", fusion_job_id)
             ])
             
@@ -569,8 +579,8 @@ def main():
                        help="Clean up old failed jobs and outputs")
     parser.add_argument("--datasets", type=str, 
                        help="Comma-separated list of datasets")
-    parser.add_argument("--training", type=str, choices=["individual_gat", "individual_vgae", 
-                       "knowledge_distillation", "fusion"],
+    parser.add_argument("--training", type=str, choices=["gat_normal", "vgae_autoencoder", 
+                       "gat_curriculum", "gat_fusion"],
                        help="Training type for parameter sweep")
     parser.add_argument("--class-balance", type=str, 
                        choices=["focal", "weighted", "undersample", "oversample", "smote"],
@@ -629,14 +639,14 @@ def main():
             logger.info(f"📊 Submitting jobs for complex dataset: {dataset}")
             
             # Submit both GAT and VGAE for each complex dataset
-            gat_job = manager._submit_single_job("individual_gat", dataset)
-            vgae_job = manager._submit_single_job("individual_vgae", dataset)
+            gat_job = manager._submit_single_job("gat_normal", dataset)
+            vgae_job = manager._submit_single_job("vgae_autoencoder", dataset)
             
             if gat_job:
-                jobs.append((f"individual_gat_{dataset}", gat_job))
+                jobs.append((f"gat_normal_{dataset}", gat_job))
                 logger.info(f"  ✅ GAT job: {gat_job}")
             if vgae_job:
-                jobs.append((f"individual_vgae_{dataset}", vgae_job))
+                jobs.append((f"vgae_autoencoder_{dataset}", vgae_job))
                 logger.info(f"  ✅ VGAE job: {vgae_job}")
                 
         logger.info(f"✅ Submitted {len(jobs)} complex dataset jobs")
@@ -647,9 +657,9 @@ def main():
         datasets = datasets or manager.datasets
         jobs = []
         for dataset in datasets:
-            job_id = manager._submit_single_job("fusion", dataset)
+            job_id = manager._submit_single_job("gat_fusion", dataset)
             if job_id:
-                jobs.append((f"fusion_{dataset}", job_id))
+                jobs.append((f"gat_fusion_{dataset}", job_id))
         logger.info(f"✅ Submitted {len(jobs)} fusion jobs")
         
     elif args.submit_pipeline:

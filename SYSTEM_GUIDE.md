@@ -13,7 +13,7 @@ module load miniconda3/24.1.2-py310
 source activate gnn-gpu
 
 # After training, view results (use absolute path):
-mlflow ui --backend-store-uri file://$PWD/outputs/lightning_logs/mlruns
+
 # Open: http://localhost:5000
 
 # For remote access from your local machine:
