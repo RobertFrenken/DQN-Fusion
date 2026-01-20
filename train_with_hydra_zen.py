@@ -568,7 +568,8 @@ class HydraZenTrainer:
             ModelCheckpoint(
                 dirpath=str(paths['checkpoint_dir']),
                 monitor='val_loss',
-                filename='gat_curriculum-{epoch:02d}-{val_loss:.2f}',
+                dirpath=f'{self.config.model_save_dir}/lightning_checkpoints_{self.config.dataset.name}',
+                filename=f'{self.config.model.type}_{self.config.dataset.name}_curriculum-{{epoch:02d}}-{{val_loss:.2f}}',
                 save_top_k=3,
                 mode='min'
             ),

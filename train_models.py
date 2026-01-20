@@ -238,12 +238,23 @@ class CANGraphLightningModule(pl.LightningModule):
             return self._normal_training_step(batch, batch_idx)
     
     def _normal_training_step(self, batch, batch_idx):
-        """Standard training step."""
+        """Standard training step with optional memory preservation."""
         output = self.model(batch) if self.model_type == "gat" else self.forward(batch)
-        loss = self._compute_loss(output, batch)
+        base_loss = self._compute_loss(output, batch)
         
-        self.log('train_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
-        return loss
+        # Add memory preservation loss if EWC is initialized and we're in imbalanced phase
+        total_loss = base_loss
+        if hasattr(self, 'ewc') and hasattr(self.trainer, 'current_epoch'):
+            # Check if we're past the balanced phase (20% of training for momentum curriculum)
+            if self.trainer.current_epoch > self.trainer.max_epochs * 0.2:
+                ewc_loss = self.ewc.compute_ewc_loss()
+                total_loss = base_loss + (ewc_loss * 0.1)  # 10% weight for memory preservation
+                self.log('train_ewc_loss', ewc_loss, prog_bar=False, batch_size=batch.y.size(0))
+        
+        self.log('train_loss', base_loss, prog_bar=True, batch_size=batch.y.size(0))
+        self.log('train_total_loss', total_loss, prog_bar=False, batch_size=batch.y.size(0))
+        
+        return total_loss
     
     def _autoencoder_training_step(self, batch, batch_idx):
         """Autoencoder training - only use normal samples."""
@@ -406,12 +417,8 @@ class CANGraphLightningModule(pl.LightningModule):
             total_loss = alpha * soft_loss + (1 - alpha) * hard_loss
             
             # Log components for monitoring
-            self.log('hard_loss', hard_loss, prog_bar=False, batch_size=student_logits.size(0))
-            self.log('soft_loss', soft_loss, prog_bar=False, batch_size=student_logits.size(0))
-            
-        else:  # Unsupervised case (e.g., autoencoders)
-            # Direct output matching
-            total_loss = nn.functional.mse_loss(student_output, teacher_output)
+        self.log('hard_loss', hard_loss, prog_bar=False, batch_size=student_output.size(0))
+        self.log('soft_loss', soft_loss, prog_bar=False, batch_size=student_output.size(0))
         
         return total_loss
     
