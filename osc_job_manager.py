@@ -290,8 +290,8 @@ echo "✅ Job {job_name} completed successfully!"
         for key, value in extra_args.items():
             cmd_parts.append(f"--{key} {value}")
             
-        # Add standard debugging for dataset loading
-        cmd_parts.append("--debug-graph-count")
+        # Note: --debug-graph-count removed as it was causing segmentation faults
+        # The flag was defined but not implemented in the training script
         
         return " ".join(cmd_parts)
     

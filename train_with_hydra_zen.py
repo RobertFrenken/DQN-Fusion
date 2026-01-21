@@ -822,8 +822,7 @@ Examples:
                       help='Enable TensorBoard logging')
     parser.add_argument('--force-rebuild-cache', action='store_true',
                       help='Force rebuild of cached processed data')
-    parser.add_argument('--debug-graph-count', action='store_true',
-                      help='Show detailed graph count diagnostics')
+    # Removed --debug-graph-count flag as it was unused and causing segfaults
     parser.add_argument('--early-stopping-patience', type=int,
                       help='Early stopping patience (default: 25 for normal, 30 for autoencoder)')
     

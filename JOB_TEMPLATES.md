@@ -244,7 +244,7 @@ overrides:
 ### Default Training Parameters
 | Parameter | VGAE Autoencoder | GAT Normal | Knowledge Distillation | GAT Curriculum | GAT Fusion | Override Syntax |
 |-----------|------------------|------------|------------------------|----------------|------------|------------------|
-| **Max Epochs** | 100 | 200 | 150 | 200 | 100 | `--extra-args "max_epochs=NUMBER"` |
+| **Epochs** | 100 | 200 | 150 | 200 | 100 | `--extra-args "epochs=500"` |
 | **Learning Rate** | 1e-3 | 1e-3 | 1e-3 | 1e-3 | 1e-3 | `--extra-args "learning_rate=0.001"` |
 | **Batch Size** | Auto-optimized | Auto-optimized | Auto-optimized | Auto-optimized | Auto-optimized | `--extra-args "batch_size=512"` |
 | **Temperature** | N/A | N/A | 4.0 | N/A | N/A | `--extra-args "temperature=6.0"` |
