@@ -306,9 +306,15 @@ class CurriculumTrainingConfig(BaseTrainingConfig):
     
     # Training adjustments for curriculum
     max_epochs: int = 400
-    batch_size: int = 64
+    batch_size: int = 32           # Starting batch size for optimization
     learning_rate: float = 0.001
     early_stopping_patience: int = 150  # Longer patience for curriculum
+    
+    # Batch size optimization
+    optimize_batch_size: bool = True   # Enable batch size optimization using max dataset size
+    batch_size_mode: str = "power"     # Lightning tuner mode: power, binsearch
+    max_batch_size_trials: int = 15    # More trials for curriculum learning
+    dynamic_batch_recalc_threshold: float = 2.0  # Recalculate if dataset grows >2x
     
     # Hard mining parameters
     use_vgae_mining: bool = True       # Enable VGAE-based hard mining

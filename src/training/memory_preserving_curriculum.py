@@ -41,8 +41,15 @@ class ElasticWeightConsolidation:
             self.model.zero_grad()
             
             # Forward pass
-            output = self.model(batch.x, batch.edge_index, batch.batch)
-            loss = F.binary_cross_entropy_with_logits(output, batch.y.float())
+            output = self.model(batch)
+            
+            # Handle different output shapes (GAT outputs [batch, 2], targets are [batch])
+            if output.dim() == 2 and output.size(1) == 2:
+                # Multi-class output: use cross_entropy
+                loss = F.cross_entropy(output, batch.y.long())
+            else:
+                # Single output: use binary_cross_entropy_with_logits
+                loss = F.binary_cross_entropy_with_logits(output.squeeze(), batch.y.float())
             
             # Backward pass
             loss.backward()
@@ -142,8 +149,14 @@ class MemoryPreservingCurriculumLoss(torch.nn.Module):
         """
         losses = {}
         
-        # Base classification loss
-        base_loss = F.binary_cross_entropy_with_logits(predictions, targets.float())
+        # Base classification loss - handle different output shapes
+        if predictions.dim() == 2 and predictions.size(1) == 2:
+            # Multi-class output: use cross_entropy
+            base_loss = F.cross_entropy(predictions, targets.long())
+        else:
+            # Single output: use binary_cross_entropy_with_logits
+            base_loss = F.binary_cross_entropy_with_logits(predictions.squeeze(), targets.float())
+            
         losses['base_loss'] = base_loss
         
         total_loss = base_loss
@@ -183,7 +196,7 @@ class MemoryPreservingCurriculumModule(pl.LightningModule):
         
     def training_step(self, batch, batch_idx):
         # Forward pass
-        predictions = self.model(batch.x, batch.edge_index, batch.batch)
+        predictions = self.model(batch)
         
         # Check if we're transitioning from balanced to imbalanced
         current_epoch = self.current_epoch

@@ -18,6 +18,7 @@ import argparse
 import warnings
 from typing import Optional, Dict, Any
 
+import pandas as pd
 import torch
 import torch.nn as nn
 import lightning.pytorch as pl
@@ -48,6 +49,7 @@ warnings.filterwarnings("ignore", message=".*Trying to infer.*batch_size.*")
 warnings.filterwarnings("ignore", message=".*Checkpoint directory.*exists.*")
 warnings.filterwarnings("ignore", category=FutureWarning, module="torch.cuda")
 warnings.filterwarnings("ignore", category=UserWarning, module="torch_geometric")
+warnings.filterwarnings("ignore", category=pd.errors.SettingWithCopyWarning)  # Keep logs clean
 warnings.filterwarnings("ignore", category=UserWarning, module="lightning")
 
 logging.basicConfig(level=logging.INFO)
@@ -489,24 +491,53 @@ class HydraZenTrainer:
         # Create enhanced datamodule
         from src.training.enhanced_datamodule import EnhancedCANGraphDataModule, CurriculumCallback
         
+        # Initial batch size - will be adjusted conservatively
+        initial_batch_size = getattr(self.config.training, 'batch_size', 64)
+        
         datamodule = EnhancedCANGraphDataModule(
             train_normal=train_normal,
             train_attack=train_attack, 
             val_normal=val_normal,
             val_attack=val_attack,
             vgae_model=vgae_model,
-            batch_size=64,  # Starting batch size for Lightning tuner
+            batch_size=initial_batch_size,
             num_workers=min(8, os.cpu_count() or 1),
             total_epochs=self.config.training.max_epochs
         )
         
+        # Set dynamic batch recalculation threshold
+        recalc_threshold = getattr(self.config.training, 'dynamic_batch_recalc_threshold', 2.0)
+        datamodule.train_dataset.recalc_threshold = recalc_threshold
+        logger.info(f"🔧 Dynamic batch recalculation enabled (threshold: {recalc_threshold}x dataset growth)")
+        
         # Setup GAT model
         model = self.setup_model(num_ids)
         
-        # Optimize batch size if requested
-        if getattr(self.config.training, 'optimize_batch_size', False):
-            logger.info("🔧 Running batch size optimization...")
-            model = self._optimize_batch_size_with_datamodule(model, datamodule)
+        # Optimize batch size using maximum expected dataset size for curriculum learning
+        if getattr(self.config.training, 'optimize_batch_size', True):  # Default to True
+            logger.info("🔧 Optimizing batch size using maximum curriculum dataset size...")
+            
+            # Temporarily set dataset to maximum size for accurate batch size optimization
+            original_state = datamodule.create_max_size_dataset_for_tuning()
+            
+            try:
+                model = self._optimize_batch_size_with_datamodule(model, datamodule)
+                logger.info(f"✅ Batch size optimized for curriculum learning: {model.batch_size}")
+            except Exception as e:
+                logger.warning(f"Batch size optimization failed: {e}. Using conservative default.")
+                # Fallback to conservative batch size if optimization fails
+                conservative_batch_size = datamodule.get_conservative_batch_size(initial_batch_size)
+                datamodule.batch_size = conservative_batch_size
+                model.batch_size = conservative_batch_size
+            
+            # Restore dataset to original state
+            if original_state:
+                datamodule.restore_dataset_after_tuning(original_state)
+        else:
+            # Use conservative batch size if optimization is disabled
+            conservative_batch_size = datamodule.get_conservative_batch_size(initial_batch_size)
+            datamodule.batch_size = conservative_batch_size
+            logger.info(f"📊 Using conservative batch size: {conservative_batch_size} (optimization disabled)")
         
         # Setup trainer with curriculum callback
         curriculum_callback = CurriculumCallback()

@@ -18,6 +18,10 @@ import numpy as np
 import pandas as pd
 import torch
 from torch_geometric.data import Dataset, Data
+import warnings
+
+# Suppress pandas SettingWithCopyWarning to keep logs clean
+warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
 import os
 import unittest
 from typing import List, Dict, Tuple, Optional, Union
@@ -376,9 +380,9 @@ def _process_dataframe_chunk(chunk: pd.DataFrame, id_mapping: Optional[Dict] = N
     if id_mapping is not None:
         chunk, _ = apply_dynamic_id_mapping(chunk, id_mapping, verbose=False)
     
-    # Clean up and normalize
-    chunk = chunk.iloc[:-1]  # Remove last row (no target)
-    chunk['label'] = chunk['attack'].astype(int)
+    # Clean up and normalize - make explicit copy to avoid SettingWithCopyWarning
+    chunk = chunk.iloc[:-1].copy()  # Remove last row (no target) and create copy
+    chunk.loc[:, 'label'] = chunk['attack'].astype(int)  # Use .loc[] for assignment
     
     # Normalize payload bytes to [0, 1]
     byte_columns = [f'Data{i+1}' for i in range(MAX_DATA_BYTES)]

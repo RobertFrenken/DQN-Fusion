@@ -35,6 +35,12 @@ class AdaptiveGraphDataset(Dataset):
         # Pre-compute all combinations for this epoch
         self._generate_epoch_samples()
     
+    def get_max_dataset_size(self) -> int:
+        """Calculate maximum expected dataset size at end of curriculum."""
+        n_attacks = len(self.attack_graphs)
+        max_normals = min(int(n_attacks * self.end_ratio), len(self.normal_graphs))
+        return n_attacks + max_normals
+    
     def _compute_curriculum_ratio(self) -> float:
         """Compute current normal:attack ratio using momentum curriculum."""
         if not hasattr(self, 'momentum_scheduler'):
@@ -165,7 +171,18 @@ class AdaptiveGraphDataset(Dataset):
                 self.difficulty_percentile = max(10.0, self.difficulty_percentile - 5.0)
         
         # Regenerate samples for new epoch
+        old_size = len(self.epoch_samples) if hasattr(self, 'epoch_samples') else 0
         self._generate_epoch_samples()
+        new_size = len(self.epoch_samples)
+        
+        # Check if dataset size changed significantly (configurable threshold)
+        recalc_threshold = getattr(self, 'recalc_threshold', 2.0)  # Default 2x growth
+        if old_size > 0 and new_size > old_size * recalc_threshold:
+            print(f"⚠️  Dataset size increased significantly: {old_size} -> {new_size} "
+                  f"({new_size/old_size:.1f}x > {recalc_threshold}x threshold). May need batch size recalculation.")
+            self.needs_batch_size_recalc = True
+        else:
+            self.needs_batch_size_recalc = False
     
     def __len__(self):
         return len(self.epoch_samples)
@@ -199,6 +216,99 @@ class EnhancedCANGraphDataModule(pl.LightningDataModule):
         # Validation remains balanced for consistent evaluation
         val_samples = val_attack + val_normal[:len(val_attack)*5]  # 5:1 ratio
         self.val_dataset = GraphDataset(val_samples)
+    
+    def get_conservative_batch_size(self, target_batch_size: int = 64) -> int:
+        """Calculate conservative batch size based on maximum expected dataset size."""
+        max_size = self.train_dataset.get_max_dataset_size()
+        current_size = len(self.train_dataset)
+        
+        # If current size is much smaller than max, reduce batch size proportionally
+        if current_size > 0 and max_size > current_size * 2:
+            # Conservative scaling: use smaller batch size to account for growth
+            conservative_ratio = min(0.5, current_size / max_size)
+            conservative_batch_size = max(8, int(target_batch_size * conservative_ratio))
+            print(f"🛡️ Conservative batch sizing: {target_batch_size} -> {conservative_batch_size} "
+                  f"(current: {current_size}, max expected: {max_size})")
+            return conservative_batch_size
+        
+        return target_batch_size
+    
+    def create_max_size_dataset_for_tuning(self):
+        """Create a temporary dataset at maximum expected size for batch size optimization."""
+        max_size = self.train_dataset.get_max_dataset_size()
+        current_size = len(self.train_dataset)
+        
+        if max_size <= current_size:
+            return  # Already at max size
+            
+        # Temporarily set the dataset to maximum size for tuning
+        original_epoch = self.train_dataset.current_epoch
+        original_ratio = self.train_dataset.end_ratio
+        
+        # Set to end curriculum state (maximum dataset size)
+        self.train_dataset.current_epoch = self.train_dataset.total_epochs - 1
+        self.train_dataset._generate_epoch_samples()
+        
+        print(f"🔧 Created max-size dataset for batch optimization: {len(self.train_dataset)} samples")
+        
+        return original_epoch, original_ratio
+    
+    def restore_dataset_after_tuning(self, original_state):
+        """Restore dataset to original state after batch size optimization."""
+        if original_state:
+            original_epoch, original_ratio = original_state
+            self.train_dataset.current_epoch = original_epoch
+            self.train_dataset._generate_epoch_samples()
+            print(f"🔄 Restored dataset to original state: {len(self.train_dataset)} samples")
+    
+    def recalculate_batch_size_if_needed(self, trainer):
+        """Dynamically recalculate batch size if dataset grew significantly."""
+        if not hasattr(self.train_dataset, 'needs_batch_size_recalc') or not self.train_dataset.needs_batch_size_recalc:
+            return False
+        
+        print(f"🔄 Recalculating batch size due to significant dataset growth...")
+        
+        try:
+            # Create a temporary trainer for batch size optimization
+            from lightning.pytorch.tuner import Tuner
+            temp_trainer = pl.Trainer(
+                accelerator=trainer.accelerator,
+                devices=1,  # Use single device for tuning
+                precision='32-true',
+                max_epochs=1,
+                enable_checkpointing=False,
+                logger=False,
+                enable_progress_bar=False
+            )
+            
+            # Get the model from current trainer
+            model = trainer.lightning_module
+            old_batch_size = self.batch_size
+            
+            # Run batch size optimization with current dataset size
+            tuner = Tuner(temp_trainer)
+            tuner.scale_batch_size(
+                model,
+                datamodule=self,
+                mode="power",  # Efficient search
+                steps_per_trial=3,
+                init_val=max(8, old_batch_size // 4),  # Start with smaller size
+                max_trials=10
+            )
+            
+            new_batch_size = model.batch_size
+            self.batch_size = new_batch_size
+            
+            print(f"✅ Batch size recalculated: {old_batch_size} -> {new_batch_size}")
+            
+            # Reset the flag
+            self.train_dataset.needs_batch_size_recalc = False
+            return True
+            
+        except Exception as e:
+            print(f"⚠️ Batch size recalculation failed: {e}. Keeping current size: {self.batch_size}")
+            self.train_dataset.needs_batch_size_recalc = False
+            return False
     
     def setup(self, stage: str = None):
         """Setup datasets."""
@@ -265,6 +375,13 @@ class CurriculumCallback(pl.Callback):
         
         # Update curriculum with momentum scheduling
         datamodule.update_training_epoch(trainer.current_epoch, avg_confidence)
+        
+        # Check if we need to recalculate batch size due to dataset growth
+        if hasattr(datamodule, 'recalculate_batch_size_if_needed'):
+            batch_size_changed = datamodule.recalculate_batch_size_if_needed(trainer)
+            if batch_size_changed:
+                # Force recreation of train dataloader with new batch size
+                trainer.fit_loop.setup_data()
         
         # Log momentum curriculum metrics to Lightning
         if hasattr(datamodule.train_dataset, 'curriculum_metrics'):
