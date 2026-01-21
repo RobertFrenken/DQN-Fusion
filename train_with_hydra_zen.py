@@ -785,7 +785,7 @@ Examples:
                       help='List available preset configurations')
     
     # Manual configuration
-    parser.add_argument('--model', type=str, choices=['gat', 'vgae'], default='gat',
+    parser.add_argument('--model', type=str, choices=['gat', 'vgae', 'dqn'], default='gat',
                       help='Model type')
     parser.add_argument('--dataset', type=str, 
                       choices=['hcrl_sa', 'hcrl_ch', 'set_01', 'set_02', 'set_03', 'set_04', 'car_hacking'],

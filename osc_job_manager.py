@@ -101,6 +101,26 @@ class OSCJobManager:
                 "gpus": 1, 
                 "mode": "fusion",
                 "model": "gat"  # Not used for fusion
+            },
+            "dqn_normal": {
+                "time": "2:00:00",
+                "time_complex": "8:00:00",  # Longer for complex datasets
+                "mem": "32G", 
+                "mem_complex": "64G",  # More memory for complex datasets
+                "cpus": 8,
+                "gpus": 1,
+                "mode": "normal",
+                "model": "dqn"
+            },
+            "dqn_curriculum": {
+                "time": "4:00:00",
+                "time_complex": "12:00:00",  # Much longer for complex datasets
+                "mem": "48G",
+                "mem_complex": "80G",  # More memory for complex datasets
+                "cpus": 8,
+                "gpus": 1,
+                "mode": "curriculum",
+                "model": "dqn"
             }
         }
     
@@ -263,6 +283,22 @@ echo "✅ Job {job_name} completed successfully!"
         if training_type == "gat_curriculum":
             # For curriculum learning, look for VGAE model in hierarchical structure
             # Try both naming patterns: new (vgae_autoencoder.pth) and old (vgae_{dataset}_autoencoder.pth)
+            vgae_path_new = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth"
+            vgae_path_old = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{dataset}_autoencoder.pth"
+            
+            import os
+            if os.path.exists(vgae_path_new):
+                vgae_path = vgae_path_new
+            elif os.path.exists(vgae_path_old):
+                vgae_path = vgae_path_old
+            else:
+                vgae_path = vgae_path_new  # Use new pattern as default
+                
+            cmd_parts.extend([
+                f"--vgae_path {vgae_path}"
+            ])
+        elif training_type == "dqn_curriculum":
+            # For DQN curriculum learning, look for VGAE model for hard mining
             vgae_path_new = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth"
             vgae_path_old = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{dataset}_autoencoder.pth"
             
@@ -609,7 +645,7 @@ def main():
     parser.add_argument("--datasets", type=str, 
                        help="Comma-separated list of datasets")
     parser.add_argument("--training", type=str, choices=["gat_normal", "vgae_autoencoder", 
-                       "gat_curriculum", "gat_fusion"],
+                       "gat_curriculum", "gat_fusion", "dqn_normal", "dqn_curriculum"],
                        help="Training type for parameter sweep")
     parser.add_argument("--class-balance", type=str, 
                        choices=["focal", "weighted", "undersample", "oversample", "smote"],

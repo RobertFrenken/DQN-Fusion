@@ -144,6 +144,66 @@ class StudentVGAEConfig:
     embedding_dim: int = 8        # CAN ID embedding dimension
     beta: float = 1.0             # KL divergence weight
 
+@dataclass
+class DQNConfig:
+    """DQN Teacher configuration (~687K parameters)."""
+    type: str = "dqn"
+    input_dim: int = 20           # State space dimension
+    output_dim: int = 11          # Action space size (|A|)
+    
+    # Architecture settings (3 layers, 576 hidden units)
+    num_layers: int = 3           # Teacher depth
+    hidden_units: int = 576       # Hidden layer size (tuned for 687K params)
+    hidden_channels: int = 576    # Channel dimension
+    
+    # DQN-specific parameters
+    gamma: float = 0.99           # Discount factor
+    lr: float = 1e-3              # Learning rate
+    epsilon: float = 0.1          # Exploration rate
+    epsilon_decay: float = 0.995  # Epsilon decay
+    min_epsilon: float = 0.01     # Minimum epsilon
+    buffer_size: int = 100000     # Experience replay buffer
+    batch_size: int = 128         # Training batch size
+    target_update_freq: int = 100 # Target network update frequency
+    
+    # Training parameters
+    target_parameters: int = 687000  # ~687K params (actual)
+    dropout: float = 0.2          # Regularization
+    activation: str = "relu"
+    use_double_dqn: bool = True   # Use Double DQN
+    use_dueling: bool = False     # Dueling architecture (optional)
+
+@dataclass
+class StudentDQNConfig:
+    """Student DQN configuration for on-board deployment (~32K parameters)."""
+    type: str = "dqn_student"
+    input_dim: int = 20           # State space dimension
+    output_dim: int = 11          # Action space size (|A|)
+    
+    # Architecture settings (2 layers, 160 hidden units)
+    num_layers: int = 2           # Student depth (lightweight)
+    hidden_units: int = 160       # Hidden layer size (tuned for 32K params)
+    hidden_channels: int = 160    # Channel dimension
+    
+    # DQN-specific parameters (same as teacher but optimized)
+    gamma: float = 0.99           # Discount factor
+    lr: float = 1e-3              # Learning rate
+    epsilon: float = 0.05         # Lower exploration for student
+    epsilon_decay: float = 0.99   # Faster decay for student
+    min_epsilon: float = 0.001    # Lower minimum for student
+    buffer_size: int = 50000      # Smaller replay buffer
+    batch_size: int = 64          # Smaller batch size
+    target_update_freq: int = 50  # More frequent updates
+    
+    # Deployment constraints
+    target_parameters: int = 32000    # ~32K params (actual)
+    memory_budget_kb: int = 128       # 32KB model + 96KB buffer
+    inference_time_ms: int = 3        # Must be <20ms CAN message period
+    dropout: float = 0.1              # Lower dropout for student
+    activation: str = "relu"
+    use_double_dqn: bool = True       # Keep Double DQN for stability
+    use_dueling: bool = False         # Skip dueling to save parameters
+
 # ============================================================================
 # Dataset Configurations
 # ============================================================================
@@ -351,7 +411,7 @@ class TrainerConfig:
 class CANGraphConfig:
     """Complete CAN-Graph application configuration."""
     # Core components
-    model: Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig]
+    model: Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig, DQNConfig, StudentDQNConfig]
     dataset: CANDatasetConfig
     training: Union[NormalTrainingConfig, AutoencoderTrainingConfig, 
                    KnowledgeDistillationConfig, FusionTrainingConfig, CurriculumTrainingConfig]
@@ -410,6 +470,8 @@ class CANGraphConfigStore:
         self.store(StudentGATConfig, name="gat_student", group="model")  # Student GAT
         self.store(VGAEConfig, name="vgae", group="model")  # Teacher VGAE
         self.store(StudentVGAEConfig, name="vgae_student", group="model")  # Student VGAE
+        self.store(DQNConfig, name="dqn", group="model")  # Teacher DQN
+        self.store(StudentDQNConfig, name="dqn_student", group="model")  # Student DQN
         
         # Training modes
         self.store(NormalTrainingConfig, name="normal", group="training")
@@ -458,7 +520,7 @@ class CANGraphConfigStore:
             trainer=trainer_config
         )
     
-    def get_model_config(self, model_type: str) -> Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig]:
+    def get_model_config(self, model_type: str) -> Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig, DQNConfig, StudentDQNConfig]:
         """Get model configuration by type."""
         if model_type == "gat":
             return GATConfig()
@@ -468,6 +530,10 @@ class CANGraphConfigStore:
             return VGAEConfig()
         elif model_type == "vgae_student":
             return StudentVGAEConfig()
+        elif model_type == "dqn":
+            return DQNConfig()
+        elif model_type == "dqn_student":
+            return StudentDQNConfig()
         else:
             raise ValueError(f"Unknown model type: {model_type}")
     
