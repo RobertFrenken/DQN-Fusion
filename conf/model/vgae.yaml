@@ -1,26 +1,40 @@
-# VGAE model configuration  
+# VGAE model configuration (Student Model for On-board Deployment)
 type: vgae
-name: "Variational Graph Autoencoder with Neighborhood"
+name: "Compact VGAE Student for CAN Controller"
 
-# VGAE architecture parameters
+# VGAE architecture parameters - Target: ~55K parameters (matching paper)
 vgae:
-  input_dim: 29                 # CAN message features
-  hidden_dim: 128
-  latent_dim: 64
-  output_dim: 2                 # For classification after reconstruction
+  input_dim: 11                 # Confirmed: CAN ID + 8 bytes + count + position
+  embedding_dim: 8              # Small embedding like GAT paper (8 dimensions)
+  hidden_dim: 32                # Reduced hidden size for 55K target
+  latent_dim: 16                # Compact latent space for on-board deployment
+  output_dim: 11                # Reconstruct original features
   
-  # Encoder settings
-  encoder_layers: 3
+  # Encoder settings - Simple 2-layer design
+  encoder_layers: 2              # Matches paper: 2 GAT layers 
   encoder_dropout: 0.1
+  encoder_heads: 4               # Matches paper: 4 attention heads
   
-  # Decoder settings
-  decoder_layers: 2
+  # Decoder settings - Simple reconstruction
+  decoder_layers: 2              # Two hidden layers
   decoder_dropout: 0.1
+  decoder_heads: 2               # Fewer heads for student
   
   # Variational settings
   beta: 1.0                     # KL divergence weight
   use_neighborhood: true        # Neighborhood-based reconstruction
   
+  # Attention mechanism for better representations
+  attention_heads: 2             # Lightweight attention for student
+  use_attention: true
+  
   # Advanced settings
   use_edge_attr: true
+  batch_norm: true
   activation: "relu"
+  
+  # Deployment constraints (On-board CAN controller)
+  target_parameters: 55000       # ~55K params target (matching paper)
+  memory_budget_kb: 220          # 55KB model + 165KB inference buffer
+  inference_time_ms: 2           # <2ms per CAN message for real-time
+  power_budget_mw: 50            # <50mW additional power

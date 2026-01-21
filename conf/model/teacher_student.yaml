@@ -1,0 +1,149 @@
+# Improved Teacher-Student Model Configurations
+# Corrected from Perplexity suggestion with proper CAN input dimensions
+# and architecturally sound encoder/decoder paths
+
+# Input: 11 CAN features (ID, DLC, 8 data bytes)
+# Output: Anomaly detection for on-board deployment
+
+model:
+  # Student model for on-board CAN controller deployment
+  student:
+    type: "vgae"
+    
+    # Architecture parameters
+    input_dim: 11  # Corrected from 37
+    node_embedding_dim: 128  # Rich initial embedding
+    encoder_dims: [128, 64, 24]  # Proper compression: 128 → 64 → 24
+    decoder_dims: [24, 64, 128]  # Proper decompression: 24 → 64 → 128
+    output_dim: 11  # Back to original CAN features
+    latent_dim: 24  # Compact latent space
+    
+    # Attention and regularization
+    attention_heads: 2  # Lightweight attention
+    dropout: 0.1
+    batch_norm: true
+    activation: "relu"
+    
+    # Deployment constraints
+    target_parameters: 87000  # ~87K params
+    memory_budget_kb: 287  # 87KB model + 200KB buffer
+    inference_time_ms: 5  # Must be <20ms CAN message period
+    
+  # Teacher model for training and knowledge distillation  
+  teacher:
+    type: "vgae"
+    
+    # Architecture parameters
+    input_dim: 11  # Same input as student
+    node_embedding_dim: 256  # Richer embedding
+    hidden_dims: [256, 128, 96, 48]  # Multi-layer with proper compression
+    num_layers: 3  # Deep architecture for rich representations
+    latent_dim: 48  # Larger latent space than student
+    
+    # Multi-head attention for complex patterns
+    attention_heads: 8  # 8 heads per GAT layer
+    dropout: 0.15  # Higher dropout for regularization
+    batch_norm: true
+    activation: "relu"
+    
+    # Training parameters
+    target_parameters: 1740000  # ~1.74M params
+    curriculum_stages: ["pretrain", "distill"]
+
+# Training configuration for knowledge distillation
+training:
+  knowledge_distillation:
+    # Distillation hyperparameters
+    temperature: 4.0  # Softmax temperature for knowledge transfer
+    alpha: 0.7  # Weight for distillation loss (teacher knowledge)
+    beta: 0.3   # Weight for student task loss (ground truth)
+    
+    # Training stages
+    teacher_pretraining:
+      epochs: 100
+      learning_rate: 1e-3
+      batch_size: 32
+      
+    student_distillation:
+      epochs: 50
+      learning_rate: 5e-4  # Lower LR for stable distillation
+      batch_size: 64  # Larger batch for stable gradients
+      
+    # Curriculum learning schedule
+    curriculum:
+      easy_samples_ratio: 0.3  # Start with 30% easiest samples
+      difficulty_increase_epochs: 10  # Increase difficulty every 10 epochs
+      final_samples_ratio: 1.0  # Use all samples by end
+
+# Deployment specifications
+deployment:
+  student:
+    # Hardware requirements
+    mcu_target: "ARM Cortex-M4/M7"
+    flash_min_kb: 512
+    ram_min_kb: 128
+    
+    # Performance requirements  
+    inference_time_max_ms: 5
+    power_additional_max_mw: 100
+    
+    # Safety requirements
+    false_positive_rate_max: 0.01  # <1% false positives
+    false_negative_rate_max: 0.05  # <5% false negatives
+    fail_safe_mode: true
+    
+  teacher:
+    # Training hardware
+    gpu_memory_min_gb: 8
+    training_time_max_hours: 48
+    
+    # Deployment target
+    deployment_location: "edge_server"  # or "cloud"
+    model_update_frequency: "monthly"
+
+# Data preprocessing aligned with 11-feature input
+data:
+  can_features:
+    - "can_id"           # CAN message ID
+    - "dlc"              # Data Length Code
+    - "data_byte_0"      # Data payload bytes 0-7
+    - "data_byte_1"
+    - "data_byte_2"
+    - "data_byte_3"
+    - "data_byte_4"
+    - "data_byte_5"
+    - "data_byte_6"
+    - "data_byte_7"
+    # Total: 11 features (not 37 as suggested by Perplexity)
+    
+  normalization:
+    can_id: "minmax"     # Normalize CAN ID to [0,1]
+    dlc: "standard"      # Standardize DLC (usually 0-8)
+    data_bytes: "minmax" # Normalize data bytes to [0,1]
+    
+  augmentation:
+    noise_std: 0.01      # Small noise for robustness
+    dropout_prob: 0.05   # Random feature dropout
+
+# Validation and testing
+evaluation:
+  metrics:
+    - "reconstruction_loss"
+    - "anomaly_detection_auc"
+    - "precision"
+    - "recall"  
+    - "f1_score"
+    - "inference_time"
+    
+  test_scenarios:
+    - "normal_operation"
+    - "fuzzing_attacks"
+    - "replay_attacks"  
+    - "masquerade_attacks"
+    - "dos_attacks"
+    
+  deployment_validation:
+    # Test on actual CAN controller hardware
+    hardware_in_loop: true
+    real_time_validation: true
+    power_consumption_test: true

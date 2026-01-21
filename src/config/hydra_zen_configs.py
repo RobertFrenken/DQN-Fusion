@@ -54,16 +54,16 @@ class MemoryOptimizationConfig:
 
 @dataclass
 class GATConfig:
-    """Graph Attention Network configuration."""
+    """Graph Attention Network configuration (Teacher Model)."""
     type: str = "gat"
     input_dim: int = 11
     hidden_channels: int = 64
-    output_dim: int = 2
-    num_layers: int = 3
-    heads: int = 4
+    output_dim: int = 2           # Binary classification (normal/attack)
+    num_layers: int = 5           # Matches paper: 5 GAT layers
+    heads: int = 8                # Matches paper: 8 attention heads
     dropout: float = 0.2
     num_fc_layers: int = 3
-    embedding_dim: int = 8
+    embedding_dim: int = 32       # Matches paper: 32 dimensions
     use_jumping_knowledge: bool = True
     jk_mode: str = "cat"
     use_residual: bool = True
@@ -72,15 +72,77 @@ class GATConfig:
 
 
 @dataclass
-class VGAEConfig:
-    """Variational Graph Autoencoder configuration."""
-    type: str = "vgae"
+class StudentGATConfig:
+    """Student GAT configuration for on-board deployment (55K parameters)."""
+    type: str = "gat_student"
     input_dim: int = 11
-    hidden_channels: int = 64
-    latent_dim: int = 32
-    num_layers: int = 2
-    dropout: float = 0.2
+    hidden_channels: int = 32     # Smaller for student
+    output_dim: int = 2           # Binary classification
+    num_layers: int = 2           # Matches paper: 2 GAT layers
+    heads: int = 4                # Matches paper: 4 attention heads
+    dropout: float = 0.1          # Lower dropout for student
+    num_fc_layers: int = 2        # Simpler classification head
+    embedding_dim: int = 8        # Matches paper: 8 dimensions
+    use_jumping_knowledge: bool = False  # Simpler architecture
+    jk_mode: str = "max"
+    use_residual: bool = False    # Simpler for deployment
+    use_batch_norm: bool = False
+    activation: str = "relu"
 
+
+@dataclass
+class VGAEConfig:
+    """Teacher VGAE configuration (~1.74M parameters, matching teacher_student.yaml)."""
+    type: str = "vgae"
+    input_dim: int = 11           # Same input as student
+    node_embedding_dim: int = 256 # Richer embedding (from teacher_student.yaml)
+    hidden_dims: List[int] = field(default_factory=lambda: [256, 128, 96, 48])  # Multi-layer with proper compression
+    latent_dim: int = 48          # Larger latent space than student (from teacher_student.yaml)
+    output_dim: int = 11          # Reconstruct input features
+    
+    # Architecture settings (from teacher_student.yaml)
+    num_layers: int = 3           # Deep architecture for rich representations  
+    attention_heads: int = 8      # 8 heads per layer (multi-head attention for complex patterns)
+    dropout: float = 0.15         # Higher dropout for regularization
+    batch_norm: bool = True
+    activation: str = "relu"
+    
+    # Training parameters (from teacher_student.yaml)
+    target_parameters: int = 1740000  # ~1.74M params
+    curriculum_stages: List[str] = field(default_factory=lambda: ["pretrain", "distill"])
+    
+    # Legacy compatibility
+    hidden_channels: int = 128    # Larger hidden size for teacher
+    embedding_dim: int = 32       # CAN ID embedding dimension (larger for teacher)
+    beta: float = 1.0             # KL divergence weight
+
+@dataclass
+class StudentVGAEConfig:
+    """Student VGAE configuration for on-board deployment (~87K parameters)."""
+    type: str = "vgae_student"
+    input_dim: int = 11           # CAN features input
+    node_embedding_dim: int = 128 # Rich initial embedding (from teacher_student.yaml)
+    encoder_dims: List[int] = field(default_factory=lambda: [128, 64, 24])  # Proper compression
+    decoder_dims: List[int] = field(default_factory=lambda: [24, 64, 128])  # Proper decompression
+    latent_dim: int = 24          # Compact latent space (from teacher_student.yaml)
+    output_dim: int = 11          # Reconstruct input features
+    
+    # Architecture settings
+    attention_heads: int = 2      # Lightweight attention
+    dropout: float = 0.1          # Lower dropout for student
+    batch_norm: bool = True
+    activation: str = "relu"
+    
+    # Deployment constraints (from teacher_student.yaml)
+    target_parameters: int = 87000    # ~87K params
+    memory_budget_kb: int = 287       # 87KB model + 200KB buffer
+    inference_time_ms: int = 5        # Must be <20ms CAN message period
+    
+    # Legacy compatibility
+    hidden_channels: int = 64     # For backward compatibility
+    num_layers: int = 2           # Simple encoder/decoder
+    embedding_dim: int = 8        # CAN ID embedding dimension
+    beta: float = 1.0             # KL divergence weight
 
 # ============================================================================
 # Dataset Configurations
@@ -103,8 +165,8 @@ class BaseDatasetConfig:
 @dataclass
 class CANDatasetConfig(BaseDatasetConfig):
     """CAN bus dataset configuration."""
-    time_window: int = 50
-    overlap: int = 10
+    time_window: int = 100
+    overlap: int = 100
     max_graphs: Optional[int] = None
     balance_classes: bool = True
     attack_types: List[str] = field(default_factory=lambda: ["normal", "attack"])
@@ -118,7 +180,7 @@ class CANDatasetConfig(BaseDatasetConfig):
 class BaseTrainingConfig:
     """Base training configuration."""
     mode: str = "normal"
-    max_epochs: int = 100
+    max_epochs: int = 400
     batch_size: int = 64  # Starting point for Lightning Tuner
     learning_rate: float = 0.001
     weight_decay: float = 0.0001
@@ -128,7 +190,7 @@ class BaseTrainingConfig:
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
     
     # Training behavior
-    early_stopping_patience: int = 25  # Increased for more robust training
+    early_stopping_patience: int = 100  # Increased for more robust training
     gradient_clip_val: float = 1.0
     accumulate_grad_batches: int = 1
     
@@ -167,11 +229,11 @@ class AutoencoderTrainingConfig(BaseTrainingConfig):
     """Autoencoder training configuration."""
     mode: str = "autoencoder"
     description: str = "Unsupervised autoencoder training on normal samples only"
-    max_epochs: int = 150
+    max_epochs: int = 400
     learning_rate: float = 0.0005
     reconstruction_loss: str = "mse"
     use_normal_samples_only: bool = True
-    early_stopping_patience: int = 30  # Longer patience for autoencoder convergence
+    early_stopping_patience: int = 100  # Longer patience for autoencoder convergence
 
 
 @dataclass
@@ -187,7 +249,7 @@ class KnowledgeDistillationConfig(BaseTrainingConfig):
     student_model_scale: float = 1.0
     
     # Adjusted defaults for distillation
-    max_epochs: int = 80
+    max_epochs: int = 400
     batch_size: int = 64  # Starting point for Lightning Tuner
     learning_rate: float = 0.002
     precision: str = "16-mixed"
@@ -212,7 +274,7 @@ class FusionTrainingConfig(BaseTrainingConfig):
     description: str = "Multi-model fusion with reinforcement learning"
     
     # Fusion specific parameters
-    fusion_episodes: int = 250
+    fusion_episodes: int = 500
     max_train_samples: int = 150000
     max_val_samples: int = 30000
     alpha_steps: int = 21
@@ -240,7 +302,7 @@ class TrainerConfig:
     accelerator: str = "auto"
     devices: str = "auto"
     precision: str = "32-true"
-    max_epochs: int = 100
+    max_epochs: int = 400
     gradient_clip_val: float = 1.0
     log_every_n_steps: int = 50
     enable_checkpointing: bool = True
@@ -256,7 +318,7 @@ class TrainerConfig:
 class CANGraphConfig:
     """Complete CAN-Graph application configuration."""
     # Core components
-    model: Union[GATConfig, VGAEConfig]
+    model: Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig]
     dataset: CANDatasetConfig
     training: Union[NormalTrainingConfig, AutoencoderTrainingConfig, 
                    KnowledgeDistillationConfig, FusionTrainingConfig]
@@ -311,8 +373,10 @@ class CANGraphConfigStore:
     def _register_base_configs(self):
         """Register base configuration components."""
         # Models
-        self.store(GATConfig, name="gat", group="model")
-        self.store(VGAEConfig, name="vgae", group="model")
+        self.store(GATConfig, name="gat", group="model")  # Teacher GAT
+        self.store(StudentGATConfig, name="gat_student", group="model")  # Student GAT
+        self.store(VGAEConfig, name="vgae", group="model")  # Teacher VGAE
+        self.store(StudentVGAEConfig, name="vgae_student", group="model")  # Student VGAE
         
         # Training modes
         self.store(NormalTrainingConfig, name="normal", group="training")
@@ -361,12 +425,16 @@ class CANGraphConfigStore:
             trainer=trainer_config
         )
     
-    def get_model_config(self, model_type: str) -> Union[GATConfig, VGAEConfig]:
+    def get_model_config(self, model_type: str) -> Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig]:
         """Get model configuration by type."""
         if model_type == "gat":
             return GATConfig()
+        elif model_type == "gat_student":
+            return StudentGATConfig()
         elif model_type == "vgae":
             return VGAEConfig()
+        elif model_type == "vgae_student":
+            return StudentVGAEConfig()
         else:
             raise ValueError(f"Unknown model type: {model_type}")
     

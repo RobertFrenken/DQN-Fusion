@@ -1,23 +1,263 @@
-# CAN-Graph Training Job Templates
+# CAN-Graph Training Job Templates & Configuration Reference
 
-This file contains copy-paste ready commands for running different training configurations using the OSC job manager.
+This file is your **one-stop lookup** for all CAN-Graph training configurations, including hydra-zen parameters, SLURM settings, and ready-to-use job commands.
 
-## � **Important Parameters Quick Reference**
+---
+
+## 📋 **Complete Configuration Reference**
+
+### Model Architecture Parameters
+
+#### GAT (Teacher) - 1.1M Parameters
+```yaml
+type: gat
+input_dim: 11                 # CAN features (ID + 8 bytes + count + position)
+embedding_dim: 32             # CAN ID embedding dimension (rich for teacher)
+hidden_channels: 64           # Hidden layer size
+num_layers: 5                 # Number of GAT layers (matches paper)
+heads: 8                      # Attention heads per layer (matches paper)
+output_dim: 2                 # Binary classification (normal/attack)
+dropout: 0.2                  # Dropout rate
+num_fc_layers: 3              # Fully connected layers after GAT
+use_jumping_knowledge: true   # JumpingKnowledge connections
+jk_mode: "cat"               # JK aggregation mode [cat, max, lstm]
+use_residual: true           # Residual connections
+use_batch_norm: false        # Batch normalization
+activation: "relu"           # Activation function
+```
+
+#### Student GAT - 55K Parameters
+```yaml
+type: gat_student
+input_dim: 11                 # Same as teacher
+embedding_dim: 8              # Smaller embedding (matches paper)
+hidden_channels: 32           # Smaller hidden size for deployment
+num_layers: 2                 # Fewer layers (matches paper)
+heads: 4                      # Fewer attention heads (matches paper)
+output_dim: 2                 # Binary classification
+dropout: 0.1                  # Lower dropout
+num_fc_layers: 2              # Simpler classification head
+use_jumping_knowledge: false  # Simpler architecture
+use_residual: false          # Simpler for deployment
+```
+
+#### VGAE (Teacher) - 1.74M Parameters
+```yaml
+type: vgae
+input_dim: 11                 # CAN features input
+node_embedding_dim: 256       # Rich embedding for teacher
+hidden_dims: [256, 128, 96, 48]  # Multi-layer compression path
+latent_dim: 48                # Large latent space
+output_dim: 11                # Reconstruct input features
+num_layers: 3                 # Deep encoder/decoder
+attention_heads: 8            # Multi-head attention
+dropout: 0.15                 # Higher dropout for regularization
+batch_norm: true             # Batch normalization
+activation: "relu"           # Activation function
+beta: 1.0                    # KL divergence weight
+target_parameters: 1740000    # Parameter target
+```
+
+#### Student VGAE - 87K Parameters
+```yaml
+type: vgae_student
+input_dim: 11                 # CAN features input
+node_embedding_dim: 128       # Rich initial embedding
+encoder_dims: [128, 64, 24]   # Proper compression: 128 → 64 → 24
+decoder_dims: [24, 64, 128]   # Proper decompression: 24 → 64 → 128
+latent_dim: 24                # Compact latent space
+output_dim: 11                # Reconstruct input features
+attention_heads: 2            # Lightweight attention
+dropout: 0.1                  # Lower dropout
+batch_norm: true             # Batch normalization
+activation: "relu"           # Activation function
+target_parameters: 87000      # ~87K params for deployment
+memory_budget_kb: 287         # 87KB model + 200KB buffer
+inference_time_ms: 5          # <5ms per CAN message
+```
+
+### Training Configuration Parameters
+
+#### Normal Training
+```yaml
+type: normal
+max_epochs: 200               # Maximum training epochs
+learning_rate: 1e-3          # Base learning rate
+batch_size: "auto"           # Auto-optimize batch size
+early_stopping_patience: 25  # Early stopping patience
+validation_split: 0.2        # Validation data percentage
+accumulate_grad_batches: 1   # Gradient accumulation steps
+gradient_clip_val: 1.0       # Gradient clipping threshold
+precision: "32-true"         # Training precision [32-true, 16-mixed, bf16-mixed]
+optimizer_name: "adam"       # Optimizer [adam, sgd, adamw]
+weight_decay: 1e-4           # Weight decay
+momentum: 0.9                # SGD momentum
+scheduler_use: false         # Learning rate scheduler
+scheduler_type: "cosine"     # Scheduler type [cosine, step, exponential]
+```
+
+#### Autoencoder Training
+```yaml
+type: autoencoder
+max_epochs: 100               # Fewer epochs for reconstruction
+learning_rate: 1e-3          # Learning rate
+batch_size: "auto"           # Auto-optimize batch size
+reconstruction_weight: 1.0   # Reconstruction loss weight
+kl_weight: 0.01              # KL divergence weight (for VGAE)
+validation_split: 0.2        # Validation split
+early_stopping_patience: 15  # Early stopping patience
+```
+
+#### Knowledge Distillation Training
+```yaml
+type: knowledge_distillation
+max_epochs: 150               # Moderate epochs for distillation
+teacher_model_path: null      # Auto-loaded from model archive
+student_model_config: null    # Student config (auto-determined)
+temperature: 4.0              # Distillation temperature
+alpha: 0.7                    # Balance between KD and CE loss
+learning_rate: 1e-3          # Student learning rate
+batch_size: "auto"           # Auto-optimize batch size
+validation_split: 0.2        # Validation split
+early_stopping_patience: 20  # Early stopping patience
+```
+
+#### Curriculum Learning
+```yaml
+type: curriculum
+max_epochs: 200               # Full curriculum training
+learning_rate: 1e-3          # Base learning rate
+batch_size: "auto"           # Auto-optimize batch size
+curriculum_stages: 4          # Number of difficulty stages
+stage_epochs: [40, 40, 60, 60] # Epochs per stage
+difficulty_metric: "confidence" # Curriculum ordering metric
+validation_split: 0.2        # Validation split
+early_stopping_patience: 30  # Longer patience for curriculum
+```
+
+#### Multi-Modal Fusion Training
+```yaml
+type: fusion
+max_epochs: 250               # Extended training for fusion
+learning_rate: 1e-4          # Lower LR for stability
+batch_size: "auto"           # Auto-optimize batch size
+fusion_strategy: "attention"  # Fusion method [attention, concat, gating]
+modality_weights: [0.6, 0.4] # Weight per modality
+validation_split: 0.2        # Validation split
+early_stopping_patience: 35  # Extended patience
+```
+
+### Teacher-Student Model Configuration
+
+#### Teacher Model Parameters
+```yaml
+model_type: "teacher"          # Explicitly set as teacher model
+use_teacher_config: true       # Enable teacher architecture
+teacher_model_path: null       # Path to pre-trained teacher (if loading)
+save_teacher_model: true       # Save teacher model after training
+teacher_checkpoint_dir: "model_archive/"  # Teacher model save directory
+```
+
+#### Student Model Parameters
+```yaml
+model_type: "student"          # Explicitly set as student model
+use_student_config: true       # Enable student architecture
+student_model_path: null       # Path to pre-trained student (if loading)
+teacher_model_path: "model_archive/best_teacher_model_{dataset}.pth"  # Required teacher path
+save_student_model: true       # Save student model after training
+student_checkpoint_dir: "model_archive/"  # Student model save directory
+```
+
+#### Knowledge Distillation Specific Parameters
+```yaml
+# Core KD Parameters
+distillation_type: "soft"      # Distillation type [soft, hard, hybrid]
+temperature: 4.0               # Softmax temperature for KD
+alpha: 0.7                     # Weight for distillation loss (0.0-1.0)
+beta: 0.3                      # Weight for student loss (1.0-alpha)
+
+# Advanced KD Parameters
+kd_loss_type: "kl_div"         # KD loss function [kl_div, mse, cosine]
+feature_matching: false        # Enable intermediate feature matching
+feature_match_layers: [2, 4]   # Layers for feature matching
+feature_match_weight: 0.1      # Weight for feature matching loss
+
+# Attention Transfer (for GAT models)
+attention_transfer: true       # Enable attention map transfer
+attention_weight: 0.05         # Weight for attention transfer loss
+attention_layers: "all"        # Layers for attention transfer [all, last, list]
+
+# Progressive Knowledge Distillation
+progressive_kd: false          # Enable progressive difficulty
+progressive_stages: 3          # Number of progressive stages
+stage_temperature: [6.0, 4.0, 2.0]  # Temperature schedule per stage
+```
+
+### Hydra-Zen Configuration Parameters
+
+#### Model Selection (Hydra-Zen)
+```yaml
+# Use hydra-zen configs instead of YAML
+use_hydra_zen: true            # Enable hydra-zen configuration system
+config_store: "model_configs"  # Config store name
+
+# Model Architecture Selection
+model_config: "GATConfig"      # Teacher GAT config class
+# model_config: "StudentGATConfig"     # Student GAT config class  
+# model_config: "VGAEConfig"           # Teacher VGAE config class
+# model_config: "StudentVGAEConfig"    # Student VGAE config class
+
+# Training Configuration Selection
+training_config: "normal"      # Training mode config
+# training_config: "knowledge_distillation"  # KD training config
+# training_config: "curriculum"              # Curriculum learning config
+# training_config: "fusion"                  # Multi-modal fusion config
+
+# Dataset Configuration Selection
+dataset_config: "hcrl_sa"      # Dataset-specific config
+# dataset_config: "hcrl_ch"    # Alternative dataset configs
+# dataset_config: "set_01"     # Complex dataset configs
+```
+
+#### Hydra-Zen Override Parameters
+```yaml
+# Model Architecture Overrides
+overrides:
+  model:
+    input_dim: 11              # Override input dimensions
+    hidden_channels: 64        # Override hidden layer size
+    num_layers: 5              # Override number of layers
+    heads: 8                   # Override attention heads
+    dropout: 0.2               # Override dropout rate
+    
+  training:
+    max_epochs: 200            # Override training epochs
+    learning_rate: 1e-3        # Override learning rate
+    batch_size: "auto"         # Override batch size
+    
+  knowledge_distillation:
+    temperature: 4.0           # Override KD temperature
+    alpha: 0.7                 # Override KD loss weight
+    teacher_model_path: "model_archive/best_teacher_model_hcrl_sa.pth"
+```
 
 ### Default Training Parameters
-| Parameter | VGAE Autoencoder | GAT Normal | GAT Curriculum | GAT Fusion | Override Syntax |
-|-----------|------------------|------------|----------------|------------|-----------------|
-| **Max Epochs** | 100 | 200 | 150 | 100 | `--extra-args "max_epochs=NUMBER"` |
-| **Learning Rate** | 1e-3 | 1e-3 | 1e-3 | 1e-3 | `--extra-args "learning_rate=0.001"` |
-| **Batch Size** | Auto-optimized | Auto-optimized | Auto-optimized | Auto-optimized | `--extra-args "batch_size=512"` |
-| **Early Stopping** | 25 epochs | 25 epochs | 25 epochs | 15 epochs | `--extra-args "early_stopping_patience=30"` |
-| **Precision** | 32-bit | 32-bit | 32-bit | 32-bit | `--extra-args "precision=16-mixed"` |
+| Parameter | VGAE Autoencoder | GAT Normal | Knowledge Distillation | GAT Curriculum | GAT Fusion | Override Syntax |
+|-----------|------------------|------------|------------------------|----------------|------------|------------------|
+| **Max Epochs** | 100 | 200 | 150 | 200 | 100 | `--extra-args "max_epochs=NUMBER"` |
+| **Learning Rate** | 1e-3 | 1e-3 | 1e-3 | 1e-3 | 1e-3 | `--extra-args "learning_rate=0.001"` |
+| **Batch Size** | Auto-optimized | Auto-optimized | Auto-optimized | Auto-optimized | Auto-optimized | `--extra-args "batch_size=512"` |
+| **Temperature** | N/A | N/A | 4.0 | N/A | N/A | `--extra-args "temperature=6.0"` |
+| **Alpha (KD Weight)** | N/A | N/A | 0.7 | N/A | N/A | `--extra-args "alpha=0.8"` |
+| **Early Stopping** | 25 epochs | 25 epochs | 20 epochs | 30 epochs | 15 epochs | `--extra-args "early_stopping_patience=30"` |
+| **Precision** | 32-bit | 32-bit | 32-bit | 32-bit | 32-bit | `--extra-args "precision=16-mixed"` |
 
 ### Resource Allocation
 | Training Type | Wall Time (Std) | Wall Time (Complex) | Memory (Std) | Memory (Complex) | GPUs | Override Syntax |
 |---------------|-----------------|---------------------|--------------|------------------|------|-----------------|
 | **VGAE Autoencoder** | 2:00:00 | 8:00:00 | 32GB | 64GB | 1 | `--extra-args "time_limit=4:00:00"` |
 | **GAT Normal** | 2:00:00 | 8:00:00 | 32GB | 64GB | 1 | `--extra-args "memory=48G"` |
+| **Knowledge Distillation** | 3:00:00 | 10:00:00 | 40GB | 72GB | 1 | `--extra-args "temperature=6.0,alpha=0.8"` |
 | **GAT Curriculum** | 4:00:00 | 12:00:00 | 48GB | 80GB | 1 | `--extra-args "cpus=12"` |
 | **GAT Fusion** | 3:00:00 | 3:00:00 | 48GB | 48GB | 1 | `--extra-args "gpus=2"` |
 
@@ -50,7 +290,49 @@ This file contains copy-paste ready commands for running different training conf
 
 ## 🎯 **Job Templates**
 
-### 1. Single Model for Single Dataset
+### 1. Teacher Model Training (Full Architecture)
+
+```bash
+# Train GAT teacher model for hcrl_sa (2 hours, 32GB)
+python osc_job_manager.py --submit-individual --datasets hcrl_sa --training gat_normal --extra-args "model_type=teacher,use_teacher_config=true"
+
+# Train VGAE teacher model for set_01 (8 hours, 64GB - complex dataset)
+python osc_job_manager.py --submit-individual --datasets set_01 --training vgae_autoencoder --extra-args "model_type=teacher,use_teacher_config=true"
+
+# Train teacher models for all datasets
+python osc_job_manager.py --submit-individual --datasets hcrl_sa,hcrl_ch,set_01,set_02,set_03,set_04 --training gat_normal --extra-args "model_type=teacher"
+```
+
+### 2. Student Model Training (Knowledge Distillation)
+
+```bash
+# Train GAT student with knowledge distillation from teacher
+python osc_job_manager.py --submit-individual --datasets hcrl_sa --training knowledge_distillation --extra-args "model_type=student,teacher_model_path=model_archive/best_teacher_model_hcrl_sa.pth,temperature=4.0,alpha=0.7"
+
+# Train VGAE student with knowledge distillation
+python osc_job_manager.py --submit-individual --datasets set_01 --training knowledge_distillation --extra-args "model_type=student,model_config=StudentVGAEConfig,teacher_model_path=model_archive/best_teacher_model_set_01.pth"
+
+# Knowledge distillation for all datasets (requires existing teacher models)
+python osc_job_manager.py --submit-individual --datasets hcrl_sa,hcrl_ch,set_01,set_02,set_03,set_04 --training knowledge_distillation --extra-args "model_type=student,temperature=4.0,alpha=0.7"
+```
+
+### 3. Hydra-Zen Configuration Examples
+
+```bash
+# Use hydra-zen GAT teacher config
+python osc_job_manager.py --submit-individual --datasets hcrl_sa --training gat_normal --extra-args "use_hydra_zen=true,model_config=GATConfig,model_type=teacher"
+
+# Use hydra-zen GAT student config with KD
+python osc_job_manager.py --submit-individual --datasets hcrl_sa --training knowledge_distillation --extra-args "use_hydra_zen=true,model_config=StudentGATConfig,model_type=student,teacher_model_path=model_archive/best_teacher_model_hcrl_sa.pth"
+
+# Use hydra-zen VGAE teacher config
+python osc_job_manager.py --submit-individual --datasets set_01 --training vgae_autoencoder --extra-args "use_hydra_zen=true,model_config=VGAEConfig,model_type=teacher"
+
+# Use hydra-zen VGAE student config with KD
+python osc_job_manager.py --submit-individual --datasets set_01 --training knowledge_distillation --extra-args "use_hydra_zen=true,model_config=StudentVGAEConfig,model_type=student,teacher_model_path=model_archive/best_teacher_model_set_01.pth"
+```
+
+### 4. Single Model for Single Dataset
 
 ```bash
 # VGAE autoencoder for hcrl_sa (2 hours, 32GB)

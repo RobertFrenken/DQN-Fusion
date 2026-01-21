@@ -1,17 +1,18 @@
-# GAT model configuration - Lightning optimized
+# GAT model configuration (Teacher Model for Knowledge Distillation)
 type: gat
-name: "Graph Attention Network with Jumping Knowledge"
-description: "Lightning-optimized GAT with auto-configuration"
+name: "GAT Teacher for Knowledge Distillation"
+description: "GAT teacher model matching paper architecture: 1.1M parameters"
 
-# GAT architecture parameters
+# GAT architecture parameters - Target: ~1.1M parameters (matching paper)
 gat:
-  input_dim: 11                 # Verified feature count for CAN data
-  hidden_channels: 64
-  num_layers: 5
-  heads: 8                      # Multi-head attention
-  embedding_dim: 16
-  dropout: 0.2
-  output_dim: 4                 # Multi-class classification (normal/DoS/Fuzzy/Gear)
+  input_dim: 11                 # Confirmed: CAN ID + 8 bytes + count + position
+  embedding_dim: 32             # Rich embedding for teacher (32 dimensions)
+  hidden_channels: 64           # Balanced hidden size for 1.1M target
+  num_layers: 5                 # Matches paper: 5 GAT layers
+  heads: 8                      # Matches paper: 8 attention heads
+  latent_dim: 32                # Intermediate latent space
+  output_dim: 2                 # FIXED: Binary classification (normal/attack)
+  dropout: 0.2                  # Standard dropout for teacher
   
   # Jumping Knowledge Network settings  
   use_jumping_knowledge: true
@@ -19,6 +20,20 @@ gat:
   
   # Advanced settings
   use_residual: true
+  batch_norm: true
+  activation: "relu"
+  
+  # Teacher-specific settings
+  curriculum_stages: ["pretrain", "distill"]
+  target_parameters: 1100000    # ~1.1M params target (matching paper)
+  
+  # Classification head (from paper: 128 → 2)
+  classification_head: [128, 2] # Hidden → output dimensions
+  
+  # Knowledge distillation settings
+  distillation_temperature: 4.0
+  distillation_alpha: 0.7       # Weight for soft targets
+  task_loss_beta: 0.3           # Weight for hard targets
   
 # Lightning-specific optimizations
 lightning:
