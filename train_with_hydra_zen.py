@@ -38,7 +38,8 @@ from src.config.hydra_zen_configs import (
     validate_config
 )
 from src.config.training_presets import get_preset, list_presets as list_new_presets, PRESET_DOCUMENTATION
-from train_models import CANGraphLightningModule, load_dataset, create_dataloaders, CANGraphDataModule
+from src.training.can_graph_module import CANGraphLightningModule
+from src.training.can_graph_data import load_dataset, create_dataloaders, CANGraphDataModule
 from src.training.fusion_lightning import FusionLightningModule
 from src.training.prediction_cache import create_fusion_prediction_cache
 
