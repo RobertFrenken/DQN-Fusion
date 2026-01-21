@@ -292,6 +292,33 @@ class FusionTrainingConfig(BaseTrainingConfig):
     gpu_training_steps: int = 16
 
 
+@dataclass
+class CurriculumTrainingConfig(BaseTrainingConfig):
+    """Curriculum learning training configuration."""
+    mode: str = "curriculum"
+    description: str = "GAT training with curriculum learning and VGAE-based hard mining"
+    
+    # Curriculum learning parameters
+    vgae_model_path: Optional[str] = None
+    start_ratio: float = 1.0       # 1:1 normal:attack (easy start)
+    end_ratio: float = 10.0        # 10:1 normal:attack (realistic end, not 100:1)
+    difficulty_percentile: float = 75.0  # Use top 75% difficult samples
+    
+    # Training adjustments for curriculum
+    max_epochs: int = 400
+    batch_size: int = 64
+    learning_rate: float = 0.001
+    early_stopping_patience: int = 150  # Longer patience for curriculum
+    
+    # Hard mining parameters
+    use_vgae_mining: bool = True       # Enable VGAE-based hard mining
+    difficulty_cache_update: int = 10  # Update difficulty cache every N epochs
+    
+    # Memory preservation
+    use_memory_preservation: bool = True  # Prevent catastrophic forgetting
+    memory_strength: float = 0.1          # EWC regularization strength
+
+
 # ============================================================================
 # Lightning Trainer Configuration
 # ============================================================================
@@ -321,7 +348,7 @@ class CANGraphConfig:
     model: Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig]
     dataset: CANDatasetConfig
     training: Union[NormalTrainingConfig, AutoencoderTrainingConfig, 
-                   KnowledgeDistillationConfig, FusionTrainingConfig]
+                   KnowledgeDistillationConfig, FusionTrainingConfig, CurriculumTrainingConfig]
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
     
     # Global settings
@@ -460,7 +487,8 @@ class CANGraphConfigStore:
             "normal": NormalTrainingConfig(),
             "autoencoder": AutoencoderTrainingConfig(),
             "knowledge_distillation": KnowledgeDistillationConfig(),
-            "fusion": FusionTrainingConfig()
+            "fusion": FusionTrainingConfig(),
+            "curriculum": CurriculumTrainingConfig()
         }
         
         if training_mode not in training_configs:

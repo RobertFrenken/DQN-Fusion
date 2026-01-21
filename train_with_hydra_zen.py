@@ -131,7 +131,7 @@ class HydraZenTrainer:
         # Model checkpointing
         checkpoint_callback = ModelCheckpoint(
             dirpath=str(paths['checkpoint_dir']),
-            filename=f'{self.config.experiment_name}_{{epoch:02d}}_{{val_loss:.3f}}',
+            filename=f'{self.config.model.type}_{self.config.training.mode}_{{epoch:02d}}_{{val_loss:.3f}}',
             save_top_k=self.config.logging.get("save_top_k", 3),
             monitor=self.config.logging.get("monitor_metric", "val_loss"),
             mode=self.config.logging.get("monitor_mode", "min"),
@@ -161,7 +161,7 @@ class HydraZenTrainer:
         # CSV logger
         csv_logger = CSVLogger(
             save_dir=str(paths['log_dir']),
-            name=self.config.experiment_name
+            name=f"{self.config.model.type}_{self.config.training.mode}"
         )
         loggers.append(csv_logger)
         
@@ -182,7 +182,7 @@ class HydraZenTrainer:
         if self.config.logging.get("enable_tensorboard", False):
             tb_logger = TensorBoardLogger(
                 save_dir=str(paths['log_dir']),
-                name=self.config.experiment_name
+                name=f"{self.config.model.type}_{self.config.training.mode}"
             )
             loggers.append(tb_logger)
         
@@ -251,7 +251,7 @@ class HydraZenTrainer:
         
         # Save final model
         paths = self.get_hierarchical_paths()
-        model_name = f"{self.config.experiment_name}.pth"
+        model_name = f"{self.config.model.type}_{self.config.training.mode}.pth"
         save_path = paths['model_save_dir'] / model_name
         save_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), save_path)
@@ -399,7 +399,7 @@ class HydraZenTrainer:
         # Model checkpoint
         checkpoint_callback = ModelCheckpoint(
             dirpath=str(paths['checkpoint_dir']),
-            filename=f'fusion_{self.config.dataset.name}_{{epoch:02d}}_{{val_accuracy:.3f}}',
+            filename=f'{self.config.model.type}_{self.config.training.mode}_{{epoch:02d}}_{{val_accuracy:.3f}}',
             save_top_k=3,
             monitor='val_accuracy',
             mode='max',
@@ -568,8 +568,7 @@ class HydraZenTrainer:
             ModelCheckpoint(
                 dirpath=str(paths['checkpoint_dir']),
                 monitor='val_loss',
-                dirpath=f'{self.config.model_save_dir}/lightning_checkpoints_{self.config.dataset.name}',
-                filename=f'{self.config.model.type}_{self.config.dataset.name}_curriculum-{{epoch:02d}}-{{val_loss:.2f}}',
+                filename=f'{self.config.model.type}_{self.config.training.mode}_{{epoch:02d}}_{{val_loss:.2f}}',
                 save_top_k=3,
                 mode='min'
             ),
@@ -594,7 +593,7 @@ class HydraZenTrainer:
         # CSV logger
         csv_logger = CSVLogger(
             save_dir=str(paths['log_dir']),
-            name=self.config.experiment_name
+            name=f"{self.config.model.type}_{self.config.training.mode}"
         )
         loggers.append(csv_logger)
         
@@ -761,7 +760,7 @@ Examples:
                       choices=['hcrl_sa', 'hcrl_ch', 'set_01', 'set_02', 'set_03', 'set_04', 'car_hacking'],
                       default='hcrl_sa', help='Dataset name')
     parser.add_argument('--training', type=str, 
-                      choices=['normal', 'autoencoder', 'knowledge_distillation', 'fusion'],
+                      choices=['normal', 'autoencoder', 'knowledge_distillation', 'curriculum', 'fusion'],
                       default='normal', help='Training mode')
     
     # Knowledge distillation specific
@@ -773,6 +772,16 @@ Examples:
                       help='Distillation alpha weight')
     parser.add_argument('--temperature', type=float, default=4.0,
                       help='Distillation temperature')
+    
+    # Curriculum learning specific
+    parser.add_argument('--vgae_path', type=str,
+                      help='Path to VGAE model (required for curriculum learning)')
+    
+    # Fusion training specific
+    parser.add_argument('--autoencoder_path', type=str,
+                      help='Path to autoencoder model (required for fusion training)')
+    parser.add_argument('--classifier_path', type=str,
+                      help='Path to classifier model (required for fusion training)')
     
     # Training overrides
     parser.add_argument('--epochs', type=int, help='Number of epochs')

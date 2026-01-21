@@ -58,8 +58,9 @@ class OSCJobManager:
         # Available datasets
         self.datasets = ["hcrl_sa", "hcrl_ch", "set_01", "set_02", "set_03", "set_04"]
         
-        # Complex datasets requiring longer training
-        self.complex_datasets = ["set_01", "set_02", "set_03", "set_04"]
+        # All datasets use complex configuration for simplicity
+        # NOTE: hcrl_sa is smaller but uses same resources to avoid dual config maintenance
+        self.complex_datasets = ["hcrl_sa", "hcrl_ch", "set_01", "set_02", "set_03", "set_04"]
         
         # Training configurations
         self.training_configs = {
@@ -154,8 +155,10 @@ module load miniconda3/24.1.2-py310
 source activate {self.osc_settings["conda_env"]}
 module load cuda/11.8.0
 
-# GPU optimizations
+# GPU optimizations and CUDA debugging
 export CUDA_VISIBLE_DEVICES=0
+export CUDA_LAUNCH_BLOCKING=1  # Enable synchronous CUDA calls for better debugging
+export TORCH_USE_CUDA_DSA=1   # Enable device-side assertions
 export OMP_NUM_THREADS={config["cpus"]}
 export MKL_NUM_THREADS={config["cpus"]}
 export NUMEXPR_NUM_THREADS={config["cpus"]}
@@ -259,7 +262,18 @@ echo "✅ Job {job_name} completed successfully!"
         # Add mode-specific arguments
         if training_type == "gat_curriculum":
             # For curriculum learning, look for VGAE model in hierarchical structure
-            vgae_path = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{dataset}_autoencoder.pth"
+            # Try both naming patterns: new (vgae_autoencoder.pth) and old (vgae_{dataset}_autoencoder.pth)
+            vgae_path_new = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth"
+            vgae_path_old = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{dataset}_autoencoder.pth"
+            
+            import os
+            if os.path.exists(vgae_path_new):
+                vgae_path = vgae_path_new
+            elif os.path.exists(vgae_path_old):
+                vgae_path = vgae_path_old
+            else:
+                vgae_path = vgae_path_new  # Use new pattern as default
+                
             cmd_parts.extend([
                 f"--vgae_path {vgae_path}"
             ])
@@ -456,24 +470,39 @@ echo "✅ Job {job_name} completed successfully!"
             logger.warning(f"Cleanup warning: {e}")
     
     def monitor_jobs(self, job_ids: List[str] = None) -> Dict[str, str]:
-        """Monitor job status."""
+        """Monitor job status including running, pending, and completed jobs."""
         
         if job_ids:
-            cmd = ["squeue", "-j", ",".join(job_ids), "--format=%i,%T,%N,%R"]
+            cmd = ["squeue", "-j", ",".join(job_ids), "--format=%i,%T,%N,%R,%M"]
         else:
-            cmd = ["squeue", "-u", "$USER", "--format=%i,%T,%N,%R"]
+            import os
+            username = os.getenv("USER")
+            cmd = ["squeue", "-u", username, "--format=%i,%T,%N,%R,%M"]
         
         try:
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode == 0:
-                lines = result.stdout.strip().split('\n')[1:]  # Skip header
+                lines = result.stdout.strip().split('\n')
+                if len(lines) <= 1:  # Only header or empty
+                    return {}
+                    
+                lines = lines[1:]  # Skip header
                 job_status = {}
                 for line in lines:
                     if line.strip():
                         parts = line.split(',')
-                        job_id = parts[0]
-                        status = parts[1] 
-                        job_status[job_id] = status
+                        if len(parts) >= 2:
+                            job_id = parts[0]
+                            status = parts[1]
+                            node = parts[2] if len(parts) > 2 else "N/A"
+                            reason = parts[3] if len(parts) > 3 else "N/A" 
+                            time = parts[4] if len(parts) > 4 else "N/A"
+                            job_status[job_id] = {
+                                'status': status,
+                                'node': node, 
+                                'reason': reason,
+                                'time': time
+                            }
                 return job_status
             else:
                 logger.error(f"squeue failed: {result.stderr}")
@@ -701,11 +730,43 @@ def main():
         logger.info("📊 Monitoring job status...")
         status = manager.monitor_jobs()
         if status:
-            logger.info("Current jobs:")
-            for job_id, job_status in status.items():
-                logger.info(f"  Job {job_id}: {job_status}")
+            # Group jobs by status
+            by_status = {}
+            for job_id, job_info in status.items():
+                if isinstance(job_info, dict):
+                    job_status = job_info['status']
+                else:
+                    job_status = job_info
+                
+                if job_status not in by_status:
+                    by_status[job_status] = []
+                by_status[job_status].append((job_id, job_info))
+            
+            logger.info(f"Current jobs ({len(status)} total):")
+            for job_status, jobs in by_status.items():
+                logger.info(f"  📌 {job_status}: {len(jobs)} jobs")
+                for job_id, job_info in jobs:
+                    if isinstance(job_info, dict):
+                        logger.info(f"    Job {job_id}: {job_info['node']} ({job_info['time']}) - {job_info['reason']}")
+                    else:
+                        logger.info(f"    Job {job_id}: {job_info}")
         else:
-            logger.info("No jobs found")
+            logger.info("No jobs found in queue")
+        
+        # Show recent job files and check for submission issues
+        recent_jobs = sorted(manager.jobs_dir.glob("**/*.sh"), key=lambda x: x.stat().st_mtime, reverse=True)[:5]
+        if recent_jobs:
+            logger.info(f"\n📁 Recent job files:")
+            for job_file in recent_jobs:
+                logger.info(f"  {job_file.relative_to(manager.jobs_dir)}")
+        
+        # Check for recent error files
+        recent_errors = sorted(manager.jobs_dir.glob("**/slurm_*.err"), key=lambda x: x.stat().st_mtime, reverse=True)[:3]
+        if recent_errors:
+            logger.info(f"\n⚠️  Recent error files (check if jobs failed):")
+            for err_file in recent_errors:
+                logger.info(f"  {err_file.relative_to(manager.jobs_dir)}")
+        
             
     elif args.generate_summary:
         summary = manager.generate_job_summary()

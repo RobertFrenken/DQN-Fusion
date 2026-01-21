@@ -252,16 +252,16 @@ overrides:
 | **Early Stopping** | 25 epochs | 25 epochs | 20 epochs | 30 epochs | 15 epochs | `--extra-args "early_stopping_patience=30"` |
 | **Precision** | 32-bit | 32-bit | 32-bit | 32-bit | 32-bit | `--extra-args "precision=16-mixed"` |
 
-### Resource Allocation
-| Training Type | Wall Time (Std) | Wall Time (Complex) | Memory (Std) | Memory (Complex) | GPUs | Override Syntax |
-|---------------|-----------------|---------------------|--------------|------------------|------|-----------------|
-| **VGAE Autoencoder** | 2:00:00 | 8:00:00 | 32GB | 64GB | 1 | `--extra-args "time_limit=4:00:00"` |
-| **GAT Normal** | 2:00:00 | 8:00:00 | 32GB | 64GB | 1 | `--extra-args "memory=48G"` |
-| **Knowledge Distillation** | 3:00:00 | 10:00:00 | 40GB | 72GB | 1 | `--extra-args "temperature=6.0,alpha=0.8"` |
-| **GAT Curriculum** | 4:00:00 | 12:00:00 | 48GB | 80GB | 1 | `--extra-args "cpus=12"` |
-| **GAT Fusion** | 3:00:00 | 3:00:00 | 48GB | 48GB | 1 | `--extra-args "gpus=2"` |
+### Resource Allocation (Unified Configuration)
+| Training Type | Wall Time | Memory | GPUs | Override Syntax |
+|---------------|-----------|--------|------|-----------------|
+| **VGAE Autoencoder** | 8:00:00 | 64GB | 1 | `--extra-args "time_limit=4:00:00"` |
+| **GAT Normal** | 8:00:00 | 64GB | 1 | `--extra-args "memory=48G"` |
+| **Knowledge Distillation** | 8:00:00 | 64GB | 1 | `--extra-args "temperature=6.0,alpha=0.8"` |
+| **GAT Curriculum** | 8:00:00 | 64GB | 1 | `--extra-args "cpus=12"` |
+| **GAT Fusion** | 8:00:00 | 64GB | 1 | `--extra-args "gpus=2"` |
 
-**Standard Datasets**: `hcrl_sa`, `hcrl_ch` | **Complex Datasets**: `set_01`, `set_02`, `set_03`, `set_04`
+**All Datasets**: `hcrl_sa`, `hcrl_ch`, `set_01`, `set_02`, `set_03`, `set_04` (8 hour wall time, 64GB memory)
 
 ### Key Features & Parameters
 | Feature | Description | Override Syntax |
@@ -277,14 +277,15 @@ overrides:
 ## �📋 **Quick Reference**
 
 ### Available Datasets
-- `hcrl_sa`, `hcrl_ch` (Standard datasets - 2 hour wall time, 32GB memory)
-- `set_01`, `set_02`, `set_03`, `set_04` (Complex datasets - extended resources)
+- All datasets use unified resource allocation: **8 hour wall time, 64GB memory**
+- Datasets: `hcrl_sa`, `hcrl_ch`, `set_01`, `set_02`, `set_03`, `set_04`
 
 ### Training Types & Resources
-- **VGAE Autoencoder**: 2h/8h wall time, 32GB/64GB memory
-- **GAT Normal**: 2h/8h wall time, 32GB/64GB memory  
-- **GAT Curriculum**: 4h/12h wall time, 48GB/80GB memory
-- **GAT Fusion**: 3h wall time, 48GB memory
+- **All Training Types**: 8h wall time, 64GB memory (unified configuration)
+- **VGAE Autoencoder**: Graph autoencoder training
+- **GAT Normal**: Standard GAT training  
+- **GAT Curriculum**: GAT with curriculum learning (requires VGAE)
+- **GAT Fusion**: Multi-modal fusion training (requires GAT + VGAE)
 
 ---
 

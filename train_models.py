@@ -538,10 +538,12 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
     if hasattr(config.dataset, 'data_path') and config.dataset.data_path:
         dataset_path = config.dataset.data_path
     else:
-        # Try multiple possible dataset paths
+        # Try multiple possible dataset paths, including hyphen variants for HCRL datasets
         possible_paths = [
             f"datasets/can-train-and-test-v1.5/{dataset_name}",
+            f"datasets/can-train-and-test-v1.5/{dataset_name.replace('_', '-')}",  # Handle hcrl_ch -> hcrl-ch
             f"datasets/{dataset_name}",
+            f"datasets/{dataset_name.replace('_', '-')}",
             f"../datasets/{dataset_name}",
             f"data/{dataset_name}"
         ]
@@ -558,6 +560,22 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
                     break
                 else:
                     logger.warning(f"Path exists but no CSV files found: {path}")
+                    
+        # If still not found, try alternative naming conventions
+        if not dataset_path and dataset_name.startswith('hcrl_'):
+            alt_name = dataset_name.replace('hcrl_', 'hcrl-')
+            alt_paths = [
+                f"datasets/can-train-and-test-v1.5/{alt_name}",
+                f"datasets/{alt_name}"
+            ]
+            for path in alt_paths:
+                if os.path.exists(path):
+                    import glob
+                    csv_files = glob.glob(os.path.join(path, '**', '*train_*.csv'), recursive=True)
+                    if csv_files:
+                        dataset_path = path
+                        logger.info(f"Found dataset using alternative naming: {dataset_path}")
+                        break
         
         if not dataset_path:
             dataset_path = f"datasets/{dataset_name}"  # Fallback
