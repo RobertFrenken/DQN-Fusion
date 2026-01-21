@@ -1,0 +1,58 @@
+model_config:
+  type: gat
+  input_dim: 11
+  hidden_channels: 64
+  output_dim: 2
+  num_layers: 5
+  heads: 8
+  dropout: 0.2
+  num_fc_layers: 3
+  embedding_dim: 32
+  use_jumping_knowledge: true
+  jk_mode: cat
+  use_residual: true
+  use_batch_norm: false
+  activation: relu
+training_config:
+  mode: curriculum
+  max_epochs: 400
+  batch_size: 64
+  learning_rate: 0.001
+  weight_decay: 0.0001
+  optimizer:
+    name: adam
+    lr: 0.001
+    weight_decay: 0.0001
+    momentum: 0.9
+  scheduler:
+    use_scheduler: false
+    scheduler_type: cosine
+    params:
+      T_max: 100
+  early_stopping_patience: 150
+  gradient_clip_val: 1.0
+  accumulate_grad_batches: 1
+  precision: 32-true
+  find_unused_parameters: false
+  optimize_batch_size: true
+  batch_size_mode: power
+  max_batch_size_trials: 10
+  run_test: true
+  test_every_n_epochs: 5
+  save_top_k: 3
+  monitor_metric: val_loss
+  monitor_mode: min
+  log_every_n_steps: 50
+  save_hyperparameters: true
+  description: GAT training with curriculum learning and VGAE-based hard mining
+  vgae_model_path: null
+  start_ratio: 1.0
+  end_ratio: 10.0
+  difficulty_percentile: 75.0
+  use_vgae_mining: true
+  difficulty_cache_update: 10
+  use_memory_preservation: true
+  memory_strength: 0.1
+model_type: gat
+training_mode: curriculum
+num_ids: 2049

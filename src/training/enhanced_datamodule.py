@@ -316,7 +316,7 @@ class CurriculumCallback(pl.Callback):
             
         # Track normal confidence
         with torch.no_grad():
-            logits = pl_module(batch.x, batch.edge_index, batch.batch)
+            logits = pl_module(batch)
             probs = torch.sigmoid(logits)
             
             # Find normal examples (y=0) and their confidence
