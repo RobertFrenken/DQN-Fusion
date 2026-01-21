@@ -328,6 +328,33 @@ class KnowledgeDistillationConfig(BaseTrainingConfig):
 
 
 @dataclass
+class StudentBaselineTrainingConfig(BaseTrainingConfig):
+    """Baseline student training without knowledge distillation."""
+    mode: str = "student_baseline"
+    description: str = "Student-only supervised training (no teacher)"
+    max_epochs: int = 300
+    batch_size: int = 64
+    learning_rate: float = 0.001
+    precision: str = "16-mixed"
+    early_stopping_patience: int = 50
+
+
+@dataclass
+class FusionAgentConfig:
+    """DQN Fusion Agent configuration (nested within FusionTrainingConfig)."""
+    alpha_steps: int = 21
+    fusion_lr: float = 0.001
+    gamma: float = 0.9
+    fusion_epsilon: float = 0.9
+    fusion_epsilon_decay: float = 0.995
+    fusion_min_epsilon: float = 0.2
+    fusion_buffer_size: int = 100000
+    fusion_batch_size: int = 32768
+    target_update_freq: int = 100
+    hidden_dim: int = 128
+
+
+@dataclass
 class FusionTrainingConfig(BaseTrainingConfig):
     """Fusion training configuration."""
     mode: str = "fusion"
@@ -337,19 +364,18 @@ class FusionTrainingConfig(BaseTrainingConfig):
     fusion_episodes: int = 500
     max_train_samples: int = 150000
     max_val_samples: int = 30000
-    alpha_steps: int = 21
-    fusion_lr: float = 0.001
-    fusion_epsilon: float = 0.9
-    fusion_epsilon_decay: float = 0.995
-    fusion_min_epsilon: float = 0.2
     
     # Pipeline parallelism
-    fusion_buffer_size: int = 100000
-    fusion_batch_size: int = 32768
-    fusion_target_update: int = 15
     episode_sample_size: int = 20000
     training_step_interval: int = 32
     gpu_training_steps: int = 16
+    
+    # Model paths for fusion (optional - will be auto-detected if not provided)
+    autoencoder_path: Optional[str] = None
+    classifier_path: Optional[str] = None
+    
+    # Fusion agent configuration
+    fusion_agent_config: FusionAgentConfig = field(default_factory=FusionAgentConfig)
 
 
 @dataclass
@@ -414,7 +440,8 @@ class CANGraphConfig:
     model: Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig, DQNConfig, StudentDQNConfig]
     dataset: CANDatasetConfig
     training: Union[NormalTrainingConfig, AutoencoderTrainingConfig, 
-                   KnowledgeDistillationConfig, FusionTrainingConfig, CurriculumTrainingConfig]
+                   KnowledgeDistillationConfig, StudentBaselineTrainingConfig,
+                   FusionTrainingConfig, CurriculumTrainingConfig]
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
     
     # Global settings
@@ -477,6 +504,7 @@ class CANGraphConfigStore:
         self.store(NormalTrainingConfig, name="normal", group="training")
         self.store(AutoencoderTrainingConfig, name="autoencoder", group="training")
         self.store(KnowledgeDistillationConfig, name="knowledge_distillation", group="training")
+        self.store(StudentBaselineTrainingConfig, name="student_baseline", group="training")
         self.store(FusionTrainingConfig, name="fusion", group="training")
         
         # Trainer
@@ -559,6 +587,7 @@ class CANGraphConfigStore:
             "normal": NormalTrainingConfig(),
             "autoencoder": AutoencoderTrainingConfig(),
             "knowledge_distillation": KnowledgeDistillationConfig(),
+            "student_baseline": StudentBaselineTrainingConfig(),
             "fusion": FusionTrainingConfig(),
             "curriculum": CurriculumTrainingConfig()
         }

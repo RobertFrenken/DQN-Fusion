@@ -11,6 +11,7 @@ Key Features:
 - Evaluate and compare fusion strategies
 - Save trained fusion agent for deployment
 """
+import argparse
 import sys
 import os
 from pathlib import Path
@@ -24,8 +25,6 @@ import torch.nn as nn
 from torch_geometric.loader import DataLoader
 from torch.utils.data import random_split, Subset
 import time
-import hydra
-from omegaconf import DictConfig, OmegaConf
 from sklearn.metrics import confusion_matrix, f1_score, precision_score, recall_score
 import matplotlib.pyplot as plt
 from typing import Tuple, Dict, List, Any
@@ -695,14 +694,8 @@ class FusionTrainingPipeline:
         print(f"✓ Fusion agent and config saved to {save_folder}")
 
 
-@hydra.main(config_path="../conf", config_name="base", version_base=None)
-def main(config: DictConfig):
-    """
-    Main fusion training pipeline.
-    
-    Args:
-        config: Hydra configuration object
-    """
+def main(dataset_key: str):
+    """Main fusion training pipeline without Hydra."""
     print(f"\n{'='*80}")
     print("FUSION TRAINING FOR CAN BUS ANOMALY DETECTION")
     print(f"{'='*80}")
@@ -713,7 +706,6 @@ def main(config: DictConfig):
         os.environ['PYTORCH_CUDA_ALLOC_CONF'] = 'expandable_segments:True,max_split_size_mb:128'
         torch.cuda.empty_cache()
         print("✓ GPU memory optimization enabled")
-    config_dict = OmegaConf.to_container(config, resolve=True)
     
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA GPU required for fusion training. No GPU detected.")
@@ -722,7 +714,6 @@ def main(config: DictConfig):
     print(f"✓ Using device: {device}")
     
     # Dataset configuration
-    dataset_key = config_dict['root_folder']
     if dataset_key not in DATASET_PATHS:
         raise ValueError(f"Unknown dataset: {dataset_key}")
     
@@ -890,9 +881,13 @@ def main(config: DictConfig):
         print(f"[Final] GPU Memory: {torch.cuda.memory_allocated() / 1024**3:.2f}GB allocated, {torch.cuda.memory_reserved() / 1024**3:.2f}GB cached")
 
 if __name__ == "__main__":
+    cli = argparse.ArgumentParser(description="Fusion training without Hydra")
+    cli.add_argument("--dataset", choices=list(DATASET_PATHS.keys()), default="hcrl_sa")
+    args = cli.parse_args()
+
     start_time = time.time()
     try:
-        main()
+        main(args.dataset)
     except KeyboardInterrupt:
         print("\n❌ Training interrupted by user")
     except Exception as e:

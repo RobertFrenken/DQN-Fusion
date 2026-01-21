@@ -1,18 +1,18 @@
-import numpy as np
+import argparse
+import gc
 import os
+import time
+
+import numpy as np
 import torch
 import torch.nn as nn
 from torch_geometric.loader import DataLoader
 from torch.utils.data import DataLoader as TorchDataLoader
-import time
-import gc
 from sklearn.metrics import (
     accuracy_score, precision_score, recall_score, f1_score,
     confusion_matrix, roc_auc_score, matthews_corrcoef, classification_report
 )
 from torch_geometric.data import Batch
-import hydra
-from omegaconf import DictConfig, OmegaConf
 
 from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
 from src.preprocessing.preprocessing import graph_creation, build_id_mapping_from_normal
@@ -750,16 +750,10 @@ def print_results(results, dataset_name):
             print(f"{model_type.title()} Two-Stage F1 improvement: {improvement:+.4f}")
 
 
-@hydra.main(config_path="conf", config_name="base", version_base=None)
-def main(config: DictConfig):
+def main(dataset_key: str):
     """Main evaluation function for both student and teacher models."""
-    
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
-    
-    # Get dataset from config
-    config_dict = OmegaConf.to_container(config, resolve=True)
-    dataset_key = config_dict['root_folder']
     
     # Dataset paths
     root_folders = {
@@ -874,8 +868,12 @@ def main(config: DictConfig):
 
 
 if __name__ == "__main__":
+    parser = argparse.ArgumentParser(description="Evaluate CAN-Graph models without Hydra")
+    parser.add_argument("--dataset", choices=["hcrl_ch", "hcrl_sa", "set_01", "set_02", "set_03", "set_04"], default="hcrl_sa")
+    args = parser.parse_args()
+
     start_time = time.time()
-    main()
+    main(args.dataset)
     end_time = time.time()
     elapsed_time = end_time - start_time
     print(f"Runtime: {elapsed_time:.4f} seconds")

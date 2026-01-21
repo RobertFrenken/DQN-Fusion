@@ -14,8 +14,7 @@ import sys
 from pathlib import Path
 import logging
 import warnings
-import hydra
-from omegaconf import DictConfig, OmegaConf
+from typing import Any
 
 # Suppress pynvml warnings
 warnings.filterwarnings("ignore", message=".*pynvml.*deprecated.*")
@@ -49,7 +48,7 @@ class CANGraphLightningModule(pl.LightningModule):
     Handles GAT, VGAE, and special training cases (autoencoder, knowledge distillation).
     """
     
-    def __init__(self, model_config: DictConfig, training_config: DictConfig, 
+    def __init__(self, model_config: Any, training_config: Any, 
                  model_type: str = "gat", training_mode: str = "normal", num_ids: int = 1000):
         super().__init__()
         
@@ -73,7 +72,7 @@ class CANGraphLightningModule(pl.LightningModule):
     
     def _create_model(self):
         """Create the appropriate model based on configuration."""
-        if self.model_type == "gat":
+        if self.model_type in ["gat", "gat_student"]:
             # Handle both old dict config and new dataclass config
             if hasattr(self.model_config, 'gat'):
                 # Old config format
@@ -103,7 +102,7 @@ class CANGraphLightningModule(pl.LightningModule):
             gat_params['num_ids'] = self.num_ids
             
             return GATWithJK(**gat_params)
-        elif self.model_type == "vgae":
+        elif self.model_type in ["vgae", "vgae_student"]:
             # Handle both old dict config and new dataclass config
             if hasattr(self.model_config, 'vgae'):
                 vgae_params = dict(self.model_config.vgae)
@@ -121,124 +120,16 @@ class CANGraphLightningModule(pl.LightningModule):
                 vgae_params['num_ids'] = self.num_ids
                 
             return GraphAutoencoderNeighborhood(**vgae_params)
+        elif self.model_type in ["dqn", "dqn_student"]:
+            # DQN is a placeholder - actual DQN logic is in FusionLightningModule
+            # Return a simple identity model to satisfy the interface
+            logger.info("DQN model type detected - fusion training will be used")
+            return nn.Identity()
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
-    
-    def setup_knowledge_distillation(self):
-        """Setup teacher model for knowledge distillation."""
-        if not self.training_config.teacher_model_path:
-            raise ValueError("teacher_model_path is required for knowledge distillation mode")
-            
-        logger.info(f"Loading teacher model from: {self.training_config.teacher_model_path}")
-        
-        # Create teacher model with same architecture but potentially different size
-        teacher_model_config = self.model_config.copy()
-        self.teacher_model = self._create_model()
-        
-        # Load teacher weights
-        teacher_path = Path(self.training_config.teacher_model_path)
-        if not teacher_path.exists():
-            raise FileNotFoundError(f"Teacher model not found: {teacher_path}")
-            
-        # Load state dict
-        teacher_state = torch.load(teacher_path, map_location='cpu')
-        
-        # Handle different save formats
-        if 'state_dict' in teacher_state:
-            # Lightning checkpoint format
-            state_dict = teacher_state['state_dict']
-            # Remove 'model.' prefix if present
-            state_dict = {k.replace('model.', '') if k.startswith('model.') else k: v 
-                         for k, v in state_dict.items()}
-        else:
-            # Direct state dict format
-            state_dict = teacher_state
-            
-        self.teacher_model.load_state_dict(state_dict)
-        self.teacher_model.eval()  # Set to eval mode
-        
-        # Freeze teacher parameters
-        for param in self.teacher_model.parameters():
-            param.requires_grad = False
-            
-        # Setup teacher output caching for memory optimization
-        self.teacher_cache = {}
-        self.cache_counter = 0
-        self.clear_cache_every_n_steps = self.training_config.get('memory_optimization', {}).get('clear_cache_every_n_steps', 100)
-        
-        # Scale student model if configured
-        student_scale = self.training_config.get('student_model_scale', 1.0)
-        if student_scale != 1.0:
-            self._scale_student_model(student_scale)
-            logger.info(f"Student model scaled by factor: {student_scale}")
-        
-        logger.info("Knowledge distillation setup complete")
-    
-    def _scale_student_model(self, scale: float):
-        """Scale student model size for distillation."""
-        if self.model_type == "gat":
-            # Scale hidden dimensions
-            original_hidden = self.model_config.gat.hidden_channels
-            scaled_hidden = max(8, int(original_hidden * scale))  # Minimum 8 channels
-            self.model_config.gat.hidden_channels = scaled_hidden
-            
-            # Recreate model with scaled config
-            self.model = self._create_model()
-            logger.info(f"Student GAT hidden channels scaled: {original_hidden} -> {scaled_hidden}")
-    
-    def _get_teacher_output_cached(self, batch, use_cache=True):
-        """Get teacher output with optional caching for memory efficiency."""
-        if not use_cache or self.training_config.get('memory_optimization', {}).get('use_teacher_cache', True) == False:
-            with torch.no_grad():
-                if self.model_type == "vgae":
-                    return self.teacher_model(batch.x, batch.edge_index, batch.batch)
-                else:
-                    return self.teacher_model(batch)
-        
-        # Simple batch-based caching (could be improved with more sophisticated hashing)
-        batch_hash = hash(str(batch.x.shape) + str(batch.edge_index.shape) + str(batch.batch.max().item()))
-        
-        if batch_hash in self.teacher_cache:
-            return self.teacher_cache[batch_hash]
-        
-        with torch.no_grad():
-            if self.model_type == "vgae":
-                teacher_output = self.teacher_model(batch.x, batch.edge_index, batch.batch)
-            else:
-                teacher_output = self.teacher_model(batch)
-            self.teacher_cache[batch_hash] = teacher_output
-            
-        # Clear cache periodically to avoid memory buildup
-        self.cache_counter += 1
-        if self.cache_counter % self.clear_cache_every_n_steps == 0:
-            self.teacher_cache.clear()
-            torch.cuda.empty_cache() if torch.cuda.is_available() else None
-            
-        return teacher_output
-    
-    def forward(self, x):
-        """Forward pass - handles different model calling conventions."""
-        if self.model_type == "vgae":
-            # VGAE models expect separate arguments
-            return self.model(x.x, x.edge_index, x.batch)
-        else:
-            # GAT models expect the full batch object
-            return self.model(x)
-    
-    def training_step(self, batch, batch_idx):
-        """Training step - handles different training modes."""
-        
-        if self.training_mode == "autoencoder":
-            return self._autoencoder_training_step(batch, batch_idx)
-        elif self.training_mode == "knowledge_distillation":
-            return self._knowledge_distillation_step(batch, batch_idx)
-        elif self.training_mode == "fusion":
-            return self._fusion_training_step(batch, batch_idx)
-        else:
-            return self._normal_training_step(batch, batch_idx)
-    
-    def _normal_training_step(self, batch, batch_idx):
-        """Standard training step with optional memory preservation."""
+    if __name__ == "__main__":
+        logger.info("Deprecated entrypoint. Use train_with_hydra_zen.py for training.")
+        sys.exit(1)
         output = self.model(batch) if self.model_type == "gat" else self.forward(batch)
         base_loss = self._compute_loss(output, batch)
         
@@ -345,7 +236,7 @@ class CANGraphLightningModule(pl.LightningModule):
     
     def _compute_loss(self, output, batch):
         """Compute standard loss."""
-        if self.model_type == "vgae":
+        if self.model_type in ["vgae", "vgae_student"]:
             # VGAE outputs: (cont_out, canid_logits, neighbor_logits, z, kl_loss)
             cont_out, canid_logits, neighbor_logits, z, kl_loss = output
             
@@ -375,7 +266,7 @@ class CANGraphLightningModule(pl.LightningModule):
     
     def _compute_autoencoder_loss(self, output, batch):
         """Compute reconstruction loss for autoencoder."""
-        if self.model_type == "vgae":
+        if self.model_type in ["vgae", "vgae_student"]:
             # VGAE outputs: (cont_out, canid_logits, neighbor_logits, z, kl_loss)
             cont_out, canid_logits, neighbor_logits, z, kl_loss = output
             
@@ -762,126 +653,6 @@ class CANGraphDataModule(pl.LightningDataModule):
         )
 
 
-@hydra.main(version_base=None, config_path="conf", config_name="config")
-def main(config: DictConfig):
-    """
-    Main training function - uses Lightning Trainer directly, no custom wrappers.
-    """
-    logger.info("Starting CAN-Graph training")
-    logger.info(f"Configuration:\n{OmegaConf.to_yaml(config)}")
-    
-    # Load and prepare dataset
-    train_dataset, val_dataset, num_ids = load_dataset(config.dataset.name, config)
-    
-    # Create Lightning module
-    model = CANGraphLightningModule(
-        model_config=config.model,
-        training_config=config.training,
-        model_type=config.model.type,
-        training_mode=config.training.get('mode', 'normal'),
-        num_ids=num_ids
-    )
-    
-    # Find Optimal Batch Size
-    if config.training.get('optimize_batch_size', False):
-        logger.info("Finding optimal batch size with Lightning's Tuner")
-        
-        # Create temporary DataModule
-        temp_datamodule = CANGraphDataModule(train_dataset, val_dataset, model.batch_size)
-        
-        trainer = pl.Trainer(
-            accelerator='auto',
-            devices='auto',
-            precision='32-true',
-            max_epochs=1,
-            enable_checkpointing=False,
-            logger=False
-        )
-        
-        tuner = Tuner(trainer)
-        try:
-            tuner.scale_batch_size(
-                model,
-                datamodule=temp_datamodule,
-                mode='power',
-                steps_per_trial=3,
-                init_val=4096,
-                max_trials=10
-            )
-            
-            optimized_batch_size = model.batch_size
-            logger.info(f"Batch size optimized to: {optimized_batch_size}")
-            
-        except Exception as e:
-            logger.warning(f"Batch size optimization failed: {e}. Using original batch size.")
-    
-    # Conservative adjustment for knowledge distillation
-    if config.training.get('mode') == 'knowledge_distillation':
-        model.batch_size = max(model.batch_size // 2)  # KD needs more memory
-        logger.info(f"Reduced batch size for knowledge distillation: {model.batch_size}")
-    
-    # Create dataloaders with optimized batch size
-    train_loader, val_loader = create_dataloaders(
-        train_dataset, val_dataset, model.batch_size
-    )
-    
-    # Setup loggers based on configuration
-    loggers = []
-    csv_logger = CSVLogger(
-        save_dir=config.get('log_dir', 'outputs/lightning_logs'),
-        name=f"{config.model.type}_{config.training.get('mode', 'normal')}_training"
-    )
-    loggers.append(csv_logger)
-    
-    # Add TensorBoard logger if enabled (optional)
-    if config.get('logging', {}).get('enable_tensorboard', False):
-        tb_logger = TensorBoardLogger(
-            save_dir=config.get('log_dir', 'outputs/lightning_logs'),
-            name=f"{config.model.type}_{config.training.get('mode', 'normal')}_training"
-        )
-        loggers.append(tb_logger)
-        logger.info("TensorBoard logging enabled. Run 'tensorboard --logdir outputs/lightning_logs' to view.")
-    
-    # Setup Lignhtning Trainer
-    trainer = pl.Trainer(
-        accelerator='auto',
-        devices='auto', 
-        precision='32-true',  # Use valid precision instead of 'auto'
-        max_epochs=config.training.max_epochs,
-        gradient_clip_val=config.training.get('gradient_clip_val', 1.0),  # Clip gradients for stability
-        logger=loggers,
-        callbacks=[
-            ModelCheckpoint(
-                dirpath='saved_models/lightning_checkpoints',
-                filename=f'{config.model.type}_{{epoch:02d}}_{{val_loss:.2f}}',
-                save_top_k=3,
-                monitor='val_loss',
-                mode='min',
-                save_last=True
-            ),
-        ],
-        enable_checkpointing=True,
-        log_every_n_steps=config.training.get('log_every_n_steps', 50),
-    )
-    
-    # Train with Lightning Trainer
-    logger.info("Training with Lightning Trainer")
-    trainer.fit(model, train_loader, val_loader)
-    
-    # Test if enabled
-    if config.training.get('run_test', True):
-        test_results = trainer.test(model, val_loader)
-        logger.info(f"Test results: {test_results}")
-    
-    # Save model
-    model_name = f"{config.model.type}_{config.training.get('mode', 'normal')}_{config.dataset.name}.pth"
-    save_path = Path("saved_models") / model_name
-    save_path.parent.mkdir(parents=True, exist_ok=True)
-    torch.save(model.state_dict(), save_path)
-    logger.info(f"Model saved to: {save_path}")
-    
-    logger.info("Training completed successfully!")
-
-
 if __name__ == "__main__":
-    main()
+    logger.info("Deprecated entrypoint. Use train_with_hydra_zen.py for training.")
+    sys.exit(1)

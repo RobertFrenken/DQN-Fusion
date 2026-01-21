@@ -94,6 +94,16 @@ class OSCJobManager:
                 "mode": "curriculum",
                 "model": "gat"
             },
+            "gat_student_baseline": {
+                "time": "2:30:00",
+                "time_complex": "6:00:00",
+                "mem": "32G",
+                "mem_complex": "48G",
+                "cpus": 8,
+                "gpus": 1,
+                "mode": "student_baseline",
+                "model": "gat_student"
+            },
             "gat_fusion": {
                 "time": "3:00:00",
                 "mem": "48G",
@@ -109,7 +119,7 @@ class OSCJobManager:
                 "mem_complex": "64G",  # More memory for complex datasets
                 "cpus": 8,
                 "gpus": 1,
-                "mode": "normal",
+                "mode": "fusion",  # DQN uses fusion mode
                 "model": "dqn"
             },
             "dqn_curriculum": {
@@ -119,7 +129,7 @@ class OSCJobManager:
                 "mem_complex": "80G",  # More memory for complex datasets
                 "cpus": 8,
                 "gpus": 1,
-                "mode": "curriculum",
+                "mode": "fusion",  # DQN curriculum also uses fusion mode
                 "model": "dqn"
             }
         }
@@ -232,11 +242,13 @@ echo "Elapsed: ${{elapsed}}s ($((elapsed / 3600))h $((elapsed % 3600 / 60))m)"
 echo "Finished: $(date)"
 echo "===================="
 
-# Copy important outputs to job directory
-cp -r outputs/lightning_logs/* {output_dir}/ 2>/dev/null || true
-cp saved_models/*{dataset}* {output_dir}/ 2>/dev/null || true
+# Note: Files are already saved to {output_dir} by train_with_hydra_zen.py
+# Model: {output_dir}/*.pth
+# Checkpoints: {output_dir}/lightning_checkpoints/
+# MLFlow logs: {output_dir}/mlruns/
 
 echo "✅ Job {job_name} completed successfully!"
+echo "📁 Output directory: {output_dir}"
 '''
         
         return script_content
@@ -286,7 +298,6 @@ echo "✅ Job {job_name} completed successfully!"
             vgae_path_new = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth"
             vgae_path_old = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{dataset}_autoencoder.pth"
             
-            import os
             if os.path.exists(vgae_path_new):
                 vgae_path = vgae_path_new
             elif os.path.exists(vgae_path_old):
@@ -302,7 +313,6 @@ echo "✅ Job {job_name} completed successfully!"
             vgae_path_new = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth"
             vgae_path_old = f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{dataset}_autoencoder.pth"
             
-            import os
             if os.path.exists(vgae_path_new):
                 vgae_path = vgae_path_new
             elif os.path.exists(vgae_path_old):
@@ -313,10 +323,58 @@ echo "✅ Job {job_name} completed successfully!"
             cmd_parts.extend([
                 f"--vgae_path {vgae_path}"
             ])
-        elif training_type == "gat_fusion":
-            # For fusion, look for models in hierarchical structure
-            autoencoder_path = f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{dataset}.pth"
-            classifier_path = f"osc_jobs/{dataset}/vgae/autoencoder/best_teacher_model_{dataset}.pth"
+        elif training_type in ["dqn_normal", "gat_fusion"]:
+            # For DQN and fusion, look for pre-trained models in hierarchical structure
+            # Try multiple locations for autoencoder and classifier
+            # Handle special case: hcrl_ch models may be named _ch instead of _hcrl_ch
+            dataset_short = "ch" if dataset == "hcrl_ch" else dataset
+            dataset_variants = [dataset, dataset_short] if dataset == "hcrl_ch" else [dataset]
+            
+            autoencoder_paths = []
+            classifier_paths = []
+            
+            for ds in dataset_variants:
+                autoencoder_paths.extend([
+                    # New hierarchical structure (priority)
+                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth",  # Actual model file
+                    f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{ds}.pth",  # Compatibility symlink
+                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_teacher_{ds}.pth",  # Compatibility symlink
+                    # Old locations (fallback)
+                    f"model_archive/quick_archive_20260114_1642/autoencoder_{ds}.pth",
+                    f"saved_models/autoencoder_{ds}.pth"
+                ])
+                classifier_paths.extend([
+                    # New hierarchical structure (priority)
+                    f"osc_jobs/{dataset}/gat/normal/gat_normal.pth",  # Actual model file
+                    f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{ds}.pth",  # Compatibility symlink
+                    f"osc_jobs/{dataset}/gat/normal/gat_teacher_{ds}.pth",  # Compatibility symlink
+                    f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum.pth",  # Curriculum as teacher
+                    f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum_{ds}.pth",  # Compatibility symlink
+                    # Old locations (fallback)
+                    f"model_archive/quick_archive_20260114_1642/best_teacher_model_{ds}.pth",
+                    f"saved_models/best_teacher_model_{ds}.pth"
+                ])
+            
+            # Find first existing autoencoder
+            autoencoder_path = None
+            for path in autoencoder_paths:
+                if os.path.exists(path):
+                    autoencoder_path = path
+                    break
+            
+            # Find first existing classifier
+            classifier_path = None
+            for path in classifier_paths:
+                if os.path.exists(path):
+                    classifier_path = path
+                    break
+            
+            # Use defaults if not found (will show clear error during training)
+            if not autoencoder_path:
+                autoencoder_path = autoencoder_paths[0]
+            if not classifier_path:
+                classifier_path = classifier_paths[0]
+            
             cmd_parts.extend([
                 f"--autoencoder_path {autoencoder_path}",
                 f"--classifier_path {classifier_path}"
@@ -439,6 +497,45 @@ echo "✅ Job {job_name} completed successfully!"
                           dependency: str = None) -> str:
         """Submit a single job with optional dependency."""
         
+        # Validate DQN/fusion jobs have required models
+        if training_type in ["dqn_normal", "gat_fusion"]:
+            dataset_short = "ch" if dataset == "hcrl_ch" else dataset
+            dataset_variants = [dataset, dataset_short] if dataset == "hcrl_ch" else [dataset]
+            
+            # Check for autoencoder
+            autoencoder_found = False
+            for ds in dataset_variants:
+                if (os.path.exists(f"model_archive/quick_archive_20260114_1642/autoencoder_{ds}.pth") or
+                    os.path.exists(f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{ds}.pth") or
+                    os.path.exists(f"saved_models/autoencoder_{ds}.pth")):
+                    autoencoder_found = True
+                    break
+            
+            # Check for classifier
+            classifier_found = False
+            for ds in dataset_variants:
+                if (os.path.exists(f"model_archive/quick_archive_20260114_1642/best_teacher_model_{ds}.pth") or
+                    os.path.exists(f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{ds}.pth") or
+                    os.path.exists(f"saved_models/best_teacher_model_{ds}.pth")):
+                    classifier_found = True
+                    break
+            
+            if not autoencoder_found or not classifier_found:
+                missing = []
+                if not autoencoder_found:
+                    missing.append("VGAE autoencoder")
+                if not classifier_found:
+                    missing.append("GAT classifier")
+                
+                logger.warning(f"⚠️  {training_type} for {dataset} requires pre-trained models:")
+                logger.warning(f"   Missing: {', '.join(missing)}")
+                logger.warning(f"   Please run these first:")
+                if not autoencoder_found:
+                    logger.warning(f"     python osc_job_manager.py --submit-individual --training vgae_autoencoder --datasets {dataset}")
+                if not classifier_found:
+                    logger.warning(f"     python osc_job_manager.py --submit-individual --training gat_normal --datasets {dataset}")
+                logger.warning(f"   Or use --submit-pipeline to train all stages automatically")
+                
         job_name = f"{training_type}_{dataset}"
         script_content = self.generate_slurm_script(job_name, training_type, dataset)
         
@@ -645,7 +742,7 @@ def main():
     parser.add_argument("--datasets", type=str, 
                        help="Comma-separated list of datasets")
     parser.add_argument("--training", type=str, choices=["gat_normal", "vgae_autoencoder", 
-                       "gat_curriculum", "gat_fusion", "dqn_normal", "dqn_curriculum"],
+                       "gat_curriculum", "gat_student_baseline", "gat_fusion", "dqn_normal", "dqn_curriculum"],
                        help="Training type for parameter sweep")
     parser.add_argument("--class-balance", type=str, 
                        choices=["focal", "weighted", "undersample", "oversample", "smote"],

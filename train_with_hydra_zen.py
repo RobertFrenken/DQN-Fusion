@@ -37,6 +37,7 @@ from src.config.hydra_zen_configs import (
     create_autoencoder_config, create_fusion_config,
     validate_config
 )
+from src.config.training_presets import get_preset, list_presets as list_new_presets, PRESET_DOCUMENTATION
 from train_models import CANGraphLightningModule, load_dataset, create_dataloaders, CANGraphDataModule
 from src.training.fusion_lightning import FusionLightningModule
 from src.training.prediction_cache import create_fusion_prediction_cache
@@ -253,14 +254,76 @@ class HydraZenTrainer:
         
         # Save final model
         paths = self.get_hierarchical_paths()
-        model_name = f"{self.config.model.type}_{self.config.training.mode}.pth"
+        
+        # Create descriptive model name based on training mode
+        if self.config.training.mode == "student_baseline" and self.config.model.type == "gat_student":
+            model_name = "gat_student_baseline.pth"
+        elif self.config.training.mode == "student_baseline" and self.config.model.type == "vgae_student":
+            model_name = "vgae_student_baseline.pth"
+        elif self.config.training.mode == "student_baseline" and self.config.model.type == "dqn_student":
+            model_name = "dqn_student_baseline.pth"
+        elif self.config.training.mode == "knowledge_distillation":
+            # Include scale factor for student models
+            scale = getattr(self.config.training, 'student_model_scale', 1.0)
+            model_name = f"{self.config.model.type}_student_kd_scale_{scale:.2f}.pth"
+        else:
+            # Standard naming for teacher/normal models
+            model_name = f"{self.config.model.type}_{self.config.training.mode}.pth"
+        
         save_path = paths['model_save_dir'] / model_name
         save_path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(model.state_dict(), save_path)
         logger.info(f"Model saved to: {save_path}")
         
+        # Create symbolic links for backward compatibility
+        self._create_compatibility_links(save_path, paths['model_save_dir'])
+        
         logger.info("✅ Training completed successfully!")
         return model, trainer
+
+    def _create_compatibility_links(self, model_path: Path, save_dir: Path):
+        """Create symbolic links for backward compatibility."""
+        dataset = self.config.dataset.name
+        mode = self.config.training.mode
+        model_type = self.config.model.type
+
+        # Create links based on training mode
+        link_names = []
+
+        if mode == "normal" and model_type == "gat":
+            # GAT normal model can be used as teacher
+            link_names.append(f"best_teacher_model_{dataset}.pth")
+            link_names.append(f"gat_teacher_{dataset}.pth")
+        elif mode == "autoencoder" and model_type == "vgae":
+            # VGAE autoencoder for fusion and curriculum
+            link_names.append(f"autoencoder_{dataset}.pth")
+            link_names.append(f"vgae_teacher_{dataset}.pth")
+        elif mode == "curriculum" and model_type == "gat":
+            # Curriculum trained model
+            link_names.append(f"gat_curriculum_{dataset}.pth")
+        elif mode == "student_baseline" and model_type == "gat_student":
+            # Baseline GAT student model without KD
+            link_names.append(f"gat_student_baseline_{dataset}.pth")
+        elif mode == "student_baseline" and model_type == "vgae_student":
+            # Baseline VGAE student
+            link_names.append(f"vgae_student_baseline_{dataset}.pth")
+        elif mode == "student_baseline" and model_type == "dqn_student":
+            # Baseline DQN student (placeholder compatibility)
+            link_names.append(f"dqn_student_baseline_{dataset}.pth")
+
+        # Create the symbolic links
+        for link_name in link_names:
+            link_path = save_dir / link_name
+            try:
+                # Remove existing link if it exists
+                if link_path.is_symlink() or link_path.exists():
+                    link_path.unlink()
+                # Create relative symlink
+                link_path.symlink_to(model_path.name)
+                logger.info(f"Created compatibility link: {link_name} -> {model_path.name}")
+            except Exception as e:
+                logger.warning(f"Could not create link {link_name}: {e}")
+    
     
     def _train_fusion(self):
         """Fusion training using cached VGAE and GAT predictions."""
@@ -694,11 +757,11 @@ class HydraZenTrainer:
 
 
 # ============================================================================
-# Preset Configurations
+# Legacy Preset Configurations (deprecated - use training_presets module)
 # ============================================================================
 
 def get_preset_configs() -> Dict[str, CANGraphConfig]:
-    """Get predefined preset configurations."""
+    """Get predefined preset configurations (DEPRECATED - use training_presets module)."""
     presets = {}
     
     # Normal training presets
@@ -780,18 +843,20 @@ Examples:
     
     # Preset mode
     parser.add_argument('--preset', type=str,
-                      help='Use a preset configuration')
+                      help='Use a training preset (e.g., distillation_aggressive, student_gat_baseline)')
+    parser.add_argument('--preset-info', action='store_true',
+                      help='Show detailed preset documentation and examples')
     parser.add_argument('--list-presets', action='store_true',
                       help='List available preset configurations')
     
     # Manual configuration
-    parser.add_argument('--model', type=str, choices=['gat', 'vgae', 'dqn'], default='gat',
+    parser.add_argument('--model', type=str, choices=['gat', 'gat_student', 'vgae', 'vgae_student', 'dqn', 'dqn_student'], default='gat',
                       help='Model type')
     parser.add_argument('--dataset', type=str, 
                       choices=['hcrl_sa', 'hcrl_ch', 'set_01', 'set_02', 'set_03', 'set_04', 'car_hacking'],
                       default='hcrl_sa', help='Dataset name')
     parser.add_argument('--training', type=str, 
-                      choices=['normal', 'autoencoder', 'knowledge_distillation', 'curriculum', 'fusion'],
+                      choices=['normal', 'autoencoder', 'knowledge_distillation', 'student_baseline', 'curriculum', 'fusion'],
                       default='normal', help='Training mode')
     
     # Knowledge distillation specific
@@ -828,8 +893,12 @@ Examples:
     
     args = parser.parse_args()
     
+    if args.preset_info:
+        print(PRESET_DOCUMENTATION)
+        return
+    
     if args.list_presets:
-        list_presets()
+        list_new_presets()
         return
     
     # Create configuration
@@ -850,6 +919,22 @@ Examples:
         # Manual configuration
         store_manager = CANGraphConfigStore()
         
+        # Handle DQN model type by converting to fusion mode
+        model_type = args.model
+        training_mode = args.training
+        
+        if args.model in ["dqn", "dqn_student"]:
+            logger.info("🔀 DQN model type detected - automatically switching to fusion training mode")
+            model_type = args.model
+            training_mode = "fusion"
+        elif training_mode == "student_baseline":
+            if model_type == "gat":
+                logger.info("🎓 Student baseline selected - switching model to gat_student")
+                model_type = "gat_student"
+            elif model_type == "vgae":
+                logger.info("🎓 Student baseline selected - switching model to vgae_student")
+                model_type = "vgae_student"
+        
         # Prepare overrides
         overrides = {}
         if args.teacher_path:
@@ -868,8 +953,12 @@ Examples:
             overrides['learning_rate'] = args.learning_rate
         if args.early_stopping_patience:
             overrides['early_stopping_patience'] = args.early_stopping_patience
+        if args.autoencoder_path:
+            overrides['autoencoder_path'] = args.autoencoder_path
+        if args.classifier_path:
+            overrides['classifier_path'] = args.classifier_path
         
-        config = store_manager.create_config(args.model, args.dataset, args.training, **overrides)
+        config = store_manager.create_config(model_type, args.dataset, training_mode, **overrides)
     
     # Apply global overrides
     if args.tensorboard:
