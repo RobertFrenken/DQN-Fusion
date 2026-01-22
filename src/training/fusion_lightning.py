@@ -15,7 +15,7 @@ from typing import Tuple, Optional, Dict, Any
 from pathlib import Path
 import logging
 
-from src.models.adaptive_fusion import EnhancedDQNFusionAgent
+from src.models.dqn import EnhancedDQNFusionAgent
 from src.utils.lightning_gpu_utils import LightningGPUOptimizer
 
 logger = logging.getLogger(__name__)

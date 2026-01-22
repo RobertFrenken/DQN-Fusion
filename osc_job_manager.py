@@ -107,22 +107,19 @@ class OSCJobManager:
             "training_modes": ["all_samples", "normals_only","curriculum_classifier", "curriculum_fusion"],
         }
 
-        # Where we save job submission scripts (separate from experiment_runs which contains outputs)
-        self.jobs_dir = self.project_root / "osc_job_scripts"
-        self.jobs_dir.mkdir(parents=True, exist_ok=True)
-
-        # Canonical resource profiles for each training/workflow type (STRICT - no fallbacks)
-        self.resource_profiles = {
-            "gat_normal": {"time": "02:00:00", "mem": "32G", "cpus": 8, "gpus": 1, "model": "gat", "mode": "normal"},
-            "vgae_autoencoder": {"time": "02:00:00", "mem": "32G", "cpus": 8, "gpus": 1, "model": "vgae", "mode": "autoencoder"},
-            "gat_curriculum": {"time": "04:00:00", "mem": "48G", "cpus": 8, "gpus": 1, "model": "gat", "mode": "curriculum"},
-            "gat_student_baseline": {"time": "02:30:00", "mem": "32G", "cpus": 8, "gpus": 1, "model": "gat_student", "mode": "student_baseline"},
-            "dqn_normal": {"time": "04:00:00", "mem": "64G", "cpus": 8, "gpus": 1, "model": "dqn", "mode": "fusion"},
-            "dqn_curriculum": {"time": "12:00:00", "mem": "80G", "cpus": 8, "gpus": 1, "model": "dqn", "mode": "fusion_curriculum"}
-        }
-
-        # Datasets that require more resources
-        self.complex_datasets = ["set_01", "set_02", "set_03", "set_04"]
+    
+    def generate_slurm_script(self, job_name: str, training_type: str, dataset: str, 
+                            extra_args: Dict[str, Any] = None) -> str:
+        """Generate optimized SLURM script for unified training approach."""
+    
+    def parse_extra_args(self, extra_args_str: str) -> Dict[str, Any]:
+        """Parse extra arguments string into dictionary.
+        
+        Args:
+            extra_args_str: String in format 'key1=value1' or 'key1=value1,key2=value2'
+            
+        Returns:
+            Dictionary of parsed arguments
         """
     
     def _build_training_command(self, training_type: str, dataset: str, 
@@ -167,7 +164,7 @@ class OSCJobManager:
 
 
 def main():
-
+      
     manager = OSCJobManager()
 
 

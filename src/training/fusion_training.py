@@ -33,7 +33,7 @@ import random
 
 # Import your existing modules
 from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
-from src.models.adaptive_fusion import EnhancedDQNFusionAgent
+from src.models.dqn import EnhancedDQNFusionAgent
 from src.preprocessing.preprocessing import graph_creation, build_id_mapping_from_normal
 # Removed legacy utils_logging - functionality moved to Lightning-native patterns
 from src.utils.cache_manager import CacheManager

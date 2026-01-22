@@ -110,24 +110,10 @@ class HydraZenTrainer:
         (experiment_dir / "mlruns").mkdir(exist_ok=True)
 
         # Also create a legacy-compatible path under <project_root>/osc_jobs/{dataset}/{model}/{mode}
-        legacy_dir = Path(__file__).parent.resolve() / "osc_jobs" / dataset_name / model_type / training_mode
-        legacy_dir.mkdir(parents=True, exist_ok=True)
-
-        paths = {
-            'experiment_dir': experiment_dir.resolve(),
-            'model_save_dir': experiment_dir.resolve(),
-            'log_dir': experiment_dir.resolve(),
-            'checkpoint_dir': (experiment_dir / "lightning_checkpoints").resolve(),
-            'mlruns_dir': (experiment_dir / "mlruns").resolve(),
-            'legacy_dir': legacy_dir.resolve()
-        }
+   
 
         # Debug log all paths
-        logger.info("Generated hierarchical paths:")
-        for key, path in paths.items():
-            logger.info(f"  {key}: {path}")
-
-        return paths
+        logger.inf
     
     def setup_model(self, num_ids: int) -> pl.LightningModule:
         """Create the Lightning module from config."""
