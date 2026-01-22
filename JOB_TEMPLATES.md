@@ -155,7 +155,7 @@ model_type: "teacher"          # Explicitly set as teacher model
 use_teacher_config: true       # Enable teacher architecture
 teacher_model_path: null       # Path to pre-trained teacher (if loading)
 save_teacher_model: true       # Save teacher model after training
-teacher_checkpoint_dir: "saved_models/"  # Teacher model save directory (use canonical saved_models/ or osc_jobs/ locations)
+teacher_checkpoint_dir: "osc_jobs/{dataset}/gat/normal/"  # Teacher model save directory (recommended: use oscillator per-job paths)
 ```
 
 #### Student Model Parameters
@@ -163,9 +163,9 @@ teacher_checkpoint_dir: "saved_models/"  # Teacher model save directory (use can
 model_type: "student"          # Explicitly set as student model
 use_student_config: true       # Enable student architecture
 student_model_path: null       # Path to pre-trained student (if loading)
-    teacher_model_path: "osc_jobs/{dataset}/gat/normal/best_teacher_model_{dataset}.pth"  # Required teacher path (new canonical location)
+teacher_model_path: "osc_jobs/{dataset}/gat/normal/best_teacher_model_{dataset}.pth"  # Required teacher path (preferred)
 save_student_model: true       # Save student model after training
-student_checkpoint_dir: "saved_models/"  # Student model save directory (use canonical saved_models/ or osc_jobs/ locations)
+student_checkpoint_dir: "saved_models/"  # Student model save directory (compatibility links)
 ```
 
 #### Knowledge Distillation Specific Parameters
@@ -238,11 +238,11 @@ overrides:
   knowledge_distillation:
     temperature: 4.0           # Override KD temperature
     alpha: 0.7                 # Override KD loss weight
-    teacher_model_path: "model_archive/best_teacher_model_hcrl_sa.pth"
+    teacher_model_path: "osc_jobs/hcrl_sa/gat/normal/best_teacher_model_hcrl_sa.pth"
 ```
 
 ### Default Training Parameters
-| Parameter | VGAE Autoencoder | GAT Normal | Knowledge Distillation | GAT Curriculum | GAT Fusion | Override Syntax |
+| Parameter | VGAE Autoencoder | GAT Normal | Knowledge Distillation | GAT Curriculum | DQN Fusion | Override Syntax |
 |-----------|------------------|------------|------------------------|----------------|------------|------------------|
 | **Epochs** | 100 | 200 | 150 | 200 | 100 | `--extra-args "epochs=500"` |
 | **Learning Rate** | 1e-3 | 1e-3 | 1e-3 | 1e-3 | 1e-3 | `--extra-args "learning_rate=0.001"` |
@@ -259,7 +259,7 @@ overrides:
 | **GAT Normal** | 8:00:00 | 64GB | 1 | `--extra-args "memory=48G"` |
 | **Knowledge Distillation** | 8:00:00 | 64GB | 1 | `--extra-args "temperature=6.0,alpha=0.8"` |
 | **GAT Curriculum** | 8:00:00 | 64GB | 1 | `--extra-args "cpus=12"` |
-| **GAT Fusion** | 8:00:00 | 64GB | 1 | `--extra-args "gpus=2"` |
+| **DQN Fusion** | 8:00:00 | 64GB | 1 | `--extra-args "gpus=2"` |
 
 **All Datasets**: `hcrl_sa`, `hcrl_ch`, `set_01`, `set_02`, `set_03`, `set_04` (8 hour wall time, 64GB memory)
 
@@ -285,7 +285,7 @@ overrides:
 - **VGAE Autoencoder**: Graph autoencoder training
 - **GAT Normal**: Standard GAT training  
 - **GAT Curriculum**: GAT with curriculum learning (requires VGAE)
-- **GAT Fusion**: Multi-modal fusion training (requires GAT + VGAE)
+- **DQN Fusion**: Multi-modal fusion training with DQN agent (requires GAT + VGAE)
 
 ---
 
@@ -345,8 +345,8 @@ python osc_job_manager.py --submit-individual --datasets set_01 --training gat_n
 # GAT curriculum learning for hcrl_ch (4 hours, 48GB)
 python osc_job_manager.py --submit-individual --datasets hcrl_ch --training gat_curriculum
 
-# GAT fusion for hcrl_sa (3 hours, 48GB) - requires existing GAT+VGAE models
-python osc_job_manager.py --submit-individual --datasets hcrl_sa --training gat_fusion
+# DQN fusion for hcrl_sa (3 hours, 48GB) - requires existing GAT+VGAE models
+python osc_job_manager.py --submit-individual --datasets hcrl_sa --training dqn_normal
 ```
 
 ### 2. VGAE Autoencoder for All Datasets
@@ -390,22 +390,22 @@ python osc_job_manager.py --submit-individual --datasets hcrl_sa,hcrl_ch --train
 python osc_job_manager.py --submit-individual --datasets set_01,set_02,set_03,set_04 --training gat_curriculum
 ```
 
-### 5. Fusion Model for Single Dataset
+### 5. DQN Fusion Model for Single Dataset
 
 **⚠️ IMPORTANT: Requires existing GAT and VGAE models**
 
 ```bash
-# Fusion for hcrl_sa (3 hours, 48GB)
-python osc_job_manager.py --submit-individual --datasets hcrl_sa --training gat_fusion
+# DQN fusion for hcrl_sa (3 hours, 48GB)
+python osc_job_manager.py --submit-individual --datasets hcrl_sa --training dqn_normal
 
-# Fusion for set_01 (3 hours, 48GB)
-python osc_job_manager.py --submit-individual --datasets set_01 --training gat_fusion
+# DQN fusion for set_01 (3 hours, 48GB)
+python osc_job_manager.py --submit-individual --datasets set_01 --training dqn_normal
 
-# Fusion for hcrl_ch (3 hours, 48GB)
-python osc_job_manager.py --submit-individual --datasets hcrl_ch --training gat_fusion
+# DQN fusion for hcrl_ch (3 hours, 48GB)
+python osc_job_manager.py --submit-individual --datasets hcrl_ch --training dqn_normal
 ```
 
-### 6. Fusion Model for All Datasets
+### 6. DQN Fusion Model for All Datasets
 
 **⚠️ IMPORTANT: Requires existing GAT and VGAE models for all datasets**
 
@@ -446,13 +446,6 @@ python osc_job_manager.py --submit-pipeline --datasets hcrl_sa,hcrl_ch,set_01,se
 python osc_job_manager.py --monitor-jobs
 
 # Check specific jobs in SLURM queue
-
-💡 Notification tips
-- For single, concise completion notifications (no spam), set a webhook URL in `osc_job_manager.py` under `osc_settings["notify_webhook"]` (e.g., a Slack incoming webhook). The generated SLURM scripts will send a single short message on completion or failure.
-- Alternatively, set `osc_settings["notify_email"]` for one summary email per job (sent at job end). This is often cleaner than enabling `#SBATCH --mail-type=END,FAIL` which can create many messages.
-- You can also export `NOTIFY_WEBHOOK` or `NOTIFY_EMAIL` in your shell environment on the cluster to avoid storing secrets in files.
-
-
 squeue -u $USER
 
 # Check job details
@@ -466,7 +459,7 @@ osc_jobs/
 │   ├── gat/
 │   │   ├── normal/          # GAT normal training outputs
 │   │   ├── curriculum/      # GAT curriculum training outputs  
-│   │   └── fusion/          # GAT fusion training outputs
+│   │   └── dqn/             # DQN fusion training outputs
 │   └── vgae/
 │       └── autoencoder/     # VGAE autoencoder outputs
 ```
@@ -514,7 +507,7 @@ python osc_job_manager.py --submit-individual --datasets set_04 --training gat_n
 | VGAE Autoencoder | 2:00:00 | 8:00:00 | 32G/64G | 8 | 1 |
 | GAT Normal | 2:00:00 | 8:00:00 | 32G/64G | 8 | 1 |
 | GAT Curriculum | 4:00:00 | 12:00:00 | 48G/80G | 8 | 1 |
-| GAT Fusion | 3:00:00 | 3:00:00 | 48G | 8 | 1 |
+| DQN Fusion | 3:00:00 | 3:00:00 | 48G | 8 | 1 |
 
 **Standard Datasets**: `hcrl_sa`, `hcrl_ch`  
 **Complex Datasets**: `set_01`, `set_02`, `set_03`, `set_04`

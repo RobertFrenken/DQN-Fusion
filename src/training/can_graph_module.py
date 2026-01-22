@@ -68,6 +68,33 @@ class CANGraphLightningModule(pl.LightningModule):
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
 
+    # Training step dispatcher (required by Lightning) and normal training step
+    def training_step(self, batch, batch_idx):
+        """Dispatch to the appropriate training step based on `training_mode`."""
+        if self.training_mode == "autoencoder":
+            return self._autoencoder_training_step(batch, batch_idx)
+        elif self.training_mode == "knowledge_distillation":
+            return self._knowledge_distillation_step(batch, batch_idx)
+        elif self.training_mode == "fusion":
+            return self._fusion_training_step(batch, batch_idx)
+        else:
+            return self._normal_training_step(batch, batch_idx)
+
+    def _normal_training_step(self, batch, batch_idx):
+        """Standard training step for supervised GAT or VGAE when applicable."""
+        if self.model_type == "gat":
+            output = self.model(batch)
+        else:
+            output = self.forward(batch)
+
+        base_loss = self._compute_loss(output, batch)
+        try:
+            batch_size = batch.y.size(0)
+        except Exception:
+            batch_size = None
+        self.log('train_loss', base_loss, prog_bar=True, batch_size=batch_size)
+        return base_loss
+
     # Training steps and loss computation
     def _autoencoder_training_step(self, batch, batch_idx):
         if hasattr(batch, 'y'):

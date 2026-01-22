@@ -20,7 +20,7 @@ Training Types:
     - gat_normal: Standard GAT training
     - vgae_autoencoder: VGAE autoencoder training
     - gat_curriculum: GAT with curriculum learning (requires VGAE)
-    - gat_fusion: GAT fusion training (requires GAT + VGAE)
+    - dqn_normal: DQN fusion training (requires GAT + VGAE)
 """
 
 import os
@@ -105,14 +105,7 @@ class OSCJobManager:
                 "mode": "student_baseline",
                 "model": "gat_student"
             },
-            "gat_fusion": {
-                "time": "3:00:00",
-                "mem": "48G",
-                "cpus": 8,
-                "gpus": 1, 
-                "mode": "fusion",
-                "model": "gat"  # Not used for fusion
-            },
+
             "dqn_normal": {
                 "time": "2:00:00",
                 "time_complex": "4:00:00",  # Reduced for faster turnaround on complex datasets
@@ -345,33 +338,25 @@ echo "📁 Output directory: {output_dir}"
             cmd_parts.extend([
                 f"--vgae_path {vgae_path}"
             ])
-        elif training_type in ["dqn_normal", "gat_fusion"]:
-            # For DQN and fusion, robustly discover pre-trained VGAE/GAT checkpoints
+        elif training_type == "dqn_normal":
+            # For DQN, discover pre-trained VGAE/GAT checkpoints only under `osc_jobs`
             # Handle special case: hcrl_ch models may be named _ch instead of _hcrl_ch
             dataset_short = "ch" if dataset == "hcrl_ch" else dataset
             dataset_variants = [dataset, dataset_short] if dataset == "hcrl_ch" else [dataset]
 
-            autoencoder_candidates = []
-            classifier_candidates = []
+            # Prefer canonical new naming patterns.
+            autoencoder_candidates = [
+                f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth",
+                f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{dataset}_autoencoder.pth",
+                f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{dataset}.pth",
+            ]
 
-            for ds in dataset_variants:
-                autoencoder_candidates.extend([
-                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth",
-                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{ds}_autoencoder.pth",
-                    f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{ds}.pth",
-                    f"saved_models/autoencoder_{ds}.pth",
-                ])
-
-                classifier_candidates.extend([
-                    f"osc_jobs/{dataset}/gat/normal/gat_{ds}_normal.pth",
-                    f"osc_jobs/{dataset}/gat/normal/gat_normal.pth",
-                    f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{ds}.pth",
-                    f"osc_jobs/{dataset}/gat/normal/gat_teacher_{ds}.pth",
-                    f"osc_jobs/{dataset}/gat/curriculum/gat_{ds}_curriculum.pth",
-                    f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum_{ds}.pth",
-                    f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum.pth",
-                    f"saved_models/best_teacher_model_{ds}.pth",
-                ])
+            classifier_candidates = [
+                f"osc_jobs/{dataset}/gat/normal/gat_{dataset}_normal.pth",
+                f"osc_jobs/{dataset}/gat/curriculum/gat_{dataset}_curriculum.pth",
+                f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum.pth",
+                f"osc_jobs/{dataset}/gat/**/gat_{dataset}_*.pth",
+            ]
 
             # Helper: pick the first existing candidate; if none, try globbing for likely matches
             def _select_existing(candidates, glob_patterns=None):
@@ -468,19 +453,19 @@ echo "📁 Output directory: {output_dir}"
             curriculum_job_id = self._submit_single_job("gat_curriculum", dataset, 
                                                        dependency=vgae_job_id)
             
-            # Stage 3: Fusion (depends on both individual models)
-            fusion_job_id = self._submit_single_job("gat_fusion", dataset,
-                                                   dependency=f"{gat_job_id}:{vgae_job_id}")
+            # Stage 3: DQN-based fusion (depends on both individual models)
+            dqn_job_id = self._submit_single_job("dqn_normal", dataset,
+                                                 dependency=f"{gat_job_id}:{vgae_job_id}")
             
             submitted_jobs.extend([
                 (f"pipeline_{dataset}_gat", gat_job_id),
                 (f"pipeline_{dataset}_vgae", vgae_job_id), 
                 (f"pipeline_{dataset}_curriculum", curriculum_job_id),
-                (f"pipeline_{dataset}_fusion", fusion_job_id)
+                (f"pipeline_{dataset}_dqn", dqn_job_id)
             ])
             
             logger.info(f"✅ Submitted pipeline for {dataset}: "
-                       f"GAT({gat_job_id}), VGAE({vgae_job_id}), Fusion({fusion_job_id})")
+                       f"GAT({gat_job_id}), VGAE({vgae_job_id}), DQN({dqn_job_id})")
         
         return submitted_jobs
     
@@ -523,42 +508,91 @@ echo "📁 Output directory: {output_dir}"
                           dependency: str = None) -> str:
         """Submit a single job with optional dependency."""
         
-        # Validate DQN/fusion jobs have required models
-        if training_type in ["dqn_normal", "gat_fusion"]:
+        # Validate DQN/fusion jobs have required models (only when not part of a dependency chain)
+        if training_type == "dqn_normal" and dependency is None:
             dataset_short = "ch" if dataset == "hcrl_ch" else dataset
             dataset_variants = [dataset, dataset_short] if dataset == "hcrl_ch" else [dataset]
-            
-            # Check for autoencoder
+
+            import glob
+
+            # Check for autoencoder under osc_jobs
             autoencoder_found = False
+            autoencoder_path = None
             for ds in dataset_variants:
-                if (os.path.exists(f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{ds}.pth") or
-                    os.path.exists(f"saved_models/autoencoder_{ds}.pth")):
-                    autoencoder_found = True
+                candidates = [
+                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth",
+                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{ds}_autoencoder.pth",
+                    f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{ds}.pth",
+                ]
+                for p in candidates:
+                    if os.path.exists(p):
+                        autoencoder_found = True
+                        autoencoder_path = p
+                        break
+                if autoencoder_found:
                     break
-            
-            # Check for classifier
+
+            # Check for classifier under osc_jobs (normal or curriculum)
             classifier_found = False
+            classifier_path = None
             for ds in dataset_variants:
-                if (os.path.exists(f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{ds}.pth") or
-                    os.path.exists(f"saved_models/best_teacher_model_{ds}.pth")):
-                    classifier_found = True
+                candidates = [
+                    f"osc_jobs/{dataset}/gat/normal/gat_{ds}_normal.pth",
+                    f"osc_jobs/{dataset}/gat/curriculum/gat_{ds}_curriculum.pth",
+                    f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum_{ds}.pth",
+                ]
+                for p in candidates:
+                    if os.path.exists(p):
+                        classifier_found = True
+                        classifier_path = p
+                        break
+                if classifier_found:
                     break
-            
+
+            # Last-resort glob search within osc_jobs
+            if not autoencoder_found:
+                for pattern in [f"osc_jobs/{dataset}/vgae/autoencoder/**/*.pth"]:
+                    matches = glob.glob(pattern, recursive=True)
+                    if matches:
+                        autoencoder_found = True
+                        autoencoder_path = matches[0]
+                        break
+            if not classifier_found:
+                for pattern in [f"osc_jobs/{dataset}/gat/**/*.pth"]:
+                    matches = glob.glob(pattern, recursive=True)
+                    if matches:
+                        classifier_found = True
+                        classifier_path = matches[0]
+                        break
+
             if not autoencoder_found or not classifier_found:
                 missing = []
                 if not autoencoder_found:
                     missing.append("VGAE autoencoder")
                 if not classifier_found:
                     missing.append("GAT classifier")
-                
+
                 logger.warning(f"⚠️  {training_type} for {dataset} requires pre-trained models:")
                 logger.warning(f"   Missing: {', '.join(missing)}")
-                logger.warning(f"   Please run these first:")
+
+                # Auto-chain: submit missing pretraining jobs and queue downstream jobs using SLURM dependencies
+                last_job_id = None
+
                 if not autoencoder_found:
-                    logger.warning(f"     python osc_job_manager.py --submit-individual --training vgae_autoencoder --datasets {dataset}")
+                    logger.info(f"Autoencoder missing for {dataset} — submitting vgae_autoencoder")
+                    ae_job_id = self._submit_single_job("vgae_autoencoder", dataset)
+                    last_job_id = ae_job_id
+
+                # If classifier missing, submit GAT training; prefer curriculum if we're retraining autoencoder
                 if not classifier_found:
-                    logger.warning(f"     python osc_job_manager.py --submit-individual --training gat_normal --datasets {dataset}")
-                logger.warning(f"   Or use --submit-pipeline to train all stages automatically")
+                    gat_type = "gat_curriculum" if last_job_id else "gat_normal"
+                    logger.info(f"Submitting {gat_type} for {dataset} (dependency: {last_job_id})")
+                    gat_job_id = self._submit_single_job(gat_type, dataset, dependency=last_job_id)
+                    last_job_id = gat_job_id
+
+                # Finally queue the requested DQN/fusion job to run after the pretraining jobs
+                logger.info(f"Queuing {training_type} for {dataset} after dependencies (job dependency: {last_job_id})")
+                return self._submit_single_job(training_type, dataset, dependency=last_job_id)
                 
         job_name = f"{training_type}_{dataset}"
         script_content = self.generate_slurm_script(job_name, training_type, dataset)
@@ -766,7 +800,7 @@ def main():
     parser.add_argument("--datasets", type=str, 
                        help="Comma-separated list of datasets")
     parser.add_argument("--training", type=str, choices=["gat_normal", "vgae_autoencoder", 
-                       "gat_curriculum", "gat_student_baseline", "gat_fusion", "dqn_normal", "dqn_curriculum"],
+                       "gat_curriculum", "gat_student_baseline", "dqn_normal", "dqn_curriculum"],
                        help="Training type for parameter sweep")
     parser.add_argument("--class-balance", type=str, 
                        choices=["focal", "weighted", "undersample", "oversample", "smote"],
@@ -839,14 +873,14 @@ def main():
         logger.info(f"⏱️  Extended walltime (8 hours) and memory (64G) for complex datasets")
         
     elif args.submit_fusion:
-        logger.info("🚀 Submitting fusion training jobs...")
+        logger.info("🚀 Submitting DQN fusion training jobs...")
         datasets = datasets or manager.datasets
         jobs = []
         for dataset in datasets:
-            job_id = manager._submit_single_job("gat_fusion", dataset)
+            job_id = manager._submit_single_job("dqn_normal", dataset)
             if job_id:
-                jobs.append((f"gat_fusion_{dataset}", job_id))
-        logger.info(f"✅ Submitted {len(jobs)} fusion jobs")
+                jobs.append((f"dqn_normal_{dataset}", job_id))
+        logger.info(f"✅ Submitted {len(jobs)} dqn fusion jobs")
         
     elif args.submit_pipeline:
         logger.info("🚀 Submitting pipeline jobs...")

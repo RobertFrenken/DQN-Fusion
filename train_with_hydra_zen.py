@@ -26,25 +26,29 @@ from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger, MLFlowLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, DeviceStatsMonitor
 from lightning.pytorch.tuner import Tuner
 
-# Optional MLflow imports for manual artifact logging & tagging
-import mlflow
-import subprocess
-import json as _json
-
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
-# Import our modules
+# Import our modules (robust to path resolution issues in some SLURM environments)
 from src.config.hydra_zen_configs import (
     CANGraphConfig, CANGraphConfigStore, 
     create_gat_normal_config, create_distillation_config,
     create_autoencoder_config, create_fusion_config,
     validate_config
 )
-from src.config.training_presets import get_preset, list_presets as list_new_presets, PRESET_DOCUMENTATION
-from src.training.can_graph_module import CANGraphLightningModule
-from src.training.can_graph_data import load_dataset, create_dataloaders, CANGraphDataModule
+try:
+    from train_models import CANGraphLightningModule, load_dataset, create_dataloaders, CANGraphDataModule
+except ModuleNotFoundError:
+    # Retry with absolute resolved project root in case SLURM changes CWD or symlinks
+    resolved_root = project_root.resolve()
+    if str(resolved_root) not in sys.path:
+        sys.path.insert(0, str(resolved_root))
+    try:
+        from train_models import CANGraphLightningModule, load_dataset, create_dataloaders, CANGraphDataModule
+    except ModuleNotFoundError as e:
+        logger.error(f"Could not import local module train_models even after resolving project root: {e}")
+        raise
 from src.training.fusion_lightning import FusionLightningModule
 from src.training.prediction_cache import create_fusion_prediction_cache
 
@@ -133,6 +137,70 @@ class HydraZenTrainer:
         """Create the Lightning trainer from config."""
         # Get hierarchical paths
         paths = self.get_hierarchical_paths()
+
+    def _save_state_dict(self, model_obj, save_dir: Path, filename: str):
+        """Save a model's state_dict safely and verify it can be reloaded as a pure state_dict.
+
+        - Backs up existing file if present
+        - Supports plain nn.Module, Lightning modules (with .model), and fusion agents (dicts containing state_dicts)
+        - Attempts robust loading/conversion when legacy checkpoint formats are encountered
+        """
+        save_dir = Path(save_dir)
+        save_dir.mkdir(parents=True, exist_ok=True)
+        save_path = save_dir / filename
+
+        # Backup existing file
+        if save_path.exists():
+            backup = save_path.with_suffix(save_path.suffix + '.bak')
+            if not backup.exists():
+                import shutil
+                shutil.copy2(save_path, backup)
+                logger.info(f"Backed up existing model: {save_path} -> {backup}")
+
+        # Determine state to save
+        state_to_save = None
+        try:
+            # Fusion agents may expose explicit dict save methods
+            if hasattr(model_obj, 'fusion_agent') and hasattr(model_obj.fusion_agent, 'q_network'):
+                # Save essential agent networks rather than pickling the whole object
+                state_to_save = {
+                    'q_network_state_dict': model_obj.fusion_agent.q_network.state_dict(),
+                    'target_network_state_dict': model_obj.fusion_agent.target_network.state_dict(),
+                }
+            elif hasattr(model_obj, 'state_dict') and callable(model_obj.state_dict):
+                # Lightning modules often wrap models as .model
+                if hasattr(model_obj, 'model') and hasattr(model_obj.model, 'state_dict'):
+                    state_to_save = model_obj.model.state_dict()
+                else:
+                    state_to_save = model_obj.state_dict()
+            elif isinstance(model_obj, dict):
+                # Already a dict - try to extract nested state_dicts
+                state_to_save = model_obj
+            else:
+                raise RuntimeError("Unable to determine state_dict from model object")
+
+            torch.save(state_to_save, str(save_path))
+            logger.info(f"Saved state-dict to {save_path}")
+
+            # Quick validation load
+            loaded = torch.load(str(save_path), map_location='cpu')
+            if not isinstance(loaded, dict):
+                logger.warning(f"Saved checkpoint at {save_path} did not load as a dict. Review format.")
+            return save_path
+
+        except Exception as e:
+            logger.warning(f"State-dict save/load failed for {save_path}: {e}")
+            # Legacy checkpoint conversion disabled: require explicit state_dict inputs
+            raise RuntimeError(
+                f"Could not save/load state-dict to {save_path}: {e}.\n"
+                "Legacy checkpoint conversion is disabled to avoid unsafe unpickling.\n"
+                "Please re-export the original checkpoint as a state_dict using: "
+                "`ckpt = torch.load(old_checkpoint, map_location='cpu'); torch.save(ckpt['state_dict'], new_path)` "
+                "or re-run the training to produce a state_dict directly via `torch.save(model.state_dict(), path)`."
+            ) from e
+
+            # Final fallback: try trainer.save_checkpoint if available (handled by caller)
+            raise
         
         # Setup callbacks
         callbacks = []
@@ -186,25 +254,6 @@ class HydraZenTrainer:
             # Only log essential metrics: train/val loss, accuracy, epoch time
         )
         loggers.append(mlflow_logger)
-
-        # Set helpful experiment-level tags (dataset, model, mode, git) so the UI is easier to filter
-        try:
-            client = mlflow_logger.experiment  # MlflowClient
-            exp = client.get_experiment_by_name(mlflow_logger.experiment_name)
-            if exp is not None:
-                exp_id = exp.experiment_id
-                client.set_experiment_tag(exp_id, 'dataset', self.config.dataset.name)
-                client.set_experiment_tag(exp_id, 'model', self.config.model.type)
-                client.set_experiment_tag(exp_id, 'training_mode', self.config.training.mode)
-                client.set_experiment_tag(exp_id, 'seed', str(self.config.seed))
-                try:
-                    git_sha = subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
-                    client.set_experiment_tag(exp_id, 'git_commit', git_sha)
-                except Exception:
-                    pass
-        except Exception:
-            # Non-fatal: tagging is a convenience
-            logger.debug("Could not set MLflow experiment tags")
         
         # TensorBoard logger
         if self.config.logging.get("enable_tensorboard", False):
@@ -243,8 +292,6 @@ class HydraZenTrainer:
             return self._train_fusion()
         elif self.config.training.mode == "curriculum":
             return self.train_with_curriculum()
-        elif self.config.training.mode == "evaluation":
-            return self.run_evaluation()
         
         # Standard training - Load dataset
         force_rebuild = hasattr(self.config, 'force_rebuild_cache') and self.config.force_rebuild_cache
@@ -279,223 +326,22 @@ class HydraZenTrainer:
             test_results = trainer.test(model, val_loader)
             logger.info(f"Test results: {test_results}")
         
-        # Save final model
+        # Save final model as state_dict (standardized across all training types)
         paths = self.get_hierarchical_paths()
-
-    def run_evaluation(self):
-        """Run comprehensive evaluation using the new hydra-zen config."""
-        from src.evaluation.evaluation import ComprehensiveEvaluationPipeline, evaluate_comprehensive, create_optimized_data_loader
-        logger.info("🔬 Running comprehensive evaluation...")
-
-        # Load hierarchical paths
-        paths = self.get_hierarchical_paths()
-
-        # Load dataset for evaluation (use same loader as training to get num_ids)
-        force_rebuild = hasattr(self.config, 'force_rebuild_cache') and self.config.force_rebuild_cache
-        train_dataset, val_dataset, num_ids = load_dataset(self.config.dataset.name, self.config, force_rebuild_cache=force_rebuild)
-
-        # Instantiate evaluation pipeline
-        device = torch.device('cuda' if torch.cuda.is_available() and self.config.training.device == 'cuda' else 'cpu')
-        pipeline = ComprehensiveEvaluationPipeline(num_ids=num_ids, embedding_dim=getattr(self.config.model, 'embedding_dim', 8), device=device)
-
-        # Resolve model paths (config override or hierarchical defaults)
-        autoencoder_path = getattr(self.config.training, 'autoencoder_path', None) or (paths['model_save_dir'] / f"autoencoder_{self.config.dataset.name}.pth")
-        classifier_path = getattr(self.config.training, 'classifier_path', None) or (paths['model_save_dir'] / f"best_teacher_model_{self.config.dataset.name}.pth")
-        threshold_path = getattr(self.config.training, 'threshold_path', None)
-
-        logger.info(f"Evaluation models -> Autoencoder: {autoencoder_path} | Classifier: {classifier_path}")
-
-        # Load models if available
-        teacher_loaded = pipeline.load_teacher_models(str(autoencoder_path), str(classifier_path), threshold_path)
-        student_loaded = pipeline.load_student_models(str(autoencoder_path), str(classifier_path), threshold_path)
-
-        if not (teacher_loaded or student_loaded):
-            logger.error("No models found to evaluate. Provide model paths or ensure models exist in osc_jobs/...")
-            return None
-
-        # Create a test dataloader using the same utility
-        _, test_dataset, _ = load_dataset(self.config.dataset.name, self.config, force_rebuild_cache=False)
-        test_loader = create_optimized_data_loader(test_dataset, getattr(self.config.training, 'batch_size', None) or 512, device)
-
-        # Optionally optimize thresholds
-        if getattr(self.config.training, 'optimize_thresholds', True):
+        model_name = f"{self.config.model.type}_{self.config.training.mode}.pth"
+        try:
+            self._save_state_dict(model, paths['model_save_dir'], model_name)
+        except Exception as e:
+            logger.error(f"Failed to save model state_dict for {model_name}: {e}")
+            # Fallback: let Lightning checkpoint be saved for diagnostic purposes
             try:
-                pipeline.optimize_thresholds(train_dataset)
-                logger.info("✅ Threshold optimization complete")
-            except Exception as e:
-                logger.warning(f"Threshold optimization failed: {e}")
+                trainer.save_checkpoint(paths['model_save_dir'] / f"{model_name}.ckpt")
+                logger.info(f"Fallback: Lightning checkpoint saved to {paths['model_save_dir'] / f'{model_name}.ckpt'}")
+            except Exception as e2:
+                logger.error(f"Fallback save also failed: {e2}")
 
-        # Run comprehensive evaluation
-        results = evaluate_comprehensive(pipeline, test_loader, device)
-        logger.info("✅ Evaluation complete")
-
-        # Save report
-        report_dir = Path(getattr(self.config.training, 'save_report_dir', paths['model_save_dir']))
-        report_dir.mkdir(parents=True, exist_ok=True)
-        report_file = report_dir / f"evaluation_report_{self.config.dataset.name}.json"
-        import json
-        with open(report_file, 'w') as f:
-            json.dump(results, f, default=lambda o: o.tolist() if hasattr(o, 'tolist') else str(o))
-        logger.info(f"Saved evaluation report: {report_file}")
-
-        # Optionally generate quick development plots using the plotting workbench
-        plots_generated = []
-        if getattr(self.config.training, 'save_plots', False):
-            try:
-                from src.workbench.plotting_workbench import (
-                    save_fusion_score_demo, save_recon_hist_demo, save_latent_space_demo
-                )
-                from torch_geometric.loader import DataLoader as GeoDataLoader
-
-                sample_count = getattr(self.config.training, 'plot_examples', 3)
-                # Take a small subset of test data for quick plots
-                sample_dataset = test_dataset[:sample_count] if len(test_dataset) > 0 else []
-                if len(sample_dataset) == 0:
-                    logger.warning("No samples available for plotting")
-                else:
-                    sample_loader = GeoDataLoader(sample_dataset, batch_size=len(sample_dataset), shuffle=False)
-                    sample_batch = next(iter(sample_loader))
-                    preds = pipeline.predict_batch_comprehensive(sample_batch, model_type='both')
-
-                    # Prefer student outputs if available
-                    model_key = 'student' if 'student' in preds else 'teacher'
-                    p = preds[model_key]
-
-                    anomaly_scores = p['anomaly_scores'].cpu().numpy()
-                    gat_probs = p['gat_probs'].cpu().numpy()
-                    labels = sample_batch.y.cpu().numpy()
-
-                    # Save fusion score distribution
-                    fusion_path = save_fusion_score_demo(anomaly_scores, gat_probs, labels, name=f"fusion_demo_{self.config.dataset.name}.png")
-                    plots_generated.append(fusion_path)
-
-                    # Save recon hist using anomaly scores as proxy
-                    errors_normal = anomaly_scores[labels == 0] if len(labels) > 0 else []
-                    errors_attack = anomaly_scores[labels == 1] if len(labels) > 0 else []
-                    recon_path = save_recon_hist_demo(errors_normal.tolist(), errors_attack.tolist(), threshold=getattr(self.config.training, 'threshold', 0.5), name=f"recon_demo_{self.config.dataset.name}.png")
-                    plots_generated.append(recon_path)
-
-                    # Save latent space if available
-                    latent_vectors = p.get('latent_graph', None)
-                    if latent_vectors is not None:
-                        latent_path = save_latent_space_demo(latent_vectors.cpu().numpy(), labels, name=f"latent_demo_{self.config.dataset.name}.png")
-                        plots_generated.append(latent_path)
-
-                    logger.info("✅ Evaluation plots generated and saved to workbench")
-            except Exception as e:
-                logger.warning(f"Plotting hook failed: {e}")
-
-        # Log evaluation artifacts and key metrics to MLflow (if enabled)
-        if getattr(self.config.training, 'use_mlflow', True):
-            try:
-                exp_name = self.config.training.mlflow_experiment_name or f"CAN-Graph-{self.config.dataset.name}"
-                mlflow.set_experiment(exp_name)
-                run_name = f"evaluation_{self.config.dataset.name}"
-                with mlflow.start_run(run_name=run_name):
-                    # record model paths
-                    mlflow.log_param('autoencoder_path', str(autoencoder_path))
-                    mlflow.log_param('classifier_path', str(classifier_path))
-
-                    # log report file and any plots
-                    mlflow.log_artifact(str(report_file))
-                    for p in plots_generated:
-                        if p:
-                            mlflow.log_artifact(str(p))
-
-                    # log top-level metrics from results
-                    for key, value in results.items():
-                        if isinstance(value, dict):
-                            for m in ['f1', 'accuracy', 'precision', 'recall']:
-                                if m in value:
-                                    try:
-                                        mlflow.log_metric(f"{key}_{m}", float(value[m]))
-                                    except Exception:
-                                        pass
-
-                    # Save a compact config snapshot
-                    try:
-                        cfg_path = Path(paths['experiment_dir']) / 'config_snapshot.json'
-                        with open(cfg_path, 'w') as f:
-                            _json.dump(self.config.__dict__, f, default=str)
-                        mlflow.log_artifact(str(cfg_path))
-                    except Exception:
-                        logger.debug("Failed to log config snapshot to MLflow")
-
-                logger.info("✅ Evaluation artifacts and metrics logged to MLflow")
-            except Exception as e:
-                logger.warning(f"MLflow logging failed: {e}")
-
-        return results
-
-        # Create descriptive model name based on training mode
-        if self.config.training.mode == "student_baseline" and self.config.model.type == "gat_student":
-            model_name = "gat_student_baseline.pth"
-        elif self.config.training.mode == "student_baseline" and self.config.model.type == "vgae_student":
-            model_name = "vgae_student_baseline.pth"
-        elif self.config.training.mode == "student_baseline" and self.config.model.type == "dqn_student":
-            model_name = "dqn_student_baseline.pth"
-        elif self.config.training.mode == "knowledge_distillation":
-            # Include scale factor for student models
-            scale = getattr(self.config.training, 'student_model_scale', 1.0)
-            model_name = f"{self.config.model.type}_student_kd_scale_{scale:.2f}.pth"
-        else:
-            # Standard naming for teacher/normal models
-            model_name = f"{self.config.model.type}_{self.config.training.mode}.pth"
-        
-        save_path = paths['model_save_dir'] / model_name
-        save_path.parent.mkdir(parents=True, exist_ok=True)
-        torch.save(model.state_dict(), save_path)
-        logger.info(f"Model saved to: {save_path}")
-        
-        # Create symbolic links for backward compatibility
-        self._create_compatibility_links(save_path, paths['model_save_dir'])
-        
         logger.info("✅ Training completed successfully!")
         return model, trainer
-
-    def _create_compatibility_links(self, model_path: Path, save_dir: Path):
-        """Create symbolic links for backward compatibility."""
-        dataset = self.config.dataset.name
-        mode = self.config.training.mode
-        model_type = self.config.model.type
-
-        # Create links based on training mode
-        link_names = []
-
-        if mode == "normal" and model_type == "gat":
-            # GAT normal model can be used as teacher
-            link_names.append(f"best_teacher_model_{dataset}.pth")
-            link_names.append(f"gat_teacher_{dataset}.pth")
-        elif mode == "autoencoder" and model_type == "vgae":
-            # VGAE autoencoder for fusion and curriculum
-            link_names.append(f"autoencoder_{dataset}.pth")
-            link_names.append(f"vgae_teacher_{dataset}.pth")
-        elif mode == "curriculum" and model_type == "gat":
-            # Curriculum trained model
-            link_names.append(f"gat_curriculum_{dataset}.pth")
-        elif mode == "student_baseline" and model_type == "gat_student":
-            # Baseline GAT student model without KD
-            link_names.append(f"gat_student_baseline_{dataset}.pth")
-        elif mode == "student_baseline" and model_type == "vgae_student":
-            # Baseline VGAE student
-            link_names.append(f"vgae_student_baseline_{dataset}.pth")
-        elif mode == "student_baseline" and model_type == "dqn_student":
-            # Baseline DQN student (placeholder compatibility)
-            link_names.append(f"dqn_student_baseline_{dataset}.pth")
-
-        # Create the symbolic links
-        for link_name in link_names:
-            link_path = save_dir / link_name
-            try:
-                # Remove existing link if it exists
-                if link_path.is_symlink() or link_path.exists():
-                    link_path.unlink()
-                # Create relative symlink
-                link_path.symlink_to(model_path.name)
-                logger.info(f"Created compatibility link: {link_name} -> {model_path.name}")
-            except Exception as e:
-                logger.warning(f"Could not create link {link_name}: {e}")
-    
     
     def _train_fusion(self):
         """Fusion training using cached VGAE and GAT predictions."""
@@ -534,9 +380,20 @@ class HydraZenTrainer:
             train_dataset, val_dataset, batch_size=64  # Smaller batch for extraction
         )
         
-        # Load model checkpoints
-        ae_ckpt = torch.load(ae_path, map_location='cpu')
-        classifier_ckpt = torch.load(classifier_path, map_location='cpu')
+        # Load model checkpoints STRICTLY as state_dicts (no unpickling of custom classes)
+        def _strict_torch_load(path):
+            try:
+                return torch.load(path, map_location='cpu')
+            except Exception as e:
+                raise RuntimeError(
+                    f"Failed to load checkpoint {path}: {e}.\n"
+                    "This pipeline requires checkpoints to be saved as pure state_dicts (" \
+                    "i.e., use `torch.save(model.state_dict(), path)`).\n"
+                    "If this file was saved as a Python-pickled checkpoint, please re-export it as a state_dict or re-run the training that produced it."
+                ) from e
+
+        ae_ckpt = _strict_torch_load(ae_path)
+        classifier_ckpt = _strict_torch_load(classifier_path)
         
         # Create models for extraction
         ae_model = self.setup_model(num_ids).model
@@ -677,11 +534,18 @@ class HydraZenTrainer:
         val_results = trainer.validate(fusion_model, fusion_val_loader, verbose=True)
         logger.info(f"Validation results: {val_results}")
         
-        # Save fusion agent
+        # Save fusion agent (agent.save_agent saves networks as state_dicts internally)
         paths = self.get_hierarchical_paths()
         agent_path = paths['model_save_dir'] / f'fusion_agent_{self.config.dataset.name}.pth'
         fusion_model.fusion_agent.save_agent(str(agent_path))
         logger.info(f"✓ Fusion agent saved to {agent_path}")
+
+        # Also save compact agent network state_dict for compatibility and fast loading
+        try:
+            agent_state_name = f"dqn_agent_{self.config.dataset.name}.pth"
+            self._save_state_dict(fusion_model, paths['model_save_dir'], agent_state_name)
+        except Exception as e:
+            logger.warning(f"Could not save compact DQN agent state dict: {e}")
         
         logger.info("✅ Fusion training completed successfully!")
         return fusion_model, trainer
@@ -782,12 +646,24 @@ class HydraZenTrainer:
         logger.info("🚀 Starting curriculum-enhanced training...")
         trainer.fit(model, datamodule=datamodule)
         
-        # Save final model
+        # Save final model as a pure state_dict to avoid pickling custom objects
         paths = self.get_hierarchical_paths()
         model_path = paths['model_save_dir'] / f"gat_{self.config.dataset.name}_curriculum.pth"
-        trainer.save_checkpoint(model_path)
-        logger.info(f"💾 Model saved to {model_path}")
-        
+        model_path.parent.mkdir(parents=True, exist_ok=True)
+
+        # Extract underlying torch.nn.Module state_dict when available
+        try:
+            state = model.model.state_dict() if hasattr(model, 'model') else model.state_dict()
+            torch.save(state, model_path)
+            logger.info(f"💾 State-dict model saved to {model_path}")
+        except Exception as e:
+            logger.error(f"Failed to save state_dict for curriculum model: {e}. Falling back to trainer.save_checkpoint")
+            try:
+                trainer.save_checkpoint(model_path.with_suffix(model_path.suffix + '.ckpt'))
+                logger.info(f"💾 Lightning checkpoint saved to {model_path.with_suffix(model_path.suffix + '.ckpt')}")
+            except Exception as e2:
+                logger.error(f"Also failed to save Lightning checkpoint: {e2}")
+
         return model, trainer
 
     def _optimize_batch_size_with_datamodule(self, model, datamodule):
@@ -929,11 +805,11 @@ class HydraZenTrainer:
 
 
 # ============================================================================
-# Legacy Preset Configurations (deprecated - use training_presets module)
+# Preset Configurations
 # ============================================================================
 
 def get_preset_configs() -> Dict[str, CANGraphConfig]:
-    """Get predefined preset configurations (DEPRECATED - use training_presets module)."""
+    """Get predefined preset configurations."""
     presets = {}
     
     # Normal training presets
@@ -1015,20 +891,18 @@ Examples:
     
     # Preset mode
     parser.add_argument('--preset', type=str,
-                      help='Use a training preset (e.g., distillation_aggressive, student_gat_baseline)')
-    parser.add_argument('--preset-info', action='store_true',
-                      help='Show detailed preset documentation and examples')
+                      help='Use a preset configuration')
     parser.add_argument('--list-presets', action='store_true',
                       help='List available preset configurations')
     
     # Manual configuration
-    parser.add_argument('--model', type=str, choices=['gat', 'gat_student', 'vgae', 'vgae_student', 'dqn', 'dqn_student'], default='gat',
+    parser.add_argument('--model', type=str, choices=['gat', 'vgae', 'dqn'], default='gat',
                       help='Model type')
     parser.add_argument('--dataset', type=str, 
                       choices=['hcrl_sa', 'hcrl_ch', 'set_01', 'set_02', 'set_03', 'set_04', 'car_hacking'],
                       default='hcrl_sa', help='Dataset name')
     parser.add_argument('--training', type=str, 
-                      choices=['normal', 'autoencoder', 'knowledge_distillation', 'student_baseline', 'curriculum', 'fusion'],
+                      choices=['normal', 'autoencoder', 'knowledge_distillation', 'curriculum', 'fusion'],
                       default='normal', help='Training mode')
     
     # Knowledge distillation specific
@@ -1065,12 +939,8 @@ Examples:
     
     args = parser.parse_args()
     
-    if args.preset_info:
-        print(PRESET_DOCUMENTATION)
-        return
-    
     if args.list_presets:
-        list_new_presets()
+        list_presets()
         return
     
     # Create configuration
@@ -1091,22 +961,6 @@ Examples:
         # Manual configuration
         store_manager = CANGraphConfigStore()
         
-        # Handle DQN model type by converting to fusion mode
-        model_type = args.model
-        training_mode = args.training
-        
-        if args.model in ["dqn", "dqn_student"]:
-            logger.info("🔀 DQN model type detected - automatically switching to fusion training mode")
-            model_type = args.model
-            training_mode = "fusion"
-        elif training_mode == "student_baseline":
-            if model_type == "gat":
-                logger.info("🎓 Student baseline selected - switching model to gat_student")
-                model_type = "gat_student"
-            elif model_type == "vgae":
-                logger.info("🎓 Student baseline selected - switching model to vgae_student")
-                model_type = "vgae_student"
-        
         # Prepare overrides
         overrides = {}
         if args.teacher_path:
@@ -1125,12 +979,8 @@ Examples:
             overrides['learning_rate'] = args.learning_rate
         if args.early_stopping_patience:
             overrides['early_stopping_patience'] = args.early_stopping_patience
-        if args.autoencoder_path:
-            overrides['autoencoder_path'] = args.autoencoder_path
-        if args.classifier_path:
-            overrides['classifier_path'] = args.classifier_path
         
-        config = store_manager.create_config(model_type, args.dataset, training_mode, **overrides)
+        config = store_manager.create_config(args.model, args.dataset, args.training, **overrides)
     
     # Apply global overrides
     if args.tensorboard:
