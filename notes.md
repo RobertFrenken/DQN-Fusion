@@ -1,5 +1,3 @@
-#!/usr/bin/env python3
-"""
 I had to delete all of the old runs for a couple of reasons:
 - First is that I was getting loading errors with the pickle files
 - Second the path creation and saving is all messed up, fusion was under gat folders for some reason and this was causing the dqn models to freak out and the dqn models were trying to backup find paths that I deleted as they were old. What needs to happen is to seriously restructure the way models are saved and be strict on the appropiate paths for a given run. No fallbacks, if it isn't there give an error when you save a model it needs to be in a consisent place and it should be printed out. 
@@ -32,50 +30,20 @@ On MLFlow:
 On train_with_hyrda_zen:
 - It looks like from around lines 192-272 there is a chunk of code that is present but dulled out by the linter implying that it will never be run. I want to make sure this is no longer needed, and if not I want to remove that section.
 
-"""
-
-"""
-OSC Job Manager for CAN-Graph Training
-
-Automates SLURM job submission on Ohio Supercomputer Center with:
-- Hierarchical directory organization REWRITE THIS SECTION
-- Parameterized job generation
-- Batch job submission  
-- Organized output management
-- Job status monitoring
-- Easy parameter sweeps
-"""
-
-import os
-import sys
-import argparse
-import subprocess
-import time
-from pathlib import Path
-from typing import List, Dict, Any, Tuple
-import json
-import logging
-from datetime import datetime
-import shutil
-import glob
-import itertools
-
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-logger = logging.getLogger(__name__)
 
 
-class OSCJobManager:
-    """Manage SLURM jobs on Ohio Supercomputer Center."""
-    
-    def __init__(self, project_root: Path = None):
-        # Use repository root as canonical project root
-        self.project_root = project_root or Path(__file__).parent.resolve()
+Hydra-Zen Configuration System for CAN-Graph
 
-        # Canonical experiments directory (new structure)
-        self.experiments_dir = self.project_root / "experiment_runs"
-        self.experiments_dir.mkdir(parents=True, exist_ok=True)
+This module replaces the YAML configuration files with type-safe Python configurations
+using hydra-zen. Benefits:
+- Type safety and IDE support
+- Programmatic config generation
+- Reduced file clutter
+- Better validation
+- Dynamic configuration composition
 
-        # OSC-specific settings (customize for your account)
+Looking to change the configuration to the new pathing system:
+
         self.osc_settings = {
             "account": "PAS3209",  # Your account
             "email": "frenken.2@osu.edu",  # Your email (used for SBATCH notifications if enabled)
@@ -106,70 +74,3 @@ class OSCJobManager:
             "distillation": ["no", "standard"],
             "training_modes": ["all_samples", "normals_only","curriculum_classifier", "curriculum_fusion"],
         }
-
-        # Where we save job submission scripts (separate from experiment_runs which contains outputs)
-        self.jobs_dir = self.project_root / "osc_job_scripts"
-        self.jobs_dir.mkdir(parents=True, exist_ok=True)
-
-        # Canonical resource profiles for each training/workflow type (STRICT - no fallbacks)
-        self.resource_profiles = {
-            "gat_normal": {"time": "02:00:00", "mem": "32G", "cpus": 8, "gpus": 1, "model": "gat", "mode": "normal"},
-            "vgae_autoencoder": {"time": "02:00:00", "mem": "32G", "cpus": 8, "gpus": 1, "model": "vgae", "mode": "autoencoder"},
-            "gat_curriculum": {"time": "04:00:00", "mem": "48G", "cpus": 8, "gpus": 1, "model": "gat", "mode": "curriculum"},
-            "gat_student_baseline": {"time": "02:30:00", "mem": "32G", "cpus": 8, "gpus": 1, "model": "gat_student", "mode": "student_baseline"},
-            "dqn_normal": {"time": "04:00:00", "mem": "64G", "cpus": 8, "gpus": 1, "model": "dqn", "mode": "fusion"},
-            "dqn_curriculum": {"time": "12:00:00", "mem": "80G", "cpus": 8, "gpus": 1, "model": "dqn", "mode": "fusion_curriculum"}
-        }
-
-        # Datasets that require more resources
-        self.complex_datasets = ["set_01", "set_02", "set_03", "set_04"]
-        """
-    
-    def _build_training_command(self, training_type: str, dataset: str, 
-                              extra_args: Dict[str, Any]) -> str:
-        """Build the unified training command."""
-        
-        
-
-    
-    def submit_individual_jobs(self, datasets: List[str] = None, 
-                             training_types: List[str] = None,
-                             extra_args: Dict[str, Any] = None) -> List[str]:
-        """Submit individual training jobs."""
-        
-    
-    def submit_pipeline_jobs(self, datasets: List[str] = None) -> List[str]:
-        """Submit complete pipeline jobs (individual -> curriculum -> fusion)."""
-        
-    
-    def submit_parameter_sweep(self, training_type: str, dataset: str,
-                             param_grid: Dict[str, List[Any]]) -> List[str]:
-        """Submit parameter sweep jobs."""
-        
-
-    
-    def _submit_slurm_job(self, script_path: Path, dependency: str = None) -> str:
-        """Submit SLURM job and return job ID."""
-        
-    
-    def _cleanup_old_jobs(self):
-        """Clean up old failed job directories to prevent buildup."""
-    
-    def monitor_jobs(self, job_ids: List[str] = None) -> Dict[str, str]:
-        """Monitor job status including running, pending, and completed jobs."""
-    
-    def generate_job_summary(self) -> str:
-        """Generate summary of submitted jobs."""
-    
-    def cleanup_outputs(self):
-        """Clean up old job outputs and failed runs."""
-
-
-
-def main():
-
-    manager = OSCJobManager()
-
-
-if __name__ == "__main__":
-    sys.exit(main())

@@ -25,7 +25,6 @@ import lightning.pytorch as pl
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger, MLFlowLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, DeviceStatsMonitor
 from lightning.pytorch.tuner import Tuner
-
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
@@ -37,21 +36,12 @@ from src.config.hydra_zen_configs import (
     create_autoencoder_config, create_fusion_config,
     validate_config
 )
-try:
-    from train_models import CANGraphLightningModule, load_dataset, create_dataloaders, CANGraphDataModule
-except ModuleNotFoundError:
-    # Retry with absolute resolved project root in case SLURM changes CWD or symlinks
-    resolved_root = project_root.resolve()
-    if str(resolved_root) not in sys.path:
-        sys.path.insert(0, str(resolved_root))
-    try:
-        from train_models import CANGraphLightningModule, load_dataset, create_dataloaders, CANGraphDataModule
-    except ModuleNotFoundError as e:
-        logger.error(f"Could not import local module train_models even after resolving project root: {e}")
-        raise
+# import lighting loader modules
+from src.training.can_graph_data import CANGraphDataModule, load_dataset, create_dataloaders
+from src.training.can_graph_module import CANGraphLightningModule
 from src.training.fusion_lightning import FusionLightningModule
 from src.training.prediction_cache import create_fusion_prediction_cache
-
+from src.training.enhanced_datamodule import EnhancedCANGraphDataModule, CurriculumCallback
 # Suppress warnings
 warnings.filterwarnings("ignore", message=".*pynvml.*deprecated.*")
 warnings.filterwarnings("ignore", message=".*torch-scatter.*")
@@ -80,39 +70,63 @@ class HydraZenTrainer:
             raise ValueError("Configuration validation failed")
     
     def get_hierarchical_paths(self):
-        """Create hierarchical directory structure: osc_jobs/dataset/model/mode"""
-        # Use absolute paths to avoid any path resolution issues
-        base_dir = Path.cwd() / "osc_jobs"
+        """Create hierarchical directory structure with clear levels per notes.md.
+
+        Structure:
+            experiment_runs/{modality}/{dataset}/{learning_type}/{model_arch}/{model_size}/{distillation}/{training_type}/
+
+        This function prefers the canonical `experiment_runs` directory inside the project root
+        but also maintains a legacy `osc_jobs` compatibility directory for older scripts.
+        """
+        # Canonical root inside repository
+        base_dir = Path(__file__).parent.resolve() / "experiment_runs"
         dataset_name = self.config.dataset.name
-        model_type = self.config.model.type  # 'gat' or 'vgae'
-        training_mode = self.config.training.mode  # 'autoencoder', 'normal', 'curriculum', etc.
-        
-        # Debug logging
-        logger.info(f"Creating paths - CWD: {Path.cwd()}")
-        logger.info(f"Dataset: {dataset_name}, Model: {model_type}, Mode: {training_mode}")
-        
-        # Create the hierarchical path (absolute)
-        experiment_dir = base_dir / dataset_name / model_type / training_mode
+        model_type = self.config.model.type  # 'gat', 'vgae', 'dqn', etc.
+        training_mode = self.config.training.mode  # 'autoencoder', 'normal', 'curriculum', 'fusion', etc.
+
+        # Derive higher-level categorization
+        modality = getattr(self.config.dataset, 'modality', 'automotive')
+        if training_mode == 'autoencoder':
+            learning_type = 'unsupervised'
+        elif training_mode in ('normal', 'knowledge_distillation', 'student_baseline'):
+            learning_type = 'supervised'
+        elif training_mode == 'fusion':
+            learning_type = 'rl_fusion'
+        elif training_mode == 'curriculum':
+            learning_type = 'curriculum'
+        else:
+            learning_type = training_mode
+
+        model_size = 'student' if 'student' in model_type else 'teacher'
+        distillation = 'distilled' if getattr(self.config.training, 'teacher_model_path', None) else 'no_distillation'
+
+        # Compose final experiment directory
+        experiment_dir = (base_dir / modality / dataset_name / learning_type / model_type / model_size / distillation / training_mode)
         logger.info(f"Experiment directory: {experiment_dir}")
-        
-        # Create directories
+
+        # Create directories and compatibility symlink
         experiment_dir.mkdir(parents=True, exist_ok=True)
         (experiment_dir / "lightning_checkpoints").mkdir(exist_ok=True)
         (experiment_dir / "mlruns").mkdir(exist_ok=True)
-        
+
+        # Also create a legacy-compatible path under <project_root>/osc_jobs/{dataset}/{model}/{mode}
+        legacy_dir = Path(__file__).parent.resolve() / "osc_jobs" / dataset_name / model_type / training_mode
+        legacy_dir.mkdir(parents=True, exist_ok=True)
+
         paths = {
             'experiment_dir': experiment_dir.resolve(),
             'model_save_dir': experiment_dir.resolve(),
             'log_dir': experiment_dir.resolve(),
             'checkpoint_dir': (experiment_dir / "lightning_checkpoints").resolve(),
-            'mlruns_dir': (experiment_dir / "mlruns").resolve()
+            'mlruns_dir': (experiment_dir / "mlruns").resolve(),
+            'legacy_dir': legacy_dir.resolve()
         }
-        
+
         # Debug log all paths
         logger.info("Generated hierarchical paths:")
         for key, path in paths.items():
             logger.info(f"  {key}: {path}")
-            
+
         return paths
     
     def setup_model(self, num_ids: int) -> pl.LightningModule:
@@ -548,6 +562,7 @@ class HydraZenTrainer:
             logger.warning(f"Could not save compact DQN agent state dict: {e}")
         
         logger.info("✅ Fusion training completed successfully!")
+        # Return fusion model and trainer for consistency with other training branches
         return fusion_model, trainer
 
     def train_with_curriculum(self):
@@ -572,24 +587,9 @@ class HydraZenTrainer:
         # Look for VGAE model in the hierarchical structure
         vgae_dir = Path("osc_jobs") / self.config.dataset.name / "vgae" / "autoencoder"
         vgae_path = vgae_dir / f"vgae_{self.config.dataset.name}_autoencoder.pth"
-        if vgae_path.exists():
-            logger.info(f"🔄 Loading trained VGAE from {vgae_path}")
-            try:
-                from train_models import CANGraphLightningModule
-                vgae_checkpoint = torch.load(str(vgae_path), map_location='cpu')
-                vgae_model = CANGraphLightningModule.load_from_checkpoint(
-                    str(vgae_path), map_location='cpu'
-                )
-                vgae_model.eval()
-                logger.info("✅ VGAE loaded for hard mining")
-            except Exception as e:
-                logger.warning(f"Could not load VGAE: {e}. Using random sampling.")
-        else:
-            logger.warning("No trained VGAE found. Using random sampling instead of hard mining.")
-        
-        # Create enhanced datamodule
-        from src.training.enhanced_datamodule import EnhancedCANGraphDataModule, CurriculumCallback
-        
+        vgae_model = CANGraphLightningModule.load_from_checkpoint(
+                    str(vgae_path), map_location='cpu')
+        vgae_model.eval()
         # Initial batch size - will be adjusted conservatively
         initial_batch_size = getattr(self.config.training, 'batch_size', 64)
         
@@ -679,7 +679,6 @@ class HydraZenTrainer:
             logger=False
         )
         
-        from lightning.pytorch.tuner import Tuner
         tuner = Tuner(trainer)
         
         try:
@@ -824,7 +823,7 @@ def get_preset_configs() -> Dict[str, CANGraphConfig]:
             presets[name] = create_distillation_config(
                 dataset=dataset, 
                 student_scale=scale,
-                teacher_model_path=f"osc_jobs/{dataset}/vgae/autoencoder/best_teacher_model_{dataset}.pth"
+                teacher_model_path=str(Path(__file__).parent.resolve() / "experiment_runs" / "automotive" / dataset / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder" / f"best_teacher_model_{dataset}.pth")
             )
     
     # Fusion presets
@@ -855,7 +854,7 @@ def list_presets():
                 print(f"  - {name}")
 
 
-# ============================================================================
+# ==========================================================================
 # CLI Interface
 # ============================================================================
 

@@ -8,6 +8,40 @@ using hydra-zen. Benefits:
 - Reduced file clutter
 - Better validation
 - Dynamic configuration composition
+
+Looking to change the configuration to the new pathing system:
+
+        self.osc_settings = {
+            "account": "PAS3209",  # Your account
+            "email": "frenken.2@osu.edu",  # Your email (used for SBATCH notifications if enabled)
+            "project_path": str(self.project_root),  # Project path (keeps previous behaviour but derived)
+            "conda_env": "gnn-gpu",  # Your conda environment
+            "notify_webhook": "",  # Optional: Slack/Teams webhook URL for concise completion notifications
+            "notify_email": "frenken.2@osu.edu"     # Optional: single email to receive job completion summaries (one per job)
+        }
+
+        self.osc_parameters = {
+            "wall_time": "02:00:00",
+            "memory": "32G",
+            "cpus": 8,
+            "gpus": 1
+        }
+
+        self.training_configurations = {
+            "modalities": ["automotive", "internet", "water_treatment"],
+            # will need to handle the pathing based on modalities in future
+            # right now automotive is the only modality used
+            "datasets": {"automotive": ["hcrl_sa", "hcrl_ch", "set_01", "set_02", "set_03", "set_04"],
+                         "internet": [],
+                         "water_treatment": []},
+            "learning_types": ["unsupervised", "supervised", "rl_fusion"],
+            "model_architectures": {"unsupervised": ["vgae"], "supervised": ["gat"], "rl_fusion": ["dqn"]},
+            # right now small = student and teacher = large with options to expand
+            "model_sizes": ["small", "medium", "large"],
+            "distillation": ["no", "standard"],
+            "training_modes": ["all_samples", "normals_only","curriculum_classifier", "curriculum_fusion"],
+        }
+
 """
 
 from dataclasses import dataclass, field
@@ -210,16 +244,41 @@ class StudentDQNConfig:
 
 @dataclass
 class BaseDatasetConfig:
-    """Base dataset configuration."""
+    """Base dataset configuration.
+
+    New fields:
+      - modality: high-level modality name (default: 'automotive')
+      - experiment_root: where experiment outputs will be placed (default: 'experiment_runs')
+
+    The dataset config will infer reasonable defaults for `data_path` and `cache_dir`
+    if they are not provided. This is strict configuration construction but does not
+    perform filesystem validation (validation is performed by `validate_config`).
+    """
     name: str
+    modality: str = "automotive"
     data_path: Optional[str] = None
     cache_dir: Optional[str] = None
+    experiment_root: str = "experiment_runs"
     cache_processed_data: bool = True
     preprocessing: Dict[str, Any] = field(default_factory=lambda: {
         "cache_processed_data": True,
         "normalize_features": False,
         "feature_scaling": "standard"
     })
+
+    def __post_init__(self):
+        # If a data_path is not supplied, infer it from the standard datasets layout
+        if not self.data_path:
+            self.data_path = f"datasets/can-train-and-test-v1.5/{self.name}"
+
+        # If no cache directory given, place it under the canonical experiment root
+        if not self.cache_dir:
+            self.cache_dir = str(Path(self.experiment_root) / self.modality / self.name / "cache")
+
+        # Keep attributes as strings to avoid accidental Path issues in configs
+        self.data_path = str(self.data_path)
+        self.cache_dir = str(self.cache_dir)
+
 
 
 @dataclass
@@ -468,7 +527,19 @@ class TrainerConfig:
 
 @dataclass
 class CANGraphConfig:
-    """Complete CAN-Graph application configuration."""
+    """Complete CAN-Graph application configuration.
+
+    New fields introduced (strict; no legacy fallbacks):
+      - experiment_root: base directory for all experiments (default: 'experiment_runs')
+      - modality: high-level modality (e.g., 'automotive')
+      - model_size: 'teacher' or 'student' (defaults inferred from model type)
+      - distillation: 'distilled' or 'no_distillation' (inferred from training.teacher_model_path)
+
+    The config exposes helper methods to compute canonical experiment directories and
+    enforces strict validation for modes that require pre-trained artifacts (e.g., fusion,
+    curriculum, knowledge_distillation). If required artifacts are missing the validator
+    raises informative errors (no implicit fallbacks).
+    """
     # Core components
     model: Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig, DQNConfig, StudentDQNConfig]
     dataset: CANDatasetConfig
@@ -481,8 +552,14 @@ class CANGraphConfig:
     seed: int = 42
     project_name: str = "can_graph_lightning"
     experiment_name: str = field(init=False)
-    
-    # Output directories
+
+    # Canonical experiment layout root (will be created by training when needed)
+    experiment_root: str = "experiment_runs"
+    modality: str = "automotive"
+    model_size: str = field(default=None)  # 'teacher' or 'student' (inferred if None)
+    distillation: str = field(default=None)  # 'distilled' or 'no_distillation' (inferred if None)
+
+    # Output directories (kept for backward compatibility inside code but not used for canonical saving)
     output_dir: str = "outputs"
     model_save_dir: str = "saved_models"
     log_dir: str = "outputs/lightning_logs"
@@ -495,10 +572,61 @@ class CANGraphConfig:
         "monitor_metric": "val_loss",
         "monitor_mode": "min"
     })
-    
+
     def __post_init__(self):
-        """Generate experiment name after initialization."""
+        """Generate experiment name and infer model size/distillation after initialization."""
+        # Name used for human readability and for backward compatibility in some logs
         self.experiment_name = f"{self.model.type}_{self.dataset.name}_{self.training.mode}"
+
+        # Infer model_size if not provided
+        if self.model_size is None:
+            self.model_size = "student" if "student" in getattr(self.model, "type", "") else "teacher"
+
+        # Infer distillation if not explicitly provided
+        if self.distillation is None:
+            self.distillation = "distilled" if getattr(self.training, "teacher_model_path", None) else "no_distillation"
+
+    def canonical_experiment_dir(self) -> Path:
+        """Return the canonical experiment directory as a Path.
+
+        Layout:
+            {experiment_root}/{modality}/{dataset}/{learning_type}/{model_arch}/{model_size}/{distillation}/{training_mode}/
+        """
+        learning_type = "unsupervised" if self.training.mode == "autoencoder" else (
+            "rl_fusion" if self.training.mode == "fusion" else "supervised"
+        )
+        model_arch = getattr(self.model, "type", "unknown")
+
+        base = Path(self.experiment_root)
+        parts = [self.modality, self.dataset.name, learning_type, model_arch, self.model_size, self.distillation, self.training.mode]
+        return (base.joinpath(*parts)).resolve()
+
+    def required_artifacts(self) -> Dict[str, Path]:
+        """Return a mapping of artifact name -> required canonical Path for this config.
+
+        This makes it explicit which pre-trained models are required for the current
+        `training.mode`. The caller should check for existence and fail if missing.
+        """
+        artifacts = {}
+        exp_dir = self.canonical_experiment_dir()
+
+        if self.training.mode == "knowledge_distillation":
+            # Teacher model must exist and be specified
+            teacher_path = getattr(self.training, "teacher_model_path", None)
+            if teacher_path:
+                artifacts["teacher_model"] = Path(teacher_path)
+            else:
+                artifacts["teacher_model"] = exp_dir / "teacher" / f"best_teacher_model_{self.dataset.name}.pth"
+
+        if self.training.mode == "fusion":
+            artifacts["autoencoder"] = exp_dir.parent / "vgae" / "autoencoder" / f"vgae_autoencoder.pth"
+            artifacts["classifier"] = exp_dir.parent / "gat" / "normal" / f"gat_{self.dataset.name}_normal.pth"
+
+        if self.training.mode == "curriculum":
+            artifacts["vgae"] = exp_dir.parent / "vgae" / "autoencoder" / f"vgae_autoencoder.pth"
+
+        return artifacts
+
 
 
 # ============================================================================
@@ -584,20 +712,6 @@ class CANGraphConfigStore:
     
     def get_model_config(self, model_type: str) -> Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig, DQNConfig, StudentDQNConfig]:
         """Get model configuration by type."""
-        if model_type == "gat":
-            return GATConfig()
-        elif model_type == "gat_student":
-            return StudentGATConfig()
-        elif model_type == "vgae":
-            return VGAEConfig()
-        elif model_type == "vgae_student":
-            return StudentVGAEConfig()
-        elif model_type == "dqn":
-            return DQNConfig()
-        elif model_type == "dqn_student":
-            return StudentDQNConfig()
-        else:
-            raise ValueError(f"Unknown model type: {model_type}")
     
     def get_dataset_config(self, dataset_name: str) -> CANDatasetConfig:
         """Get dataset configuration by name."""
@@ -615,52 +729,6 @@ class CANGraphConfigStore:
         
         return dataset_configs[dataset_name]
     
-    def get_training_config(self, training_mode: str):
-        """Get training configuration by mode."""
-        training_configs = {
-            "normal": NormalTrainingConfig(),
-            "autoencoder": AutoencoderTrainingConfig(),
-            "knowledge_distillation": KnowledgeDistillationConfig(),
-            "student_baseline": StudentBaselineTrainingConfig(),
-            "fusion": FusionTrainingConfig(),
-            "curriculum": CurriculumTrainingConfig()
-        }
-        
-        if training_mode not in training_configs:
-            raise ValueError(f"Unknown training mode: {training_mode}. Available: {list(training_configs.keys())}")
-        
-        return training_configs[training_mode]
-
-
-# ============================================================================
-# Quick Configuration Functions
-# ============================================================================
-
-def create_gat_normal_config(dataset: str = "hcrl_sa", **kwargs) -> CANGraphConfig:
-    """Quick config for normal GAT training."""
-    store_manager = CANGraphConfigStore()
-    return store_manager.create_config("gat", dataset, "normal", **kwargs)
-
-
-def create_distillation_config(dataset: str = "hcrl_sa", teacher_path: str = None, 
-                             student_scale: float = 1.0, **kwargs) -> CANGraphConfig:
-    """Quick config for knowledge distillation."""
-    store_manager = CANGraphConfigStore()
-    overrides = {"teacher_model_path": teacher_path, "student_model_scale": student_scale}
-    overrides.update(kwargs)
-    return store_manager.create_config("gat", dataset, "knowledge_distillation", **overrides)
-
-
-def create_autoencoder_config(dataset: str = "hcrl_sa", **kwargs) -> CANGraphConfig:
-    """Quick config for autoencoder training."""
-    store_manager = CANGraphConfigStore()
-    return store_manager.create_config("gat", dataset, "autoencoder", **kwargs)
-
-
-def create_fusion_config(dataset: str = "hcrl_sa", **kwargs) -> CANGraphConfig:
-    """Quick config for fusion training."""
-    store_manager = CANGraphConfigStore()
-    return store_manager.create_config("gat", dataset, "fusion", **kwargs)
 
 
 # ============================================================================
@@ -668,30 +736,56 @@ def create_fusion_config(dataset: str = "hcrl_sa", **kwargs) -> CANGraphConfig:
 # ============================================================================
 
 def validate_config(config: CANGraphConfig) -> bool:
-    """Validate configuration for common issues."""
+    """Validate configuration for common issues.
+
+    This validator is strict (no fallbacks). If a training mode requires pre-existing
+    artifacts the validator raises a descriptive error (rather than silently falling back).
+    """
     issues = []
-    
-    # Check knowledge distillation requirements
+
+    # Check knowledge distillation requirements strictly
     if config.training.mode == "knowledge_distillation":
-        if not config.training.teacher_model_path:
-            issues.append("Knowledge distillation requires teacher_model_path")
-        elif not Path(config.training.teacher_model_path).exists():
-            issues.append(f"Teacher model not found: {config.training.teacher_model_path}")
-    
-    # Check dataset path
-    if config.dataset.data_path and not Path(config.dataset.data_path).exists():
-        issues.append(f"Dataset path not found: {config.dataset.data_path}")
-    
-    # Check compatibility
-    if config.training.precision == "16-mixed" and config.trainer.precision != "16-mixed":
-        issues.append("Training precision and trainer precision should match")
-    
+        teacher_path = getattr(config.training, "teacher_model_path", None)
+        if not teacher_path:
+            raise ValueError("Knowledge distillation requires 'teacher_model_path' in the training config.")
+        if not Path(teacher_path).exists():
+            raise FileNotFoundError(f"Teacher model not found at specified path: {teacher_path}. Please provide the canonical path under experiment_runs and ensure it exists.")
+
+    # Fusion requires both autoencoder and classifier artifacts
+    if config.training.mode == "fusion":
+        artifacts = config.required_artifacts()
+        missing = []
+        for name, p in artifacts.items():
+            if not p.exists():
+                missing.append(f"{name} missing at {p}")
+        if missing:
+            raise FileNotFoundError("Fusion training requires pre-trained artifacts:\n" + "\n".join(missing) + "\nPlease train and save the required models under the canonical experiment directory.")
+
+    # Curriculum also requires the VGAE to exist
+    if config.training.mode == "curriculum":
+        artifacts = config.required_artifacts()
+        vgae = artifacts.get("vgae")
+        if vgae and not vgae.exists():
+            raise FileNotFoundError(f"Curriculum training requires VGAE model at {vgae}. Please ensure it's available under experiment_runs.")
+
+    # Additional lightweight checks
+    if getattr(config, 'modality', None) is None:
+        issues.append("Modality should be set (e.g., 'automotive')")
+
     if issues:
-        for issue in issues:
-            print(f"❌ {issue}")
+        for i in issues:
+            logger.error(i)
         return False
-    
-    print("✅ Configuration validation passed")
+
+    # Check dataset path (strict)
+    if config.dataset.data_path and not Path(config.dataset.data_path).exists():
+        raise FileNotFoundError(f"Dataset path not found: {config.dataset.data_path}")
+
+    # Check precision compatibility strictly
+    if config.training.precision == "16-mixed" and config.trainer.precision != "16-mixed":
+        raise ValueError("Training precision and trainer.precision should both be '16-mixed' when using mixed precision training.")
+
+    logger.info("✅ Configuration validation passed")
     return True
 
 

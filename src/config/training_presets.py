@@ -119,7 +119,7 @@ class DistillationPresets:
                                  teacher_path: str = None) -> Dict[str, Any]:
         """Conservative KD: prioritize student task loss."""
         if teacher_path is None:
-            teacher_path = f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{dataset}.pth"
+            teacher_path = str(Path(__file__).parent.resolve() / "experiment_runs" / "automotive" / dataset / "supervised" / "gat" / "teacher" / "no_distillation" / "normal" / f"best_teacher_model_{dataset}.pth")
         
         return {
             "model_type": "gat_student",
@@ -141,7 +141,7 @@ class DistillationPresets:
                              teacher_path: str = None) -> Dict[str, Any]:
         """Balanced KD: equal weight on hard and soft targets."""
         if teacher_path is None:
-            teacher_path = f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{dataset}.pth"
+            teacher_path = str(Path(__file__).parent.resolve() / "experiment_runs" / "automotive" / dataset / "supervised" / "gat" / "teacher" / "no_distillation" / "normal" / f"best_teacher_model_{dataset}.pth")
         
         return {
             "model_type": "gat_student",
@@ -163,7 +163,7 @@ class DistillationPresets:
                                teacher_path: str = None) -> Dict[str, Any]:
         """Aggressive KD: prioritize knowledge transfer."""
         if teacher_path is None:
-            teacher_path = f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{dataset}.pth"
+            teacher_path = str(Path(__file__).parent.resolve() / "experiment_runs" / "automotive" / dataset / "supervised" / "gat" / "teacher" / "no_distillation" / "normal" / f"best_teacher_model_{dataset}.pth")
         
         return {
             "model_type": "gat_student",
@@ -186,7 +186,7 @@ class DistillationPresets:
                                  teacher_path: str = None) -> Dict[str, Any]:
         """VGAE student with knowledge distillation from teacher VGAE."""
         if teacher_path is None:
-            teacher_path = f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{dataset}.pth"
+            teacher_path = str(Path(__file__).parent.resolve() / "experiment_runs" / "automotive" / dataset / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder" / f"autoencoder_{dataset}.pth")
         
         return {
             "model_type": "vgae_student",
