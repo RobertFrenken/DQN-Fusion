@@ -26,6 +26,11 @@ from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger, MLFlowLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, DeviceStatsMonitor
 from lightning.pytorch.tuner import Tuner
 
+# Optional MLflow imports for manual artifact logging & tagging
+import mlflow
+import subprocess
+import json as _json
+
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
@@ -181,6 +186,25 @@ class HydraZenTrainer:
             # Only log essential metrics: train/val loss, accuracy, epoch time
         )
         loggers.append(mlflow_logger)
+
+        # Set helpful experiment-level tags (dataset, model, mode, git) so the UI is easier to filter
+        try:
+            client = mlflow_logger.experiment  # MlflowClient
+            exp = client.get_experiment_by_name(mlflow_logger.experiment_name)
+            if exp is not None:
+                exp_id = exp.experiment_id
+                client.set_experiment_tag(exp_id, 'dataset', self.config.dataset.name)
+                client.set_experiment_tag(exp_id, 'model', self.config.model.type)
+                client.set_experiment_tag(exp_id, 'training_mode', self.config.training.mode)
+                client.set_experiment_tag(exp_id, 'seed', str(self.config.seed))
+                try:
+                    git_sha = subprocess.check_output(['git','rev-parse','HEAD']).decode().strip()
+                    client.set_experiment_tag(exp_id, 'git_commit', git_sha)
+                except Exception:
+                    pass
+        except Exception:
+            # Non-fatal: tagging is a convenience
+            logger.debug("Could not set MLflow experiment tags")
         
         # TensorBoard logger
         if self.config.logging.get("enable_tensorboard", False):
@@ -219,6 +243,8 @@ class HydraZenTrainer:
             return self._train_fusion()
         elif self.config.training.mode == "curriculum":
             return self.train_with_curriculum()
+        elif self.config.training.mode == "evaluation":
+            return self.run_evaluation()
         
         # Standard training - Load dataset
         force_rebuild = hasattr(self.config, 'force_rebuild_cache') and self.config.force_rebuild_cache
@@ -255,7 +281,152 @@ class HydraZenTrainer:
         
         # Save final model
         paths = self.get_hierarchical_paths()
-        
+
+    def run_evaluation(self):
+        """Run comprehensive evaluation using the new hydra-zen config."""
+        from src.evaluation.evaluation import ComprehensiveEvaluationPipeline, evaluate_comprehensive, create_optimized_data_loader
+        logger.info("🔬 Running comprehensive evaluation...")
+
+        # Load hierarchical paths
+        paths = self.get_hierarchical_paths()
+
+        # Load dataset for evaluation (use same loader as training to get num_ids)
+        force_rebuild = hasattr(self.config, 'force_rebuild_cache') and self.config.force_rebuild_cache
+        train_dataset, val_dataset, num_ids = load_dataset(self.config.dataset.name, self.config, force_rebuild_cache=force_rebuild)
+
+        # Instantiate evaluation pipeline
+        device = torch.device('cuda' if torch.cuda.is_available() and self.config.training.device == 'cuda' else 'cpu')
+        pipeline = ComprehensiveEvaluationPipeline(num_ids=num_ids, embedding_dim=getattr(self.config.model, 'embedding_dim', 8), device=device)
+
+        # Resolve model paths (config override or hierarchical defaults)
+        autoencoder_path = getattr(self.config.training, 'autoencoder_path', None) or (paths['model_save_dir'] / f"autoencoder_{self.config.dataset.name}.pth")
+        classifier_path = getattr(self.config.training, 'classifier_path', None) or (paths['model_save_dir'] / f"best_teacher_model_{self.config.dataset.name}.pth")
+        threshold_path = getattr(self.config.training, 'threshold_path', None)
+
+        logger.info(f"Evaluation models -> Autoencoder: {autoencoder_path} | Classifier: {classifier_path}")
+
+        # Load models if available
+        teacher_loaded = pipeline.load_teacher_models(str(autoencoder_path), str(classifier_path), threshold_path)
+        student_loaded = pipeline.load_student_models(str(autoencoder_path), str(classifier_path), threshold_path)
+
+        if not (teacher_loaded or student_loaded):
+            logger.error("No models found to evaluate. Provide model paths or ensure models exist in osc_jobs/...")
+            return None
+
+        # Create a test dataloader using the same utility
+        _, test_dataset, _ = load_dataset(self.config.dataset.name, self.config, force_rebuild_cache=False)
+        test_loader = create_optimized_data_loader(test_dataset, getattr(self.config.training, 'batch_size', None) or 512, device)
+
+        # Optionally optimize thresholds
+        if getattr(self.config.training, 'optimize_thresholds', True):
+            try:
+                pipeline.optimize_thresholds(train_dataset)
+                logger.info("✅ Threshold optimization complete")
+            except Exception as e:
+                logger.warning(f"Threshold optimization failed: {e}")
+
+        # Run comprehensive evaluation
+        results = evaluate_comprehensive(pipeline, test_loader, device)
+        logger.info("✅ Evaluation complete")
+
+        # Save report
+        report_dir = Path(getattr(self.config.training, 'save_report_dir', paths['model_save_dir']))
+        report_dir.mkdir(parents=True, exist_ok=True)
+        report_file = report_dir / f"evaluation_report_{self.config.dataset.name}.json"
+        import json
+        with open(report_file, 'w') as f:
+            json.dump(results, f, default=lambda o: o.tolist() if hasattr(o, 'tolist') else str(o))
+        logger.info(f"Saved evaluation report: {report_file}")
+
+        # Optionally generate quick development plots using the plotting workbench
+        plots_generated = []
+        if getattr(self.config.training, 'save_plots', False):
+            try:
+                from src.workbench.plotting_workbench import (
+                    save_fusion_score_demo, save_recon_hist_demo, save_latent_space_demo
+                )
+                from torch_geometric.loader import DataLoader as GeoDataLoader
+
+                sample_count = getattr(self.config.training, 'plot_examples', 3)
+                # Take a small subset of test data for quick plots
+                sample_dataset = test_dataset[:sample_count] if len(test_dataset) > 0 else []
+                if len(sample_dataset) == 0:
+                    logger.warning("No samples available for plotting")
+                else:
+                    sample_loader = GeoDataLoader(sample_dataset, batch_size=len(sample_dataset), shuffle=False)
+                    sample_batch = next(iter(sample_loader))
+                    preds = pipeline.predict_batch_comprehensive(sample_batch, model_type='both')
+
+                    # Prefer student outputs if available
+                    model_key = 'student' if 'student' in preds else 'teacher'
+                    p = preds[model_key]
+
+                    anomaly_scores = p['anomaly_scores'].cpu().numpy()
+                    gat_probs = p['gat_probs'].cpu().numpy()
+                    labels = sample_batch.y.cpu().numpy()
+
+                    # Save fusion score distribution
+                    fusion_path = save_fusion_score_demo(anomaly_scores, gat_probs, labels, name=f"fusion_demo_{self.config.dataset.name}.png")
+                    plots_generated.append(fusion_path)
+
+                    # Save recon hist using anomaly scores as proxy
+                    errors_normal = anomaly_scores[labels == 0] if len(labels) > 0 else []
+                    errors_attack = anomaly_scores[labels == 1] if len(labels) > 0 else []
+                    recon_path = save_recon_hist_demo(errors_normal.tolist(), errors_attack.tolist(), threshold=getattr(self.config.training, 'threshold', 0.5), name=f"recon_demo_{self.config.dataset.name}.png")
+                    plots_generated.append(recon_path)
+
+                    # Save latent space if available
+                    latent_vectors = p.get('latent_graph', None)
+                    if latent_vectors is not None:
+                        latent_path = save_latent_space_demo(latent_vectors.cpu().numpy(), labels, name=f"latent_demo_{self.config.dataset.name}.png")
+                        plots_generated.append(latent_path)
+
+                    logger.info("✅ Evaluation plots generated and saved to workbench")
+            except Exception as e:
+                logger.warning(f"Plotting hook failed: {e}")
+
+        # Log evaluation artifacts and key metrics to MLflow (if enabled)
+        if getattr(self.config.training, 'use_mlflow', True):
+            try:
+                exp_name = self.config.training.mlflow_experiment_name or f"CAN-Graph-{self.config.dataset.name}"
+                mlflow.set_experiment(exp_name)
+                run_name = f"evaluation_{self.config.dataset.name}"
+                with mlflow.start_run(run_name=run_name):
+                    # record model paths
+                    mlflow.log_param('autoencoder_path', str(autoencoder_path))
+                    mlflow.log_param('classifier_path', str(classifier_path))
+
+                    # log report file and any plots
+                    mlflow.log_artifact(str(report_file))
+                    for p in plots_generated:
+                        if p:
+                            mlflow.log_artifact(str(p))
+
+                    # log top-level metrics from results
+                    for key, value in results.items():
+                        if isinstance(value, dict):
+                            for m in ['f1', 'accuracy', 'precision', 'recall']:
+                                if m in value:
+                                    try:
+                                        mlflow.log_metric(f"{key}_{m}", float(value[m]))
+                                    except Exception:
+                                        pass
+
+                    # Save a compact config snapshot
+                    try:
+                        cfg_path = Path(paths['experiment_dir']) / 'config_snapshot.json'
+                        with open(cfg_path, 'w') as f:
+                            _json.dump(self.config.__dict__, f, default=str)
+                        mlflow.log_artifact(str(cfg_path))
+                    except Exception:
+                        logger.debug("Failed to log config snapshot to MLflow")
+
+                logger.info("✅ Evaluation artifacts and metrics logged to MLflow")
+            except Exception as e:
+                logger.warning(f"MLflow logging failed: {e}")
+
+        return results
+
         # Create descriptive model name based on training mode
         if self.config.training.mode == "student_baseline" and self.config.model.type == "gat_student":
             model_name = "gat_student_baseline.pth"

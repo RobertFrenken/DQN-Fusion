@@ -30,7 +30,6 @@ import subprocess
 import time
 from pathlib import Path
 from typing import List, Dict, Any, Tuple
-import yaml
 import json
 import logging
 from datetime import datetime
@@ -50,9 +49,11 @@ class OSCJobManager:
         # OSC-specific settings (customize for your account)
         self.osc_settings = {
             "account": "PAS3209",  # Your account
-            "email": "frenken.2@osu.edu",  # Your email
+            "email": "frenken.2@osu.edu",  # Your email (used for SBATCH notifications if enabled)
             "project_path": "/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT",  # Your project path
             "conda_env": "gnn-gpu",  # Your conda environment
+            "notify_webhook": "",  # Optional: Slack/Teams webhook URL for concise completion notifications
+            "notify_email": "frenken.2@osu.edu"     # Optional: single email to receive job completion summaries (one per job)
         }
         
         # Available datasets
@@ -114,7 +115,7 @@ class OSCJobManager:
             },
             "dqn_normal": {
                 "time": "2:00:00",
-                "time_complex": "8:00:00",  # Longer for complex datasets
+                "time_complex": "4:00:00",  # Reduced for faster turnaround on complex datasets
                 "mem": "32G", 
                 "mem_complex": "64G",  # More memory for complex datasets
                 "cpus": 8,
@@ -247,7 +248,28 @@ echo "===================="
 # Checkpoints: {output_dir}/lightning_checkpoints/
 # MLFlow logs: {output_dir}/mlruns/
 
-echo "✅ Job {job_name} completed successfully!"
+# Prepare status and notify via webhook/email if configured
+EXIT_CODE=$?
+STATUS_MSG="✅ Job {job_name} completed successfully!"
+if [ $EXIT_CODE -ne 0 ]; then
+  STATUS_MSG="❌ Job {job_name} failed (exit ${{EXIT_CODE}})"
+fi
+
+# Allow webhook/email to be provided via osc_settings (injected here) or environment
+export NOTIFY_WEBHOOK="{self.osc_settings.get('notify_webhook','')}"
+export NOTIFY_EMAIL="{self.osc_settings.get('notify_email','')}"
+
+if [ -n "$NOTIFY_WEBHOOK" ]; then
+  payload=$(printf '%s' '{{"text":"${{STATUS_MSG}} — JobID: $SLURM_JOB_ID — Dataset: {dataset} — Node: $SLURM_NODELIST — Elapsed: ${{elapsed}}s"}}')
+  curl -s -X POST -H 'Content-type: application/json' --data "$payload" "$NOTIFY_WEBHOOK" || true
+fi
+
+if [ -n "$NOTIFY_EMAIL" ]; then
+  echo -e "${{STATUS_MSG}}\n\nOutput directory: {output_dir}\nElapsed: ${{elapsed}}s\nNode: $SLURM_NODELIST\n" | mail -s "${{STATUS_MSG}}" "$NOTIFY_EMAIL" || true
+fi
+
+# Final local messages
+echo "$STATUS_MSG"
 echo "📁 Output directory: {output_dir}"
 '''
         
@@ -324,57 +346,62 @@ echo "📁 Output directory: {output_dir}"
                 f"--vgae_path {vgae_path}"
             ])
         elif training_type in ["dqn_normal", "gat_fusion"]:
-            # For DQN and fusion, look for pre-trained models in hierarchical structure
-            # Try multiple locations for autoencoder and classifier
+            # For DQN and fusion, robustly discover pre-trained VGAE/GAT checkpoints
             # Handle special case: hcrl_ch models may be named _ch instead of _hcrl_ch
             dataset_short = "ch" if dataset == "hcrl_ch" else dataset
             dataset_variants = [dataset, dataset_short] if dataset == "hcrl_ch" else [dataset]
-            
-            autoencoder_paths = []
-            classifier_paths = []
-            
+
+            autoencoder_candidates = []
+            classifier_candidates = []
+
             for ds in dataset_variants:
-                autoencoder_paths.extend([
-                    # New hierarchical structure (priority)
-                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth",  # Actual model file
-                    f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{ds}.pth",  # Compatibility symlink
-                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_teacher_{ds}.pth",  # Compatibility symlink
-                    # Old locations (fallback)
-                    f"model_archive/quick_archive_20260114_1642/autoencoder_{ds}.pth",
-                    f"saved_models/autoencoder_{ds}.pth"
+                autoencoder_candidates.extend([
+                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_autoencoder.pth",
+                    f"osc_jobs/{dataset}/vgae/autoencoder/vgae_{ds}_autoencoder.pth",
+                    f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{ds}.pth",
+                    f"saved_models/autoencoder_{ds}.pth",
                 ])
-                classifier_paths.extend([
-                    # New hierarchical structure (priority)
-                    f"osc_jobs/{dataset}/gat/normal/gat_normal.pth",  # Actual model file
-                    f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{ds}.pth",  # Compatibility symlink
-                    f"osc_jobs/{dataset}/gat/normal/gat_teacher_{ds}.pth",  # Compatibility symlink
-                    f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum.pth",  # Curriculum as teacher
-                    f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum_{ds}.pth",  # Compatibility symlink
-                    # Old locations (fallback)
-                    f"model_archive/quick_archive_20260114_1642/best_teacher_model_{ds}.pth",
-                    f"saved_models/best_teacher_model_{ds}.pth"
+
+                classifier_candidates.extend([
+                    f"osc_jobs/{dataset}/gat/normal/gat_{ds}_normal.pth",
+                    f"osc_jobs/{dataset}/gat/normal/gat_normal.pth",
+                    f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{ds}.pth",
+                    f"osc_jobs/{dataset}/gat/normal/gat_teacher_{ds}.pth",
+                    f"osc_jobs/{dataset}/gat/curriculum/gat_{ds}_curriculum.pth",
+                    f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum_{ds}.pth",
+                    f"osc_jobs/{dataset}/gat/curriculum/gat_curriculum.pth",
+                    f"saved_models/best_teacher_model_{ds}.pth",
                 ])
-            
-            # Find first existing autoencoder
-            autoencoder_path = None
-            for path in autoencoder_paths:
-                if os.path.exists(path):
-                    autoencoder_path = path
-                    break
-            
-            # Find first existing classifier
-            classifier_path = None
-            for path in classifier_paths:
-                if os.path.exists(path):
-                    classifier_path = path
-                    break
-            
-            # Use defaults if not found (will show clear error during training)
+
+            # Helper: pick the first existing candidate; if none, try globbing for likely matches
+            def _select_existing(candidates, glob_patterns=None):
+                for p in candidates:
+                    if os.path.exists(p):
+                        return p
+                # Try glob patterns (recursive search)
+                import glob
+                if glob_patterns:
+                    for pattern in glob_patterns:
+                        matches = glob.glob(pattern, recursive=True)
+                        if matches:
+                            return matches[0]
+                return None
+
+            # Patterns to search if explicit candidates are absent
+            ae_glob_patterns = [f"osc_jobs/{dataset}/vgae/autoencoder/**/*{dv}*.pth" for dv in dataset_variants]
+            clf_glob_patterns = [f"osc_jobs/{dataset}/gat/**/*{dv}*.pth" for dv in dataset_variants]
+
+            autoencoder_path = _select_existing(autoencoder_candidates, ae_glob_patterns)
+            classifier_path = _select_existing(classifier_candidates, clf_glob_patterns)
+
+            # Fallback to first candidate (will produce a clear error when missing) to keep behavior
             if not autoencoder_path:
-                autoencoder_path = autoencoder_paths[0]
+                autoencoder_path = autoencoder_candidates[0]
             if not classifier_path:
-                classifier_path = classifier_paths[0]
-            
+                classifier_path = classifier_candidates[0]
+
+            logger.info(f"Resolved model paths -> Autoencoder: {autoencoder_path} | Classifier: {classifier_path}")
+
             cmd_parts.extend([
                 f"--autoencoder_path {autoencoder_path}",
                 f"--classifier_path {classifier_path}"
@@ -453,8 +480,7 @@ echo "📁 Output directory: {output_dir}"
             ])
             
             logger.info(f"✅ Submitted pipeline for {dataset}: "
-                       f"GAT({gat_job_id}), VGAE({vgae_job_id}), "
-                       f"KD({kd_job_id}), Fusion({fusion_job_id})")
+                       f"GAT({gat_job_id}), VGAE({vgae_job_id}), Fusion({fusion_job_id})")
         
         return submitted_jobs
     
@@ -505,8 +531,7 @@ echo "📁 Output directory: {output_dir}"
             # Check for autoencoder
             autoencoder_found = False
             for ds in dataset_variants:
-                if (os.path.exists(f"model_archive/quick_archive_20260114_1642/autoencoder_{ds}.pth") or
-                    os.path.exists(f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{ds}.pth") or
+                if (os.path.exists(f"osc_jobs/{dataset}/vgae/autoencoder/autoencoder_{ds}.pth") or
                     os.path.exists(f"saved_models/autoencoder_{ds}.pth")):
                     autoencoder_found = True
                     break
@@ -514,8 +539,7 @@ echo "📁 Output directory: {output_dir}"
             # Check for classifier
             classifier_found = False
             for ds in dataset_variants:
-                if (os.path.exists(f"model_archive/quick_archive_20260114_1642/best_teacher_model_{ds}.pth") or
-                    os.path.exists(f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{ds}.pth") or
+                if (os.path.exists(f"osc_jobs/{dataset}/gat/normal/best_teacher_model_{ds}.pth") or
                     os.path.exists(f"saved_models/best_teacher_model_{ds}.pth")):
                     classifier_found = True
                     break

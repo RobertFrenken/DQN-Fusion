@@ -155,7 +155,7 @@ model_type: "teacher"          # Explicitly set as teacher model
 use_teacher_config: true       # Enable teacher architecture
 teacher_model_path: null       # Path to pre-trained teacher (if loading)
 save_teacher_model: true       # Save teacher model after training
-teacher_checkpoint_dir: "model_archive/"  # Teacher model save directory
+teacher_checkpoint_dir: "saved_models/"  # Teacher model save directory (use canonical saved_models/ or osc_jobs/ locations)
 ```
 
 #### Student Model Parameters
@@ -163,9 +163,9 @@ teacher_checkpoint_dir: "model_archive/"  # Teacher model save directory
 model_type: "student"          # Explicitly set as student model
 use_student_config: true       # Enable student architecture
 student_model_path: null       # Path to pre-trained student (if loading)
-teacher_model_path: "model_archive/best_teacher_model_{dataset}.pth"  # Required teacher path
+    teacher_model_path: "osc_jobs/{dataset}/gat/normal/best_teacher_model_{dataset}.pth"  # Required teacher path (new canonical location)
 save_student_model: true       # Save student model after training
-student_checkpoint_dir: "model_archive/"  # Student model save directory
+student_checkpoint_dir: "saved_models/"  # Student model save directory (use canonical saved_models/ or osc_jobs/ locations)
 ```
 
 #### Knowledge Distillation Specific Parameters
@@ -308,10 +308,10 @@ python osc_job_manager.py --submit-individual --datasets hcrl_sa,hcrl_ch,set_01,
 
 ```bash
 # Train GAT student with knowledge distillation from teacher
-python osc_job_manager.py --submit-individual --datasets hcrl_sa --training knowledge_distillation --extra-args "model_type=student,teacher_model_path=model_archive/best_teacher_model_hcrl_sa.pth,temperature=4.0,alpha=0.7"
+python osc_job_manager.py --submit-individual --datasets hcrl_sa --training knowledge_distillation --extra-args "model_type=student,teacher_model_path=osc_jobs/hcrl_sa/gat/normal/best_teacher_model_hcrl_sa.pth,temperature=4.0,alpha=0.7"
 
 # Train VGAE student with knowledge distillation
-python osc_job_manager.py --submit-individual --datasets set_01 --training knowledge_distillation --extra-args "model_type=student,model_config=StudentVGAEConfig,teacher_model_path=model_archive/best_teacher_model_set_01.pth"
+python osc_job_manager.py --submit-individual --datasets set_01 --training knowledge_distillation --extra-args "model_type=student,model_config=StudentVGAEConfig,teacher_model_path=osc_jobs/set_01/gat/normal/best_teacher_model_set_01.pth"
 
 # Knowledge distillation for all datasets (requires existing teacher models)
 python osc_job_manager.py --submit-individual --datasets hcrl_sa,hcrl_ch,set_01,set_02,set_03,set_04 --training knowledge_distillation --extra-args "model_type=student,temperature=4.0,alpha=0.7"
@@ -324,13 +324,13 @@ python osc_job_manager.py --submit-individual --datasets hcrl_sa,hcrl_ch,set_01,
 python osc_job_manager.py --submit-individual --datasets hcrl_sa --training gat_normal --extra-args "use_hydra_zen=true,model_config=GATConfig,model_type=teacher"
 
 # Use hydra-zen GAT student config with KD
-python osc_job_manager.py --submit-individual --datasets hcrl_sa --training knowledge_distillation --extra-args "use_hydra_zen=true,model_config=StudentGATConfig,model_type=student,teacher_model_path=model_archive/best_teacher_model_hcrl_sa.pth"
+python osc_job_manager.py --submit-individual --datasets hcrl_sa --training knowledge_distillation --extra-args "use_hydra_zen=true,model_config=StudentGATConfig,model_type=student,teacher_model_path=osc_jobs/hcrl_sa/gat/normal/best_teacher_model_hcrl_sa.pth"
 
 # Use hydra-zen VGAE teacher config
 python osc_job_manager.py --submit-individual --datasets set_01 --training vgae_autoencoder --extra-args "use_hydra_zen=true,model_config=VGAEConfig,model_type=teacher"
 
 # Use hydra-zen VGAE student config with KD
-python osc_job_manager.py --submit-individual --datasets set_01 --training knowledge_distillation --extra-args "use_hydra_zen=true,model_config=StudentVGAEConfig,model_type=student,teacher_model_path=model_archive/best_teacher_model_set_01.pth"
+python osc_job_manager.py --submit-individual --datasets set_01 --training knowledge_distillation --extra-args "use_hydra_zen=true,model_config=StudentVGAEConfig,model_type=student,teacher_model_path=osc_jobs/set_01/gat/normal/best_teacher_model_set_01.pth"
 ```
 
 ### 4. Single Model for Single Dataset
@@ -446,6 +446,13 @@ python osc_job_manager.py --submit-pipeline --datasets hcrl_sa,hcrl_ch,set_01,se
 python osc_job_manager.py --monitor-jobs
 
 # Check specific jobs in SLURM queue
+
+💡 Notification tips
+- For single, concise completion notifications (no spam), set a webhook URL in `osc_job_manager.py` under `osc_settings["notify_webhook"]` (e.g., a Slack incoming webhook). The generated SLURM scripts will send a single short message on completion or failure.
+- Alternatively, set `osc_settings["notify_email"]` for one summary email per job (sent at job end). This is often cleaner than enabling `#SBATCH --mail-type=END,FAIL` which can create many messages.
+- You can also export `NOTIFY_WEBHOOK` or `NOTIFY_EMAIL` in your shell environment on the cluster to avoid storing secrets in files.
+
+
 squeue -u $USER
 
 # Check job details

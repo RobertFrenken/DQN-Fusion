@@ -389,25 +389,58 @@ class CurriculumTrainingConfig(BaseTrainingConfig):
     start_ratio: float = 1.0       # 1:1 normal:attack (easy start)
     end_ratio: float = 10.0        # 10:1 normal:attack (realistic end, not 100:1)
     difficulty_percentile: float = 75.0  # Use top 75% difficult samples
-    
+
     # Training adjustments for curriculum
     max_epochs: int = 400
     batch_size: int = 32           # Starting batch size for optimization
     learning_rate: float = 0.001
     early_stopping_patience: int = 150  # Longer patience for curriculum
-    
+
     # Batch size optimization
     optimize_batch_size: bool = True   # Enable batch size optimization using max dataset size
     batch_size_mode: str = "power"     # Lightning tuner mode: power, binsearch
     max_batch_size_trials: int = 15    # More trials for curriculum learning
     dynamic_batch_recalc_threshold: float = 2.0  # Recalculate if dataset grows >2x
-    
+
     # Hard mining parameters
     use_vgae_mining: bool = True       # Enable VGAE-based hard mining
     difficulty_cache_update: int = 10  # Update difficulty cache every N epochs
-    
+
     # Memory preservation
     use_memory_preservation: bool = True  # Prevent catastrophic forgetting
+
+
+@dataclass
+class EvaluationTrainingConfig(BaseTrainingConfig):
+    """Evaluation configuration to run comprehensive evaluation pipelines."""
+    mode: str = "evaluation"
+    description: str = "Run comprehensive evaluation (student & teacher) and save reports"
+
+    # Optional explicit model paths (if not provided, will use hierarchical defaults)
+    autoencoder_path: Optional[str] = None
+    classifier_path: Optional[str] = None
+    threshold_path: Optional[str] = None
+
+    # Execution options
+    device: str = "cuda"  # 'cuda' or 'cpu' or 'auto'
+    optimize_thresholds: bool = True
+    threshold_methods: List[str] = field(default_factory=lambda: ["anomaly_only", "two_stage"])
+
+    # Reporting & plotting
+    save_report_dir: str = "outputs/evaluation"
+    save_plots: bool = True
+    save_plots_dir: str = "outputs/workbench_plots"
+    plot_examples: int = 3  # Number of example graphs to plot for visualizations
+
+    # MLflow options
+    use_mlflow: bool = True
+    mlflow_experiment_name: Optional[str] = None  # override experiment name if desired
+
+    metrics: List[str] = field(default_factory=lambda: ["accuracy", "precision", "recall", "f1", "roc_auc"])
+    evaluate_student: bool = True
+    evaluate_teacher: bool = True
+    run_on_test: bool = True
+    batch_size: Optional[int] = None
     memory_strength: float = 0.1          # EWC regularization strength
 
 
@@ -441,7 +474,7 @@ class CANGraphConfig:
     dataset: CANDatasetConfig
     training: Union[NormalTrainingConfig, AutoencoderTrainingConfig, 
                    KnowledgeDistillationConfig, StudentBaselineTrainingConfig,
-                   FusionTrainingConfig, CurriculumTrainingConfig]
+                   FusionTrainingConfig, CurriculumTrainingConfig, EvaluationTrainingConfig]
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
     
     # Global settings
@@ -506,6 +539,7 @@ class CANGraphConfigStore:
         self.store(KnowledgeDistillationConfig, name="knowledge_distillation", group="training")
         self.store(StudentBaselineTrainingConfig, name="student_baseline", group="training")
         self.store(FusionTrainingConfig, name="fusion", group="training")
+        self.store(EvaluationTrainingConfig, name="evaluation", group="training")
         
         # Trainer
         self.store(TrainerConfig, name="default", group="trainer")

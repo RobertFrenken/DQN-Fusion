@@ -13,6 +13,7 @@ from sklearn.metrics import (
     confusion_matrix, roc_auc_score, matthews_corrcoef, classification_report
 )
 from torch_geometric.data import Batch
+from torch_geometric.nn import global_mean_pool
 
 from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
 from src.preprocessing.preprocessing import graph_creation, build_id_mapping_from_normal
@@ -454,9 +455,11 @@ class ComprehensiveEvaluationPipeline:
     def _predict_with_models(self, data, autoencoder, classifier, threshold, optimized_thresholds):
         """Helper method to make predictions with given models."""
         # Autoencoder forward pass
-        cont_out, canid_logits, neighbor_logits, _, _ = autoencoder(
+        cont_out, canid_logits, neighbor_logits, z, _ = autoencoder(
             data.x, data.edge_index, data.batch)
-        
+
+        # Compute per-graph latent embeddings (global mean pooling)
+        latent_graph = global_mean_pool(z, data.batch)
         # Compute anomaly scores
         node_errors = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
         neighbor_targets = autoencoder.create_neighborhood_targets(
@@ -518,7 +521,8 @@ class ComprehensiveEvaluationPipeline:
             'optimized_two_stage_preds': optimized_two_stage_preds.long(),
             'anomaly_scores': norm_anomaly_scores,
             'gat_probs': gat_probs,
-            'raw_anomaly_scores': raw_anomaly_scores
+            'raw_anomaly_scores': raw_anomaly_scores,
+            'latent_graph': latent_graph
         }
 
 
