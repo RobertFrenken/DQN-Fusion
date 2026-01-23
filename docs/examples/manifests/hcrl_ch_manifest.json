@@ -1,0 +1,14 @@
+{
+  "autoencoder": {
+    "path": "{experiment_root}/automotive/hcrl_ch/unsupervised/vgae/teacher/no_distillation/autoencoder/vgae_autoencoder.pth",
+    "model_size": "teacher",
+    "training_mode": "autoencoder",
+    "distillation": "no_distillation"
+  },
+  "classifier": {
+    "path": "{experiment_root}/automotive/hcrl_ch/supervised/gat/teacher/no_distillation/normal/gat_hcrl_ch_normal.pth",
+    "model_size": "teacher",
+    "training_mode": "normal",
+    "distillation": "no_distillation"
+  }
+}
