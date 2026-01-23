@@ -110,57 +110,233 @@ class OSCJobManager:
     
     def generate_slurm_script(self, job_name: str, training_type: str, dataset: str, 
                             extra_args: Dict[str, Any] = None) -> str:
-        """Generate optimized SLURM script for unified training approach."""
+        """Generate an SBATCH script that runs `train_with_hydra_zen.py` for a given dataset and training.
+
+        Returns the path to the generated script.
+        """
+        extra_args = extra_args or {}
+        script_dir = self.project_root / 'slurm_jobs'
+        script_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        script_path = script_dir / f"{job_name}_{dataset}_{timestamp}.sh"
+
+        # Map training_type to model/training CLI args
+        if training_type in ('autoencoder', 'vgae'):
+            model = 'vgae'
+            mode = 'autoencoder'
+        elif training_type in ('curriculum', 'curriculum_classifier'):
+            model = 'gat'
+            mode = 'curriculum'
+        elif training_type in ('fusion', 'rl_fusion'):
+            model = 'gat'
+            mode = 'fusion'
+        elif training_type in ('normal', 'classifier'):
+            model = 'gat'
+            mode = 'normal'
+        else:
+            model = extra_args.get('model', 'gat')
+            mode = training_type
+
+        # Build the training command
+        train_cmd = self._build_training_command(model, mode, dataset, extra_args)
+
+        # SBATCH headers
+        sbatch_headers = [
+            '#!/usr/bin/env bash',
+            f'#SBATCH --job-name={job_name}_{dataset}',
+            f'#SBATCH --account={self.osc_settings.get("account")}',
+            f'#SBATCH --time={self.osc_parameters.get("wall_time")}',
+            f'#SBATCH --mem={self.osc_parameters.get("memory")}',
+            f'#SBATCH --cpus-per-task={self.osc_parameters.get("cpus")}',
+            f'#SBATCH --gres=gpu:{self.osc_parameters.get("gpus")}',
+            f'#SBATCH --output={self.project_root}/slurm_logs/{job_name}_{dataset}_%j.out',
+            f'#SBATCH --error={self.project_root}/slurm_logs/{job_name}_{dataset}_%j.err',
+            f'#SBATCH --mail-user={self.osc_settings.get("notify_email")}',
+            '#SBATCH --mail-type=END,FAIL'
+        ]
+
+        # Script body uses robust activation pattern
+        body = [
+            'set -euo pipefail',
+            'echo "Starting job on $(hostname) at $(date)"',
+            'echo "Project root: ' + str(self.project_root) + '"',
+            'mkdir -p ' + str(self.project_root / 'slurm_logs'),
+            'mkdir -p ' + str(self.project_root / 'slurm_jobs'),
+            'source ~/.bashrc || true',
+            f'echo "Activating conda env: {self.osc_settings.get("conda_env")}"',
+            f'conda activate {self.osc_settings.get("conda_env")} || true',
+            '# Export canonical experiment root for the job manager and training script',
+            f'export CAN_EXPERIMENT_ROOT="{self.experiments_dir}"',
+            '',
+            'echo "Running training command:"',
+            f'echo "{train_cmd}"',
+            f'{train_cmd} 2>&1 | tee {self.project_root}/slurm_logs/{job_name}_{dataset}_$SLURM_JOB_ID.log',
+            'echo "Job finished at $(date)"'
+        ]
+
+        with open(script_path, 'w') as f:
+            f.write('\n'.join(sbatch_headers) + '\n\n' + '\n'.join(body) + '\n')
+
+        # Make script executable
+        script_path.chmod(0o755)
+        logger.info(f"Generated SLURM script: {script_path}")
+        return str(script_path)
     
     def parse_extra_args(self, extra_args_str: str) -> Dict[str, Any]:
-        """Parse extra arguments string into dictionary.
-        
-        Args:
-            extra_args_str: String in format 'key1=value1' or 'key1=value1,key2=value2'
-            
-        Returns:
-            Dictionary of parsed arguments
-        """
-    
-    def _build_training_command(self, training_type: str, dataset: str, 
-                              extra_args: Dict[str, Any]) -> str:
-        """Build the unified training command."""
-        
-        
+        """Parse comma-separated key=value pairs into a dict.
 
+        Example: 'max_epochs=50,batch_size=32'
+        """
+        if not extra_args_str:
+            return {}
+        parts = [p.strip() for p in extra_args_str.split(',') if p.strip()]
+        out = {}
+        for part in parts:
+            if '=' in part:
+                k, v = part.split('=', 1)
+                out[k.strip()] = v.strip()
+            else:
+                out[part] = True
+        return out
+    
+    def _build_training_command(self, model: str, mode: str, dataset: str, extra_args: Dict[str, Any]) -> str:
+        """Construct the python command invoking train_with_hydra_zen.py with chosen options."""
+        cmd = [
+            'python', str(self.project_root / 'train_with_hydra_zen.py'),
+            '--model', model,
+            '--dataset', dataset,
+            '--training', mode
+        ]
+
+        # Map known overrides
+        if extra_args:
+            for k, v in extra_args.items():
+                if k in ('max_epochs', 'epochs'):
+                    cmd += ['--epochs', str(v)]
+                elif k == 'batch_size' or k == 'batch-size':
+                    cmd += ['--batch_size', str(v)]
+                elif k == 'teacher_path':
+                    cmd += ['--teacher_path', str(v)]
+                elif k == 'dependency_manifest':
+                    cmd += ['--dependency-manifest', str(v)]
+                elif isinstance(v, bool) and v:
+                    cmd += [f'--{k}']
+                else:
+                    # Generic key-value passed as --key value
+                    cmd += [f'--{k}', str(v)]
+
+        # Join safely
+        return ' '.join(cmd)
     
     def submit_individual_jobs(self, datasets: List[str] = None, 
                              training_types: List[str] = None,
-                             extra_args: Dict[str, Any] = None) -> List[str]:
-        """Submit individual training jobs."""
-        
-    
+                             extra_args: Dict[str, Any] = None, submit: bool = True) -> List[str]:
+        """Generate and optionally submit jobs for each dataset x training_type pair.
+
+        Returns list of submitted job IDs or script paths when submit=False.
+        """
+        datasets = datasets or self.training_configurations['datasets'].get('automotive', [])
+        training_types = training_types or ['autoencoder', 'curriculum', 'fusion']
+
+        submitted = []
+        for t in training_types:
+            for ds in datasets:
+                job_name = f"can_{t}"
+                script_path = self.generate_slurm_script(job_name, t, ds, extra_args=extra_args)
+                if submit:
+                    job_id = self._submit_slurm_job(Path(script_path))
+                    submitted.append(job_id)
+                else:
+                    submitted.append(script_path)
+        return submitted    
     def submit_pipeline_jobs(self, datasets: List[str] = None) -> List[str]:
-        """Submit complete pipeline jobs (individual -> curriculum -> fusion)."""
-        
-    
+        """Submit pipeline jobs (autoencoder -> curriculum -> fusion) for each dataset."""
+        datasets = datasets or self.training_configurations['datasets'].get('automotive', [])
+        submitted = []
+        for ds in datasets:
+            # Submit autoencoder
+            j1 = self.submit_individual_jobs([ds], ['autoencoder'])
+            # Submit curriculum (depends on autoencoder)
+            j2 = self.submit_individual_jobs([ds], ['curriculum'])
+            # Submit fusion (depends on classifier and autoencoder artifacts already present)
+            j3 = self.submit_individual_jobs([ds], ['fusion'])
+            submitted.extend(j1 + j2 + j3)
+        return submitted    
     def submit_parameter_sweep(self, training_type: str, dataset: str,
                              param_grid: Dict[str, List[Any]]) -> List[str]:
-        """Submit parameter sweep jobs."""
-        
-
+        """Create multiple jobs for each parameter combination and submit them."""
+        keys, values = zip(*param_grid.items())
+        combos = [dict(zip(keys, v)) for v in itertools.product(*values)]
+        job_ids = []
+        for i, combo in enumerate(combos):
+            job_name = f"sweep_{training_type}_{dataset}_{i}"
+            script = self.generate_slurm_script(job_name, training_type, dataset, extra_args=combo)
+            job_ids.append(self._submit_slurm_job(Path(script)))
+        return job_ids
     
     def _submit_slurm_job(self, script_path: Path, dependency: str = None) -> str:
-        """Submit SLURM job and return job ID."""
-        
+        """Submit SLURM job using sbatch and return the job ID string (or script path if sbatch not available)."""
+        try:
+            cmd = ["sbatch"]
+            if dependency:
+                cmd += ["--dependency", f"afterok:{dependency}"]
+            cmd.append(str(script_path))
+            out = subprocess.check_output(cmd, stderr=subprocess.STDOUT).decode('utf-8')
+            # sbatch output: Submitted batch job 123456
+            job_id = out.strip().split()[-1]
+            logger.info(f"Submitted job {job_id} for script {script_path}")
+            return job_id
+        except Exception as e:
+            logger.warning(f"sbatch failed or not available: {e}. Script written to {script_path}")
+            return str(script_path)
+
     
     def _cleanup_old_jobs(self):
-        """Clean up old failed job directories to prevent buildup."""
-    
-    def monitor_jobs(self, job_ids: List[str] = None) -> Dict[str, str]:
-        """Monitor job status including running, pending, and completed jobs."""
-    
-    def generate_job_summary(self) -> str:
-        """Generate summary of submitted jobs."""
-    
-    def cleanup_outputs(self):
-        """Clean up old job outputs and failed runs."""
+        """Remove old slurm job artifacts older than 90 days to prevent buildup."""
+        log_dir = self.project_root / 'slurm_logs'
+        if not log_dir.exists():
+            return
+        for p in log_dir.glob('*.log'):
+            try:
+                if (datetime.now() - datetime.fromtimestamp(p.stat().st_mtime)).days > 90:
+                    p.unlink()
+            except Exception:
+                pass
 
+    def monitor_jobs(self, job_ids: List[str] = None) -> Dict[str, str]:
+        """Return a dict mapping job_id -> status (pending|running|completed|unknown).
+
+        Uses `squeue` when available, otherwise returns 'unknown'.
+        """
+        statuses = {}
+        try:
+            out = subprocess.check_output(['squeue', '-j', ','.join(job_ids)]).decode('utf-8')
+            for line in out.splitlines()[1:]:
+                parts = line.split()
+                if parts:
+                    jid = parts[0]
+                    state = parts[4]
+                    statuses[jid] = state
+            return statuses
+        except Exception:
+            for jid in job_ids or []:
+                statuses[jid] = 'unknown'
+            return statuses
+
+    def generate_job_summary(self) -> str:
+        """Return a short summary of experiments directory size and job counts."""
+        total = sum(1 for _ in self.experiments_dir.rglob('*.pth'))
+        return f"Experiments path: {self.experiments_dir} - model artifacts: {total} files"
+
+    def cleanup_outputs(self):
+        """Remove failed directories older than a month (heuristic)."""
+        runs = list(self.experiments_dir.iterdir()) if self.experiments_dir.exists() else []
+        for r in runs:
+            try:
+                if r.is_dir() and (datetime.now() - datetime.fromtimestamp(r.stat().st_mtime)).days > 30 and r.name.startswith('tmp'):
+                    shutil.rmtree(r)
+            except Exception:
+                pass
 
 
 def main():

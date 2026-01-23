@@ -1050,6 +1050,15 @@ Examples:
             print(f"❌ Dependency manifest validation failed: {e}")
             raise
     
+    # Apply environment override for experiment root if provided (useful for job managers)
+    env_exp_root = os.environ.get('CAN_EXPERIMENT_ROOT') or os.environ.get('EXPERIMENT_ROOT')
+    if env_exp_root:
+        try:
+            config.experiment_root = str(Path(env_exp_root).resolve())
+            print(f"🔧 Overriding experiment root from env: {config.experiment_root}")
+        except Exception:
+            print(f"⚠️  Invalid experiment root provided in CAN_EXPERIMENT_ROOT: {env_exp_root}")
+
     # Print configuration summary
     print(f"📋 Configuration Summary:")
     print(f"   Model: {config.model.type}")
