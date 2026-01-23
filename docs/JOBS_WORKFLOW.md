@@ -55,6 +55,7 @@ Notes
 -----
 - Fusion jobs require pre-trained artifacts; use `dependency_manifests` to point to manifests that validate and pin artifacts. Example manifests are available under `docs/examples/manifests/` (e.g., `hcrl_sa_manifest.json`, `hcrl_ch_manifest.json`). Replace `{experiment_root}` in the example manifests with your actual `CAN_EXPERIMENT_ROOT` or leave as-is if you use the default `experiment_runs/` layout.
 - Batch-size tuning: by default the training configs enable Lightning's Tuner to find an optimal batch size (`optimize_batch_size: true`). This helps maximize GPU utilization. If you explicitly set `batch_size` via a job spec `extra_args` (or via CLI), the tuner will use that as the initial batch size but will still run unless you disable optimization by setting `optimize_batch_size=false` in your config. For quick smoke runs you may want to disable tuning to avoid extra trials.
+- You can generate concrete, absolute manifests with the helper script: `python scripts/generate_manifests.py --datasets hcrl_sa hcrl_ch` (writes to `docs/examples/manifests/generated/`).
 - You can custom-edit generated scripts in `slurm_jobs/` before submitting if you use `--generate-only` first.
 - Monitor with `squeue` or use `OSCJobManager.monitor_jobs(job_ids)` programmatically.
 
