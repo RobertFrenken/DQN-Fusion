@@ -91,6 +91,7 @@ class FusionTrainingPipeline:
             device_props = torch.cuda.get_device_properties(str(self.device))
             return {
                 'device': str(self.device),
+                'name': getattr(device_props, 'name', 'GPU'),
                 'memory_gb': device_props.total_memory / 1024**3,
                 'multiprocessor_count': device_props.multiprocessor_count,
                 'batch_size': 1024,
@@ -111,7 +112,16 @@ class FusionTrainingPipeline:
         print(f"\n=== Loading Pre-trained Models ===")
         print(f"Autoencoder: {autoencoder_path}")
         print(f"Classifier: {classifier_path}")
-        
+
+        # Validate checkpoint existence strictly and provide clear error messages BEFORE instantiating heavy models
+        missing = []
+        if not autoencoder_path or not Path(autoencoder_path).exists():
+            missing.append(f"autoencoder missing at {autoencoder_path}")
+        if not classifier_path or not Path(classifier_path).exists():
+            missing.append(f"classifier missing at {classifier_path}")
+        if missing:
+            raise FileNotFoundError("Fusion training requires pre-trained artifacts:\n" + "\n".join(missing) + "\nPlease ensure the artifacts are available at the canonical experiment_runs layout or pass explicit paths.")
+
         # Initialize models
         self.autoencoder = GraphAutoencoderNeighborhood(
             num_ids=self.num_ids,
@@ -134,7 +144,7 @@ class FusionTrainingPipeline:
             heads=8,
             embedding_dim=self.embedding_dim
         ).to(self.device)
-        
+
         # Load checkpoints
         try:
             # Load autoencoder
@@ -311,10 +321,12 @@ class FusionTrainingPipeline:
                 print(f"  GPU memory used: {self.training_states_gpu.element_size() * self.training_states_gpu.nelement() / (1024**2):.2f}MB")
                 
             except RuntimeError as e:
-                print(f"⚠️ GPU memory error during state precomputation: {e}")
-                print("Falling back to CPU computation during training...")
-                self.training_states_gpu = None
-                self.validation_states_gpu = None
+                # Fail loudly: GPU precomputation failure likely indicates insufficient GPU resources
+                raise RuntimeError(
+                    f"GPU memory error during state precomputation: {e}. "
+                    "This pipeline requires sufficient GPU resources to precompute states. "
+                    "Consider reducing batch size, freeing GPU memory, or running on a node with larger GPUs."
+                ) from e
         else:
             # Ensure GPU state tensors are None for CPU mode
             self.training_states_gpu = None

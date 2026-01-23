@@ -50,6 +50,9 @@ from pathlib import Path
 
 from hydra_zen import make_config, store, zen
 import torch
+import logging
+
+logger = logging.getLogger(__name__)
 
 
 # ============================================================================
@@ -711,7 +714,24 @@ class CANGraphConfigStore:
         )
     
     def get_model_config(self, model_type: str) -> Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig, DQNConfig, StudentDQNConfig]:
-        """Get model configuration by type."""
+        """Get model configuration by type.
+
+        Returns a new instance of the requested model config. Raises ValueError for unknown types.
+        """
+        model_map = {
+            "gat": GATConfig,
+            "gat_student": StudentGATConfig,
+            "vgae": VGAEConfig,
+            "vgae_student": StudentVGAEConfig,
+            "dqn": DQNConfig,
+            "dqn_student": StudentDQNConfig,
+        }
+
+        if model_type not in model_map:
+            raise ValueError(f"Unknown model type: {model_type}. Available: {list(model_map.keys())}")
+
+        # Return a fresh instance (avoids accidental shared mutable state)
+        return model_map[model_type]()
     
     def get_dataset_config(self, dataset_name: str) -> CANDatasetConfig:
         """Get dataset configuration by name."""

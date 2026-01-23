@@ -309,11 +309,18 @@ class ComprehensiveEvaluationPipeline:
         print(f"Initialized Comprehensive Evaluation Pipeline on {device}")
 
     def load_student_models(self, autoencoder_path, classifier_path, threshold_path=None):
-        """Load trained student models."""
-        if not (os.path.exists(autoencoder_path) and os.path.exists(classifier_path)):
-            print("Student models not found, skipping...")
-            return False
-            
+        """Load trained student models.
+
+        This method fails loudly if required artifacts are missing to avoid silent evaluation runs.
+        """
+        missing = []
+        if not autoencoder_path or not os.path.exists(autoencoder_path):
+            missing.append(f"autoencoder missing at {autoencoder_path}")
+        if not classifier_path or not os.path.exists(classifier_path):
+            missing.append(f"classifier missing at {classifier_path}")
+        if missing:
+            raise FileNotFoundError("Evaluation requires pre-trained models:\n" + "\n".join(missing) + "\nPlease provide explicit model paths or ensure canonical artifacts are present under experiment_runs.")
+
         print(f"Loading student models...")
         
         autoencoder_state_dict = torch.load(autoencoder_path, map_location=self.device, weights_only=True)
@@ -339,11 +346,18 @@ class ComprehensiveEvaluationPipeline:
         return True
 
     def load_teacher_models(self, autoencoder_path, classifier_path, threshold_path=None):
-        """Load trained teacher models."""
-        if not (os.path.exists(autoencoder_path) and os.path.exists(classifier_path)):
-            print("Teacher models not found, skipping...")
-            return False
-            
+        """Load trained teacher models.
+
+        This method fails loudly if required artifacts are missing to avoid silent evaluation runs.
+        """
+        missing = []
+        if not autoencoder_path or not os.path.exists(autoencoder_path):
+            missing.append(f"autoencoder missing at {autoencoder_path}")
+        if not classifier_path or not os.path.exists(classifier_path):
+            missing.append(f"classifier missing at {classifier_path}")
+        if missing:
+            raise FileNotFoundError("Evaluation requires pre-trained models:\n" + "\n".join(missing) + "\nPlease provide explicit model paths or ensure canonical artifacts are present under experiment_runs.")
+
         print(f"Loading teacher models...")
         
         autoencoder_state_dict = torch.load(autoencoder_path, map_location=self.device, weights_only=True)

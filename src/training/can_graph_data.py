@@ -47,46 +47,15 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
     from pathlib import Path
     import os
     import torch
-    # Use data_path from config if available, otherwise fallback to dataset name
+    # Use data_path from config strictly. No fallback discovery behavior allowed.
     if hasattr(config.dataset, 'data_path') and config.dataset.data_path:
         dataset_path = config.dataset.data_path
     else:
-        possible_paths = [
-            f"datasets/can-train-and-test-v1.5/{dataset_name}",
-            f"datasets/can-train-and-test-v1.5/{dataset_name.replace('_', '-')}",
-            f"datasets/{dataset_name}",
-            f"datasets/{dataset_name.replace('_', '-')}",
-            f"../datasets/{dataset_name}",
-            f"data/{dataset_name}"
-        ]
-        dataset_path = None
-        for path in possible_paths:
-            if os.path.exists(path):
-                import glob
-                csv_files = glob.glob(os.path.join(path, '**', '*train_*.csv'), recursive=True)
-                if csv_files:
-                    dataset_path = path
-                    logger.info(f"Found valid dataset path: {dataset_path} with {len(csv_files)} CSV files")
-                    break
-                else:
-                    logger.warning(f"Path exists but no CSV files found: {path}")
-        if not dataset_path and dataset_name.startswith('hcrl_'):
-            alt_name = dataset_name.replace('hcrl_', 'hcrl-')
-            alt_paths = [
-                f"datasets/can-train-and-test-v1.5/{alt_name}",
-                f"datasets/{alt_name}"
-            ]
-            for path in alt_paths:
-                if os.path.exists(path):
-                    import glob
-                    csv_files = glob.glob(os.path.join(path, '**', '*train_*.csv'), recursive=True)
-                    if csv_files:
-                        dataset_path = path
-                        logger.info(f"Found dataset using alternative naming: {dataset_path}")
-                        break
-        if not dataset_path:
-            dataset_path = f"datasets/{dataset_name}"
-            logger.error(f"No valid dataset path found! Using fallback: {dataset_path}")
+        # Fail fast: require explicit dataset path in the dataset config
+        raise ValueError(
+            "Dataset path must be explicitly set in the configuration (config.dataset.data_path). "
+            "No implicit discovery is performed. Example: 'datasets/can-train-and-test-v1.5/hcrl-sa'"
+        )
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset not found: {dataset_path}")
     if hasattr(config.dataset, 'get'):

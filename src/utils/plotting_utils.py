@@ -943,15 +943,11 @@ def plot_fusion_analysis(anomaly_scores: List, gat_probs: List,
     
     # Check if we have the figure from training progress
     if current_fig is None or current_axes is None:
-        # Fallback: create new figure if training plots weren't called first
-        apply_publication_style()
-        plt.ioff()
-        fig, axes = plt.subplots(2, 4, figsize=(32, 16))
-        # Hide first 5 subplots if training wasn't called
-        for i in range(2):
-            for j in range(4):
-                if i == 0 or (i == 1 and j == 0):
-                    axes[i,j].set_visible(False)
+        # Strict: do not create implicit figures. Require caller to pass the training progress figure/axes
+        raise ValueError(
+            "plot_fusion_analysis requires a pre-existing figure and axes from plot_fusion_training_progress. "
+            "Pass `current_fig` and `current_axes`, or call `plot_fusion_training_progress` before `plot_fusion_analysis`."
+        )
     else:
         fig = current_fig
         axes = current_axes

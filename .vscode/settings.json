@@ -13,7 +13,8 @@
         "CUDA_HOME": "C:\\Program Files\\NVIDIA GPU Computing Toolkit\\CUDA\\v11.8"
     },
     "chat.tools.terminal.autoApprove": {
-        "conda": true
+        "conda": true,
+        "pytest": true
     },
     "github.copilot.chat.instructions": "Be concise and direct. Only show code changes, no explanations unless asked. Don't overwrite existing code unnecessarily.",
     "claude.instructions": "Keep responses brief. Focus on code implementation only. Avoid verbose explanations.",

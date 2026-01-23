@@ -68,8 +68,9 @@ class AdaptiveGraphDataset(Dataset):
     def _get_difficulty_scores(self, graphs: List) -> np.ndarray:
         """Get VGAE reconstruction difficulty scores."""
         if self.vgae_model is None:
-            # Fallback to random if no VGAE
-            return np.random.random(len(graphs))
+            # Strict behavior: VGAE model is required for difficulty scoring
+            raise RuntimeError("VGAE model required for hard-mining difficulty scoring. "
+                               "Provide a trained VGAE model or disable VGAE-based mining in the training config.")
         
         scores = []
         self.vgae_model.eval()
@@ -97,8 +98,8 @@ class AdaptiveGraphDataset(Dataset):
                     scores.append(score)
                     
                 except Exception as e:
-                    # Fallback for problematic graphs
-                    scores.append(0.5)
+                    # Fail loudly - a runtime error during VGAE scoring likely indicates a model or data issue
+                    raise RuntimeError(f"Failed to compute VGAE difficulty score for graph index {i}: {e}") from e
         
         return np.array(scores)
     
