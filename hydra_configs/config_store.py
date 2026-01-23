@@ -242,7 +242,7 @@ class ExperimentConfig:
     # Paths and logging
     project_root: str = "/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
     data_root: str = "${project_root}/data"
-    experiment_root: str = "${project_root}/experimentruns"
+    experiment_root: str = "${project_root}/experiment_runs"
     
     # Core experiment config
     modality: Literal["automotive"] = "automotive"

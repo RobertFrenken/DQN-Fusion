@@ -96,6 +96,56 @@ venv\Scripts\activate  # On Windows
 pip install -r requirements.txt
 ```
 
+## Development workflows (Just + uv/conda) ✅
+
+We provide a `Justfile` with common development tasks to make experiments repeatable locally.
+
+- Install `just` (platform dependent): https://github.com/casey/just
+
+Common tasks:
+```bash
+# Quick environment check
+just check-env
+
+# Check dataset availability (uses hydra config store if available)
+just check-data
+
+# Test dataset loader and force-rebuild caches on a specific folder
+just check-data-load
+
+# Install dependencies using uv (if you prefer uv):
+just install-uv
+
+# Create or update conda env (for cluster/HPC runs):
+just install-conda
+
+# Run a small synthetic smoke experiment (safe and fast):
+just smoke-synthetic
+
+# Run a smoke experiment using local dataset (requires dataset path in config or --data-path):
+just smoke
+
+# Start MLflow UI
+just mlflow
+
+# Preview a Slurm sweep (JSON)
+just preview
+
+# Collect experiment summaries
+just collect-summaries
+```
+
+Notes:
+- Use `just check-data` to verify datasets are present before running experiments.
+- Use `just check-data-load` to call the project loader and validate cache/CSV discovery (may take time for large datasets).
+
+Notes on uv vs conda:
+- `uv` is a lightweight package manager for local development. Use it for fast installs and lockfile-based reproducibility on developer machines.
+- `conda` is recommended for cluster/HPC runs (OSC) because it handles binary packages (CUDA, NCCL) better.
+- Recommended approach: develop locally with `uv`, run experiments on OSC using a `conda` environment configured in cluster submission.
+
+If you'd like, I can scaffold a `uv` lockfile in this repo; tell me which `uv` commands you use (e.g., `uv install`, `uv lock`).
+
 ## Usage
 
 ### Training the Multi-Stage Pipeline
@@ -106,6 +156,22 @@ python osc_training_AD.py
 # Alternative training with knowledge distillation
 python AD_KD_GPU.py
 ```
+
+### Quick local smoke test ✅
+A small convenience script helps create canonical experiment directories and optionally run a one-epoch smoke training (safe by default). Outputs are written to `experimentruns_test/` unless you set `--experiment-root`.
+
+```bash
+# Create canonical directories and inspect paths (no training)
+python scripts/local_smoke_experiment.py --model vgae_student --dataset hcrl_ch --training autoencoder --epochs 1
+
+# Attempt a one-epoch training run (may require dataset files)
+python scripts/local_smoke_experiment.py --model vgae_student --dataset hcrl_ch --training autoencoder --epochs 1 --run
+
+# Change where experiment outputs are placed
+python scripts/local_smoke_experiment.py --experiment-root experimentruns_mytest --run
+```
+
+> Note: If your datasets live outside the repo defaults, set `--data-path` to point to the local dataset directory.
 
 ### Evaluation and Analysis
 ```bash

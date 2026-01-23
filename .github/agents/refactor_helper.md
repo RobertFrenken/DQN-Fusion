@@ -1,5 +1,11 @@
 # Refactor Helper Agent — Runbook & Task List ✅
-
+I appreciate the suggestion, but I'm following a different approach. I'm using:
+Hydra-Zen for configuration management
+PyTorch Lightning for training
+MLflow for tracking
+Slurm (via oscjobmanager) for cluster execution
+This approach handles everything I need without CI/CD complexity.
+I want to focus on research, not infrastructure.
 Purpose
 -------
 This document defines a lightweight "agent" (runbook + checklist + automation commands) to help coordinate the refactor of the project into a strict, canonical experiment layout and save/load behaviour.
@@ -15,15 +21,8 @@ Agent Responsibilities (what it does for you)
 ---------------------------------------------
 - Provide a checklist for each refactor step (config → trainer → training code → job manager → docs/tests)
 - Run static checks and unit tests locally and in CI
-- Generate PR description templates and required change lists
 - Provide exact commands to run/verify changes (lint, unit tests, flake/pylint/ruff, python compile)
 
-How to use
-----------
-1. Create a feature branch (e.g., `feature/refactor/config-paths`).
-2. Follow the checklist for the target area (see next section).
-3. Run the local checks from the "Local verification commands" section.
-4. Open a PR using the template below and link to failing tests if any.
 
 Local verification commands
 ---------------------------
@@ -33,22 +32,6 @@ Local verification commands
 - Run tests: `pytest tests -q`
 - Run focused tests: `pytest tests/test_config.py::test_canonical_dir -q`
 - Type checks: `mypy src` (optional)
-
-PR template (short)
--------------------
-Title: "Refactor: <area> — canonical paths & strict validation"
-
-Description:
-- What changed
-- Why (brief rationale referencing the no-fallback policy)
-- How to test locally (commands)
-
-Checklist (add items to PR description):
-- [ ] Added/updated unit tests
-- [ ] Ran `python -m py_compile` on edited files
-- [ ] Linting passed (`ruff check`) and lint issues fixed
-- [ ] Added docs/CHANGELOG entry
-- [ ] CI passed
 
 Core checklists per step
 -----------------------
@@ -83,20 +66,6 @@ Core checklists per step
    - Update `JOB_TEMPLATES.md` and `README.md` with the canonical path grammar and examples
    - Add migration guide: shell script to move or symlink useful legacy artifacts into `experiment_runs`
 
-Testing strategy
-----------------
-- Unit tests for each change: config, trainer save/load, artifact expectations.
-- Integration test (dry-run) that simulates a small training run and checks paths and MLflow metadata.
-- CI: Add a `refactor` job with `pytest -q` and `ruff check` so PRs must pass tests & linting.
-
-Agent automation helpers (commands the agent would run)
------------------------------------------------------
-- `git checkout -b feature/refactor/<area>`
-- `git add -p` + `git commit -m "Refactor: ..."
-- `python -m py_compile src/config/hydra_zen_configs.py`
-- `pytest tests/test_config.py -q`
-- `ruff check src tests`
-- If tests pass: `gh pr create --title "Refactor: ..." --body-file .github/agents/pr_description.md` (optional)
 
 Notes on MLflow integration
 --------------------------
@@ -106,22 +75,3 @@ Security & safety notes
 -----------------------
 - Avoid unpickling arbitrary legacy checkpoints. If a conversion is required, do it in a controlled helper script and log the source.
 - Ensure saved checkpoints are `torch.save(state_dict)` only.
-
-Example quick tasks the agent can do on request
-----------------------------------------------
-- Create a minimal unit test for `canonical_experiment_dir()` and add it under `tests/test_config.py`.
-- Run test suite and generate summary of failures.
-- Generate PR checklist for the next refactor PR.
-
-Contributing notes
-------------------
-- Keep PRs small and focused on one layer at a time.
-- Add clear tests and a changelog entry for each PR.
-
----
-
-If you'd like, I can:
-- create an initial `tests/test_config.py` with canonical dir tests, or
-- implement the trainer path changes next (small, high-impact).
-
-Pick one and I will proceed. 

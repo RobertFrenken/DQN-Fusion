@@ -402,3 +402,4 @@ class DQNLightningModule(BaseKDGATModule):
         
         self.log('test_loss', loss)
         return {'test_loss': loss}
+    

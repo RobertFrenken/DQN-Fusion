@@ -1,13 +1,12 @@
 name: CI
-
+# DISABLED: automated triggers removed per repository owner's request.
+# To re-enable, restore the original 'on' block and remove `if: false` below.
 on:
-  push:
-    branches: [ main, master, "**" ]
-  pull_request:
-    branches: [ main, master ]
+  workflow_dispatch:
 
 jobs:
   test:
+    if: false
     name: Tests & Lint
     runs-on: ubuntu-latest
     strategy:

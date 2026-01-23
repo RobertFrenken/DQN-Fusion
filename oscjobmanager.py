@@ -24,7 +24,7 @@ SLURM_SCRIPT_TEMPLATE = """#!/bin/bash
 #SBATCH --time={walltime}
 #SBATCH --mem={memory}
 #SBATCH --cpus-per-task={cpus}
-#SBATCH --gpus-per-node={gpus}
+#SBATCH --gres=gpu:{gpus}
 #SBATCH --account={account}
 #SBATCH --mail-type={notification_type}
 #SBATCH --mail-user={email}
@@ -32,35 +32,27 @@ SLURM_SCRIPT_TEMPLATE = """#!/bin/bash
 #SBATCH --error={error_path}
 #SBATCH --chdir={project_root}
 
-# ============================================================================
-# KD-GAT Experiment Job
-# Submitted: {timestamp}
-# Config: {config_name}
-# ============================================================================
+# Minimal KD-GAT Slurm script (simplified for portability)
+set -euo pipefail
 
-set -e  # Exit on error
+echo "Starting KD-GAT job on $(hostname)"
+module load conda || true
+conda activate {conda_env} || true
 
-echo "=========================================="
-echo "KD-GAT Experiment Start"
-echo "=========================================="
-echo "Job ID: $SLURM_JOB_ID"
-echo "Host: $(hostname)"
-echo "GPU Count: $(nvidia-smi --list-gpus | wc -l)"
-echo ""
+# Run training (Hydra-Zen based)
+echo "Running: python src/training/train_with_hydra_zen.py --config_store={config_name}"
+python src/training/train_with_hydra_zen.py \
+    config_store={config_name} \
+    hydra.run.dir={run_dir}
 
-# Load conda environment
-module load conda
-conda activate {conda_env}
-
-# Check GPU availability
-if ! command -v nvidia-smi &> /dev/null; then
-    echo "❌ ERROR: CUDA/GPU not available"
-    exit 1
+EXIT_CODE=$?
+if [ $EXIT_CODE -eq 0 ]; then
+  echo "Job finished successfully"
+  exit 0
+else
+  echo "Job failed with exit code: $EXIT_CODE"
+  exit $EXIT_CODE
 fi
-
-echo "✅ GPU available"
-nvidia-smi --query-gpu=index,name,memory.total --format=csv,noheader
-echo ""
 
 # Run training with Hydra-Zen
 echo "🚀 Starting training..."
@@ -204,21 +196,23 @@ class OSCJobManager:
         dry_run: bool = False,
         walltime: Optional[str] = None,
         memory: Optional[str] = None,
+        pre_submit: bool = False,
     ) -> Optional[str]:
         """
         Submit a job to Slurm.
-        
+
         Args:
             config_name: Name of Hydra-Zen config
             experiment_dir: Directory to save results
             dry_run: If True, only create script without submitting
             walltime: Override walltime
             memory: Override memory
-            
+            pre_submit: If True, run `scripts/pre_submit_check.py` before submission and abort if it fails
+
         Returns:
-            Job ID if submitted, None if dry_run
+            Job ID if submitted, None if dry_run or submission failed
         """
-        
+
         # Create script
         script_path = self.create_slurm_script(
             config_name=config_name,
@@ -226,7 +220,7 @@ class OSCJobManager:
             walltime=walltime,
             memory=memory,
         )
-        
+
         if dry_run:
             logger.info(f"🔍 [DRY RUN] Would submit: {script_path}")
             logger.info("Script content:")
@@ -234,10 +228,34 @@ class OSCJobManager:
             print(script_path.read_text())
             print("-" * 70)
             return None
-        
-        # Submit to Slurm
+
+        # Optional pre-submit readiness check
         import subprocess
-        
+        if pre_submit:
+            # Try to infer dataset name from config_name (expected format: modality_dataset_...)
+            parts = config_name.split('_')
+            dataset_guess = parts[1] if len(parts) > 1 else None
+            pre_cmd = ['python', 'scripts/pre_submit_check.py']
+            if dataset_guess:
+                pre_cmd += ['--dataset', dataset_guess]
+            # Run with reasonable defaults: validate dataset and preview
+            pre_cmd += ['--run-load', '--smoke', '--smoke-synthetic', '--preview-json']
+
+            logger.info(f"🔒 Running pre-submit checks: {' '.join(pre_cmd)}")
+            try:
+                pre_res = subprocess.run(pre_cmd, capture_output=True, text=True, timeout=600)
+                if pre_res.returncode != 0:
+                    logger.error("Pre-submit checks failed; aborting job submission.")
+                    logger.error(pre_res.stdout)
+                    logger.error(pre_res.stderr)
+                    return None
+                else:
+                    logger.info("Pre-submit checks passed; proceeding to submit job.")
+            except Exception as e:
+                logger.error(f"Pre-submit check invocation failed: {e}; aborting submission.")
+                return None
+
+        # Submit to Slurm
         try:
             result = subprocess.run(
                 ['sbatch', str(script_path)],
@@ -245,46 +263,39 @@ class OSCJobManager:
                 text=True,
                 timeout=30,
             )
-            
+
             if result.returncode == 0:
                 # Extract job ID
                 job_id = result.stdout.strip().split()[-1]
                 logger.info(f"✅ Job submitted successfully")
                 logger.info(f"   Job ID: {job_id}")
                 logger.info(f"   Script: {script_path}")
-                
+
                 self.jobs.append({
                     'job_id': job_id,
                     'config_name': config_name,
                     'script_path': str(script_path),
                     'timestamp': datetime.now().isoformat(),
                 })
-                
+
                 return job_id
             else:
                 logger.error(f"❌ Failed to submit job")
                 logger.error(f"   stdout: {result.stdout}")
                 logger.error(f"   stderr: {result.stderr}")
                 return None
-                
+
         except Exception as e:
             logger.error(f"❌ Error submitting job: {e}")
             return None
-    
-    def submit_experiment_sweep(
-        self,
-        modality: str = "automotive",
-        dataset: str = "hcrlch",
-        learning_type: str = "unsupervised",
-        model_architecture: str = "VGAE",
-        model_sizes: List[str] = None,
-        distillations: List[str] = None,
-        training_modes: List[str] = None,
-        dry_run: bool = False,
-    ):
+
+    def submit_experiment_sweep(self, modality: str = "automotive", dataset: str = "hcrlch",
+                                learning_type: str = "unsupervised", model_architecture: str = "VGAE",
+                                model_sizes: List[str] = None, distillations: List[str] = None,
+                                training_modes: List[str] = None, dry_run: bool = False):
         """
         Submit multiple experiment configurations.
-        
+
         Args:
             modality: Modality (automotive, internet, watertreatment)
             dataset: Dataset name
@@ -295,7 +306,7 @@ class OSCJobManager:
             training_modes: List of training modes
             dry_run: If True, don't actually submit
         """
-        
+
         model_sizes = model_sizes or ["student"]
         distillations = distillations or ["no"]
         training_modes = training_modes or ["all_samples"]
@@ -377,6 +388,7 @@ Examples:
     submit_parser.add_argument('--dry-run', action='store_true', help='Create script without submitting')
     submit_parser.add_argument('--walltime', help='Job walltime (e.g., 04:00:00)')
     submit_parser.add_argument('--memory', help='Memory allocation (e.g., 64G)')
+    submit_parser.add_argument('--pre-submit', action='store_true', help='Run pre-submit readiness checks before submitting (uses scripts/pre_submit_check.py)')
     
     # Sweep command
     sweep_parser = subparsers.add_parser('sweep', help='Submit multiple experiments')
@@ -388,16 +400,70 @@ Examples:
     sweep_parser.add_argument('--distillations', default='no', help='Comma-separated list')
     sweep_parser.add_argument('--training-modes', default='all_samples', help='Comma-separated list')
     sweep_parser.add_argument('--dry-run', action='store_true')
-    
+
+    # Preview subcommand: print an easy-to-read summary of a sweep (JSON or table)
+    preview_parser = subparsers.add_parser('preview', help='Preview a sweep without creating scripts')
+    preview_parser.add_argument('--modality', default='automotive')
+    preview_parser.add_argument('--dataset', default='hcrlch')
+    preview_parser.add_argument('--learning-type', default='unsupervised')
+    preview_parser.add_argument('--model-architecture', default='VGAE')
+    preview_parser.add_argument('--model-sizes', default='student', help='Comma-separated list')
+    preview_parser.add_argument('--distillations', default='no', help='Comma-separated list')
+    preview_parser.add_argument('--training-modes', default='all_samples', help='Comma-separated list')
+    preview_parser.add_argument('--json', action='store_true', help='Print machine-readable JSON output')
+
     args = parser.parse_args()
-    
+
     if not args.command:
         parser.print_help()
         sys.exit(1)
-    
+
     # Create manager
     manager = OSCJobManager()
-    
+
+    # Handle preview
+    if args.command == 'preview':
+        model_sizes = [s.strip() for s in args.model_sizes.split(',') if s.strip()]
+        distillations = [s.strip() for s in args.distillations.split(',') if s.strip()]
+        training_modes = [s.strip() for s in args.training_modes.split(',') if s.strip()]
+
+        previews = []
+        for size in model_sizes:
+            for distill in distillations:
+                for mode in training_modes:
+                    config_name = (
+                        f"{args.modality}_{args.dataset}_{args.learning_type}_"
+                        f"{args.model_architecture}_{size}_{distill}_{mode}"
+                    )
+                    run_dir = Path(manager.cfg.project_root) / 'experimentruns' / args.modality / args.dataset / args.learning_type / args.model_architecture / size / distill / mode
+
+                    preview = {
+                        'config_name': config_name,
+                        'run_dir': str(run_dir),
+                        'expected_artifacts': []
+                    }
+                    # Add fusion/curriculum artifact suggestions
+                    if mode in ('fusion', 'rl_fusion'):
+                        preview['expected_artifacts'].append(str(run_dir / '..' / '..' / 'unsupervised' / 'vgae' / 'teacher' / 'no_distillation' / 'autoencoder' / 'vgae_autoencoder.pth'))
+                        preview['expected_artifacts'].append(str(run_dir / '..' / '..' / 'supervised' / 'gat' / 'teacher' / 'no_distillation' / 'normal' / f'gat_{args.dataset}_normal.pth'))
+                    if mode in ('curriculum', 'curriculum_classifier'):
+                        preview['expected_artifacts'].append(str(run_dir / '..' / '..' / 'unsupervised' / 'vgae' / 'teacher' / 'no_distillation' / 'autoencoder' / 'vgae_autoencoder.pth'))
+
+                    previews.append(preview)
+
+        if args.json:
+            import json
+            print(json.dumps(previews, indent=2))
+        else:
+            # Print a compact table
+            print('\nPreview of generated configurations:')
+            print('=' * 80)
+            print(f"{'CONFIG NAME':<60} | {'RUN DIR'}")
+            print('-' * 80)
+            for p in previews:
+                print(f"{p['config_name']:<60} | {p['run_dir']}")
+            print('=' * 80)
+        sys.exit(0)
     if args.command == 'submit':
         experiment_dir = manager.project_root / "experimentruns"
         manager.submit_job(

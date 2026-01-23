@@ -258,7 +258,7 @@ python src/training/train_with_hydra_zen.py \
     device=cpu \
     training_config.epochs=5
 
-# Results → experimentruns/automotive/hcrlch/.../run_000/
+# Results → experiment_runs/automotive/hcrlch/.../run_000/
 ```
 
 ### 2. Hyperparameter Sweep
@@ -290,7 +290,7 @@ python oscjobmanager.py sweep \
 
 ```bash
 # View MLflow results
-mlflow ui --backend-store-uri experimentruns/.mlruns
+mlflow ui --backend-store-uri experiment_runs/.mlruns
 
 # Check specific run
 ls -la experimentruns/automotive/hcrlch/.../run_000/

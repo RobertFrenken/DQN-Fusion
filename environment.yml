@@ -1,0 +1,27 @@
+name: gnn-gpu
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.10
+  - pip
+  - pip:
+    - -r requirements.txt
+
+# Optional GPU variant (uncomment and pick the right cudatoolkit for your system):
+# dependencies:
+#   - python=3.10
+#   - pytorch==2.0.1
+#   - torchvision
+#   - torchaudio
+#   - cudatoolkit=11.7
+#   - pip
+#   - pip:
+#     - -r requirements.txt
+
+# Notes:
+# - PyTorch Geometric (torch-geometric) often requires special binaries; prefer installing
+#   it after creating the conda env following https://pytorch-geometric.readthedocs.io.
+# - Use `conda env create -f environment.yml` to create, or `conda env update -f environment.yml -n gnn-gpu`.
+# - For OSC/Slurm GPUs, prefer the GPU variant and match cudatoolkit to cluster CUDA version.

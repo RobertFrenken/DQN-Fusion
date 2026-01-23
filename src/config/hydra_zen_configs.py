@@ -777,6 +777,21 @@ class CANGraphConfigStore:
         
         return dataset_configs[dataset_name]
     
+    def get_training_config(self, training_mode: str):
+        """Get training configuration by mode name."""
+        training_map = {
+            "normal": NormalTrainingConfig,
+            "autoencoder": AutoencoderTrainingConfig,
+            "knowledge_distillation": KnowledgeDistillationConfig,
+            "student_baseline": StudentBaselineTrainingConfig,
+            "fusion": FusionTrainingConfig,
+            "curriculum": CurriculumTrainingConfig,
+            "evaluation": EvaluationTrainingConfig,
+        }
+        if training_mode not in training_map:
+            raise ValueError(f"Unknown training mode: {training_mode}. Available: {list(training_map.keys())}")
+        return training_map[training_mode]()
+    
 
 
 # ============================================================================
@@ -788,8 +803,24 @@ def validate_config(config: CANGraphConfig) -> bool:
 
     This validator is strict (no fallbacks). If a training mode requires pre-existing
     artifacts the validator raises a descriptive error (rather than silently falling back).
+
+    Additionally, performs a lightweight *sanity check* on dataset paths and prints
+    helpful warnings (does not raise) so developers can see canonical expected paths.
     """
     issues = []
+
+    # Lightweight sanity check: dataset path existence (warn only, don't raise)
+    try:
+        ds_path = getattr(config.dataset, 'data_path', None)
+        if ds_path and not Path(ds_path).exists():
+            logger.warning(
+                f"Dataset path does not exist: {ds_path}\n"
+                f"  → Canonical experiment dir (where outputs will be written): {config.canonical_experiment_dir()}\n"
+                f"  Suggestion: set config.dataset.data_path to the correct local path or provide --data-path when running the smoke script."
+            )
+    except Exception:
+        # Be permissive for unexpected config shapes; the strict validations follow below
+        logger.debug("Dataset path sanity check skipped due to unexpected config structure")
 
     # Check knowledge distillation requirements strictly
     if config.training.mode == "knowledge_distillation":
@@ -825,9 +856,9 @@ def validate_config(config: CANGraphConfig) -> bool:
             logger.error(i)
         return False
 
-    # Check dataset path (strict)
+    # Check dataset path - warn only (allow iterative development without immediate data present)
     if config.dataset.data_path and not Path(config.dataset.data_path).exists():
-        raise FileNotFoundError(f"Dataset path not found: {config.dataset.data_path}")
+        logger.warning(f"Dataset path not found (warning only): {config.dataset.data_path} - training may fail if the dataset is not provided.")
 
     # Check precision compatibility strictly
     if config.training.precision == "16-mixed" and config.trainer.precision != "16-mixed":

@@ -234,8 +234,11 @@ class OSCJobManager:
     
     def submit_individual_jobs(self, datasets: List[str] = None, 
                              training_types: List[str] = None,
-                             extra_args: Dict[str, Any] = None, submit: bool = True) -> List[str]:
+                             extra_args: Dict[str, Any] = None, submit: bool = True, dry_run: bool = False) -> List[str]:
         """Generate and optionally submit jobs for each dataset x training_type pair.
+
+        When dry_run=True, do not write or submit scripts; instead return helpful suggestions
+        including canonical artifact locations and dataset path suggestions.
 
         Returns list of submitted job IDs or script paths when submit=False.
         """
@@ -246,6 +249,33 @@ class OSCJobManager:
         for t in training_types:
             for ds in datasets:
                 job_name = f"can_{t}"
+
+                # Validate job spec and gather any helpful messages
+                ok, errors = self.validate_job_spec(t, ds, extra_args=extra_args)
+                if dry_run:
+                    # Build suggestion payload instead of writing scripts
+                    suggestion = {
+                        'job_name': job_name,
+                        'dataset': ds,
+                        'training_type': t,
+                        'valid': ok,
+                        'errors': errors,
+                        'suggested_dataset_path': str(self.project_root / 'datasets' / 'can-train-and-test-v1.5' / ds),
+                        'expected_artifacts': []
+                    }
+
+                    # If fusion/curriculum - include artifact canonical suggestions
+                    if t in ('fusion', 'rl_fusion'):
+                        ae = self.experiments_dir / 'automotive' / ds / 'unsupervised' / 'vgae' / 'teacher' / 'no_distillation' / 'autoencoder' / 'vgae_autoencoder.pth'
+                        clf = self.experiments_dir / 'automotive' / ds / 'supervised' / 'gat' / 'teacher' / 'no_distillation' / 'normal' / f'gat_{ds}_normal.pth'
+                        suggestion['expected_artifacts'].extend([str(ae), str(clf)])
+                    if t in ('curriculum', 'curriculum_classifier'):
+                        vgae = self.experiments_dir / 'automotive' / ds / 'unsupervised' / 'vgae' / 'teacher' / 'no_distillation' / 'autoencoder' / 'vgae_autoencoder.pth'
+                        suggestion['expected_artifacts'].append(str(vgae))
+
+                    submitted.append(suggestion)
+                    continue
+
                 script_path = self.generate_slurm_script(job_name, t, ds, extra_args=extra_args)
                 if submit:
                     job_id = self._submit_slurm_job(Path(script_path))
