@@ -54,17 +54,36 @@ def submit_or_generate(spec_path: Path, submit: bool = False, chain: bool = Fals
     created_scripts = []
     submitted_jobs = []
 
+    # Validate all jobs before generating/submitting; collect errors to fail-fast
+    validation_errors = []
+    for ds in datasets:
+        for t in training_types:
+            extra_args = {k: (v.format(dataset=ds) if isinstance(v, str) else v) for k, v in extra_args_template.items()}
+            if isinstance(dep_manifests_template, dict):
+                dm = dep_manifests_template.get(ds) or dep_manifests_template.get('default')
+                if dm:
+                    extra_args['dependency_manifest'] = dm.format(dataset=ds) if isinstance(dm, str) else dm
+
+            ok, errors = manager.validate_job_spec(t, ds, extra_args)
+            if not ok:
+                validation_errors.append({'dataset': ds, 'training_type': t, 'errors': errors})
+
+    if validation_errors:
+        print('❌ Validation failed for one or more jobs:')
+        for v in validation_errors:
+            print(f" - dataset={v['dataset']}, training_type={v['training_type']}: {v['errors']}")
+        raise SystemExit(1)
+
+    # All validations passed — proceed to generate scripts
     for ds in datasets:
         for t in training_types:
             # instantiate any template placeholders (e.g., {dataset})
             extra_args = {k: (v.format(dataset=ds) if isinstance(v, str) else v) for k, v in extra_args_template.items()}
             # per-dataset dependency manifest
-            dep_manifest = None
             if isinstance(dep_manifests_template, dict):
                 dm = dep_manifests_template.get(ds) or dep_manifests_template.get('default')
                 if dm:
-                    dep_manifest = dm.format(dataset=ds) if isinstance(dm, str) else dm
-                    extra_args['dependency_manifest'] = dep_manifest
+                    extra_args['dependency_manifest'] = dm.format(dataset=ds) if isinstance(dm, str) else dm
 
             script = manager.generate_slurm_script(job_name=f"can_{t}", training_type=t, dataset=ds, extra_args=extra_args)
             created_scripts.append(script)

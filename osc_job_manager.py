@@ -1,16 +1,5 @@
 #!/usr/bin/env python3
 """
-I had to delete all of the old runs for a couple of reasons:
-- First is that I was getting loading errors with the pickle files
-- Second the path creation and saving is all messed up, fusion was under gat folders for some reason and this was causing the dqn models to freak out and the dqn models were trying to backup find paths that I deleted as they were old. What needs to happen is to seriously restructure the way models are saved and be strict on the appropiate paths for a given run. No fallbacks, if it isn't there give an error when you save a model it needs to be in a consisent place and it should be printed out. 
-On Slurm outputs:
-- The slurm job output needs to have contextual knowledge on the success of the job. Saying job completion without checking for errors doesn't help.
-
-On file paths:
-- Every single python file needs to be compatible with pytorch lightning and its utility functions. No old dependencies, no old code, no fallbacks, it either works or it crashes with an informative error.
-On refactoring issues:
-- The trainer python file that train_with_hydra_zen is now broken up in different parts into src.training. This has been causing issues and needs to be updated to the new dependency format
-On new folder path grammer:
 - in osc_job_manager.py I have started creating a new configuration setup to properly document each possible combination of model run.
 - There needs to be a new pathing system to document each experiment which will take the following levels:
 level 1: experiment_runs - This is the parent path that all models will be documented in
@@ -22,15 +11,6 @@ level 6: model size (Teacher, Student): this should have functionality for poten
 level 7: Distillation (yes, no): This is above training type as a configuration could have both, which is why it is on a higher path level
 level 8: training type (all samples, normal only , curriculum schedule classifier, curriculum schedule fusion, etc): This is the specific training strategy
 level 9: Here the saved model should sit here, along with it's training metrics in a folder, the validation metrics, and when it is tested on the test set the evaluation results will be put into its own folder. Right now in the datasets it is split between train_ files and test_ files, with the test_ files in the set_xx datasets having unique tests for known/ unknown attacks and known/ unknown vehicles. I will need guidance here on the best way to orgainize these particular evaluations.
-On model naming and saving:
-- The models should be saved as a dictionary of the model weights in a file type that will not run into issues as the pickle files have
-- the models need a descriptive name so that I can easily trace the path down and find the saved model. This was a big issue earlier
-
-On MLFlow:
-- I want MLflow to save the training metrics with that particular saved model, and I want the configuration of the GUI to be more comprehensive so when I launch an instance the UI will display strong organization of each type
-
-On train_with_hyrda_zen:
-- It looks like from around lines 192-272 there is a chunk of code that is present but dulled out by the linter implying that it will never be run. I want to make sure this is no longer needed, and if not I want to remove that section.
 
 """
 
@@ -112,7 +92,7 @@ class OSCJobManager:
                             extra_args: Dict[str, Any] = None) -> str:
         """Generate an SBATCH script that runs `train_with_hydra_zen.py` for a given dataset and training.
 
-        Returns the path to the generated script.
+        Returns the path to the generated script and writes a metadata sidecar file for traceability.
         """
         extra_args = extra_args or {}
         script_dir = self.project_root / 'slurm_jobs'
@@ -179,7 +159,31 @@ class OSCJobManager:
 
         # Make script executable
         script_path.chmod(0o755)
-        logger.info(f"Generated SLURM script: {script_path}")
+
+        # Write metadata sidecar
+        import json as _json
+        import subprocess as _subp
+        meta = {
+            'job_name': job_name,
+            'dataset': dataset,
+            'training_type': training_type,
+            'extra_args': extra_args,
+            'script_path': str(script_path),
+            'created_at': datetime.utcnow().isoformat() + 'Z',
+            'experiment_root': str(self.experiments_dir)
+        }
+        # Try get git commit
+        try:
+            out = _subp.check_output(['git', 'rev-parse', '--short', 'HEAD'], stderr=_subp.DEVNULL).decode().strip()
+            meta['git_commit'] = out
+        except Exception:
+            meta['git_commit'] = None
+
+        meta_path = script_path.with_suffix('.meta.json')
+        with open(meta_path, 'w') as f:
+            _json.dump(meta, f, indent=2)
+
+        logger.info(f"Generated SLURM script: {script_path} and metadata: {meta_path}")
         return str(script_path)
     
     def parse_extra_args(self, extra_args_str: str) -> Dict[str, Any]:
@@ -275,7 +279,11 @@ class OSCJobManager:
         return job_ids
     
     def _submit_slurm_job(self, script_path: Path, dependency: str = None) -> str:
-        """Submit SLURM job using sbatch and return the job ID string (or script path if sbatch not available)."""
+        """Submit SLURM job using sbatch and return the job ID string (or script path if sbatch not available).
+
+        Updates the script metadata with submission details (job id, timestamp) for auditing.
+        """
+        meta_path = script_path.with_suffix('.meta.json')
         try:
             cmd = ["sbatch"]
             if dependency:
@@ -285,9 +293,35 @@ class OSCJobManager:
             # sbatch output: Submitted batch job 123456
             job_id = out.strip().split()[-1]
             logger.info(f"Submitted job {job_id} for script {script_path}")
+
+            # Update metadata sidecar
+            try:
+                import json as _json
+                meta = {}
+                if meta_path.exists():
+                    with open(meta_path, 'r') as mf:
+                        meta = _json.load(mf)
+                meta.update({'submitted_at': datetime.utcnow().isoformat() + 'Z', 'sbatch_job_id': str(job_id)})
+                with open(meta_path, 'w') as mf:
+                    _json.dump(meta, mf, indent=2)
+            except Exception as e:
+                logger.warning(f"Failed to update metadata for {script_path}: {e}")
+
             return job_id
         except Exception as e:
             logger.warning(f"sbatch failed or not available: {e}. Script written to {script_path}")
+            # annotate metadata with failure
+            try:
+                import json as _json
+                meta = {}
+                if meta_path.exists():
+                    with open(meta_path, 'r') as mf:
+                        meta = _json.load(mf)
+                meta.update({'submitted_at': None, 'submission_error': str(e)})
+                with open(meta_path, 'w') as mf:
+                    _json.dump(meta, mf, indent=2)
+            except Exception:
+                pass
             return str(script_path)
 
     
@@ -302,6 +336,61 @@ class OSCJobManager:
                     p.unlink()
             except Exception:
                 pass
+
+    def validate_job_spec(self, training_type: str, dataset: str, extra_args: Dict[str, Any] = None) -> (bool, List[str]):
+        """Validate that a job is valid for submission.
+
+        Checks performed:
+        - Basic type checks for common extra_args (epochs, batch_size)
+        - For fusion: check that either a dependency_manifest exists and points to files or the canonical artifacts exist.
+        - For curriculum: ensure VGAE artifact exists or vgae_model_path override provided.
+
+        Returns (True, []) on success, else (False, errors)
+        """
+        errors: List[str] = []
+        extra_args = extra_args or {}
+
+        # Basic validation
+        for int_key in ('epochs', 'batch_size', 'max_epochs'):
+            if int_key in extra_args:
+                try:
+                    v = int(extra_args[int_key])
+                    if v <= 0:
+                        errors.append(f"{int_key} must be > 0")
+                except Exception:
+                    errors.append(f"{int_key} must be an integer")
+
+        # Detect dependency manifest path
+        dep_manifest = extra_args.get('dependency_manifest')
+
+        # For fusion jobs, ensure artifacts are available
+        if training_type in ('fusion', 'rl_fusion'):
+            if dep_manifest:
+                p = Path(dep_manifest)
+                if not p.exists():
+                    errors.append(f"Dependency manifest not found: {dep_manifest}")
+            else:
+                # Check canonical artifact paths
+                ae = self.experiments_dir / 'automotive' / dataset / 'unsupervised' / 'vgae' / 'teacher' / 'no_distillation' / 'autoencoder' / 'vgae_autoencoder.pth'
+                clf = self.experiments_dir / 'automotive' / dataset / 'supervised' / 'gat' / 'teacher' / 'no_distillation' / 'normal' / f'gat_{dataset}_normal.pth'
+                if not ae.exists():
+                    errors.append(f"Autoencoder artifact missing at canonical path: {ae}")
+                if not clf.exists():
+                    errors.append(f"Classifier artifact missing at canonical path: {clf}")
+
+        # For curriculum, ensure VGAE exists or override provided
+        if training_type in ('curriculum', 'curriculum_classifier'):
+            vgae_override = extra_args.get('vgae_path') or extra_args.get('vgae_model_path')
+            if vgae_override:
+                if not Path(vgae_override).exists():
+                    errors.append(f"Provided VGAE override path does not exist: {vgae_override}")
+            else:
+                vgae = self.experiments_dir / 'automotive' / dataset / 'unsupervised' / 'vgae' / 'teacher' / 'no_distillation' / 'autoencoder' / 'vgae_autoencoder.pth'
+                if not vgae.exists():
+                    errors.append(f"VGAE artifact required for curriculum is missing at {vgae}. Consider running VGAE first or provide --vgae_path.")
+
+        # Return
+        return (len(errors) == 0), errors
 
     def monitor_jobs(self, job_ids: List[str] = None) -> Dict[str, str]:
         """Return a dict mapping job_id -> status (pending|running|completed|unknown).
