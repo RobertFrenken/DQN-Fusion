@@ -1,0 +1,12 @@
+{
+  "name": "dqn_fusion_all",
+  "datasets": "all",
+  "training_types": ["fusion"],
+  "extra_args": {
+    "epochs": 50,
+    "batch_size": 64
+  },
+  "dependency_manifests": {
+    "default": "/project/manifests/{dataset}_manifest.json"
+  }
+}
