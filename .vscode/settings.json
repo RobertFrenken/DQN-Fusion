@@ -14,7 +14,11 @@
     },
     "chat.tools.terminal.autoApprove": {
         "conda": true,
-        "pytest": true
+        "pytest": true,
+        "/^python scripts/smoke_train_hcrl_sa\\.py$/": {
+            "approve": true,
+            "matchCommandLine": true
+        }
     },
     "github.copilot.chat.instructions": "Be concise and direct. Only show code changes, no explanations unless asked. Don't overwrite existing code unnecessarily.",
     "claude.instructions": "Keep responses brief. Focus on code implementation only. Avoid verbose explanations.",

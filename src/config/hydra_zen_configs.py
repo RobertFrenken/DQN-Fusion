@@ -595,13 +595,33 @@ class CANGraphConfig:
         Layout:
             {experiment_root}/{modality}/{dataset}/{learning_type}/{model_arch}/{model_size}/{distillation}/{training_mode}/
         """
-        learning_type = "unsupervised" if self.training.mode == "autoencoder" else (
-            "rl_fusion" if self.training.mode == "fusion" else "supervised"
-        )
-        model_arch = getattr(self.model, "type", "unknown")
+        # Determine base model architecture (e.g., 'vgae' from 'vgae_student')
+        raw_type = getattr(self.model, "type", "unknown")
+        model_arch = raw_type.replace('_student', '').replace('_teacher', '')
+
+        # Determine model_size explicitly if type contains student/teacher hints
+        model_size = self.model_size or ("student" if "student" in raw_type else "teacher")
+
+        # Determine learning_type with some special-casing for student distillation:
+        # - autoencoder training is unsupervised
+        # - fusion is rl_fusion
+        # - knowledge_distillation: use the teacher's learning type inferred from model_arch
+        if self.training.mode == "autoencoder":
+            learning_type = "unsupervised"
+        elif self.training.mode == "fusion":
+            learning_type = "rl_fusion"
+        elif self.training.mode == "knowledge_distillation":
+            # If the student model is derived from an unsupervised architecture (vgae), keep it under unsupervised;
+            # otherwise default to supervised
+            if model_arch == "vgae":
+                learning_type = "unsupervised"
+            else:
+                learning_type = "supervised"
+        else:
+            learning_type = "supervised"
 
         base = Path(self.experiment_root)
-        parts = [self.modality, self.dataset.name, learning_type, model_arch, self.model_size, self.distillation, self.training.mode]
+        parts = [self.modality, self.dataset.name, learning_type, model_arch, model_size, self.distillation, self.training.mode]
         return (base.joinpath(*parts)).resolve()
 
     def required_artifacts(self) -> Dict[str, Path]:
@@ -621,12 +641,20 @@ class CANGraphConfig:
             else:
                 artifacts["teacher_model"] = exp_dir / "teacher" / f"best_teacher_model_{self.dataset.name}.pth"
 
+        # Use canonical absolute locations (consistent with canonical_experiment_dir grammar)
         if self.training.mode == "fusion":
-            artifacts["autoencoder"] = exp_dir.parent / "vgae" / "autoencoder" / f"vgae_autoencoder.pth"
-            artifacts["classifier"] = exp_dir.parent / "gat" / "normal" / f"gat_{self.dataset.name}_normal.pth"
+            # VGAE autoencoder (unsupervised teacher)
+            ae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "teacher" / self.distillation / "autoencoder"
+            artifacts["autoencoder"] = ae_dir / "vgae_autoencoder.pth"
+
+            # Classifier (supervised GAT, normal training)
+            clf_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "supervised" / "gat" / "teacher" / self.distillation / "normal"
+            artifacts["classifier"] = clf_dir / f"gat_{self.dataset.name}_normal.pth"
 
         if self.training.mode == "curriculum":
-            artifacts["vgae"] = exp_dir.parent / "vgae" / "autoencoder" / f"vgae_autoencoder.pth"
+            # Curriculum requires the VGAE teacher saved under the canonical unsupervised path
+            vgae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "teacher" / self.distillation / "autoencoder"
+            artifacts["vgae"] = vgae_dir / "vgae_autoencoder.pth"
 
         return artifacts
 

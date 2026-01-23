@@ -706,7 +706,31 @@ class FusionTrainingPipeline:
         print(f"✓ Fusion agent and config saved to {save_folder}")
 
 
-def main(dataset_key: str):
+def _extract_manifest_paths(manifest_path: str):
+    """Load and validate a dependency manifest and return (autoencoder_path, classifier_path).
+
+    This helper is testable independently of the GPU-heavy fusion pipeline.
+    """
+    from types import SimpleNamespace
+    try:
+        from src.utils.dependency_manifest import load_manifest, validate_manifest_for_config, ManifestValidationError
+    except Exception as e:
+        raise RuntimeError(f"Failed to import dependency manifest utilities: {e}") from e
+
+    manifest = load_manifest(manifest_path)
+    # Validate against a minimal config that indicates fusion mode
+    cfg = SimpleNamespace(training=SimpleNamespace(mode='fusion'))
+    try:
+        ok, msg = validate_manifest_for_config(manifest, cfg)
+    except ManifestValidationError:
+        raise
+
+    autoencoder = manifest['autoencoder']['path']
+    classifier = manifest['classifier']['path']
+    return autoencoder, classifier
+
+
+def main(dataset_key: str, dependency_manifest: str = None):
     """Main fusion training pipeline without Hydra."""
     print(f"\n{'='*80}")
     print("FUSION TRAINING FOR CAN BUS ANOMALY DETECTION")
@@ -839,6 +863,15 @@ def main(dataset_key: str):
     autoencoder_path = f"saved_models1/autoencoder_best_{dataset_key}.pth"
     classifier_path = f"saved_models1/classifier_{dataset_key}.pth"
 
+    # If a dependency manifest is provided, validate and use its explicit artifact paths (fail-fast)
+    if dependency_manifest:
+        try:
+            autoencoder_path, classifier_path = _extract_manifest_paths(dependency_manifest)
+            print(f"🔒 Using manifest-provided artifacts: autoencoder={autoencoder_path}, classifier={classifier_path}")
+        except Exception as e:
+            print(f"❌ Dependency manifest validation failed: {e}")
+            raise
+
     try:
         pipeline.load_pretrained_models(autoencoder_path, classifier_path)
     except FileNotFoundError as e:
@@ -895,11 +928,12 @@ def main(dataset_key: str):
 if __name__ == "__main__":
     cli = argparse.ArgumentParser(description="Fusion training without Hydra")
     cli.add_argument("--dataset", choices=list(DATASET_PATHS.keys()), default="hcrl_sa")
+    cli.add_argument("--dependency-manifest", type=str, help="Path to JSON dependency manifest to validate and use for fusion training")
     args = cli.parse_args()
 
     start_time = time.time()
     try:
-        main(args.dataset)
+        main(args.dataset, dependency_manifest=args.dependency_manifest)
     except KeyboardInterrupt:
         print("\n❌ Training interrupted by user")
     except Exception as e:

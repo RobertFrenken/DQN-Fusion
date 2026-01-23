@@ -870,6 +870,45 @@ def list_presets():
                 print(f"  - {name}")
 
 
+# Helper: apply a dependency manifest to a config
+def apply_manifest_to_config(config, manifest_path: str):
+    """Load and validate a dependency manifest, apply paths to config.training for fusion jobs.
+
+    This helper keeps validation strict and fails early with informative errors.
+    """
+    try:
+        # First try a regular import (works when package is installed)
+        from src.utils.dependency_manifest import load_manifest, validate_manifest_for_config, ManifestValidationError
+    except Exception:
+        # Fallback: load by file path (tests and some environments use direct file execution)
+        try:
+            import importlib.util
+            dm_path = Path(__file__).parent / 'src' / 'utils' / 'dependency_manifest.py'
+            spec = importlib.util.spec_from_file_location('dependency_manifest', str(dm_path))
+            dm_mod = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(dm_mod)
+            load_manifest = dm_mod.load_manifest
+            validate_manifest_for_config = dm_mod.validate_manifest_for_config
+            ManifestValidationError = dm_mod.ManifestValidationError
+        except Exception as e:
+            raise RuntimeError(f"Failed to import dependency manifest utilities: {e}") from e
+
+    manifest = load_manifest(manifest_path)
+    try:
+        ok, msg = validate_manifest_for_config(manifest, config)
+    except ManifestValidationError:
+        raise
+    # If fusion job, apply explicit paths into the training config to be used later
+    if getattr(config.training, 'mode', None) == 'fusion':
+        autoencoder = manifest['autoencoder']['path']
+        classifier = manifest['classifier']['path']
+        config.training.autoencoder_path = autoencoder
+        config.training.classifier_path = classifier
+        print(f"🔒 Dependency manifest applied: autoencoder={autoencoder}, classifier={classifier}")
+
+    return config
+
+
 # ==========================================================================
 # CLI Interface
 # ============================================================================
@@ -951,6 +990,8 @@ Examples:
     # Removed --debug-graph-count flag as it was unused and causing segfaults
     parser.add_argument('--early-stopping-patience', type=int,
                       help='Early stopping patience (default: 25 for normal, 30 for autoencoder)')
+    parser.add_argument('--dependency-manifest', type=str,
+                      help='Path to a JSON dependency manifest to validate and apply for fusion training')
     
     args = parser.parse_args()
     
@@ -1000,6 +1041,14 @@ Examples:
     # Apply global overrides
     if args.tensorboard:
         config.logging["enable_tensorboard"] = True
+
+    # If a dependency manifest is provided, validate and apply it (strict, fail-fast)
+    if getattr(args, 'dependency_manifest', None):
+        try:
+            config = apply_manifest_to_config(config, args.dependency_manifest)
+        except Exception as e:
+            print(f"❌ Dependency manifest validation failed: {e}")
+            raise
     
     # Print configuration summary
     print(f"📋 Configuration Summary:")

@@ -125,19 +125,24 @@ def test_required_artifacts_fusion_and_curriculum(tmp_path):
     artifacts = cfg.required_artifacts()
     exp_dir = cfg.canonical_experiment_dir()
 
-    expected_ae = exp_dir.parent / "vgae" / "autoencoder" / "vgae_autoencoder.pth"
-    expected_cl = exp_dir.parent / "gat" / "normal" / f"gat_{cfg.dataset.name}_normal.pth"
+    # Expect canonical absolute locations under experiment_root
+    expected_ae = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / "unsupervised" / "vgae" / "teacher" / cfg.distillation / "autoencoder" / "vgae_autoencoder.pth"
+    expected_cl = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / "supervised" / "gat" / "teacher" / cfg.distillation / "normal" / f"gat_{cfg.dataset.name}_normal.pth"
 
     assert Path(artifacts["autoencoder"]).resolve() == expected_ae.resolve()
     assert Path(artifacts["classifier"]).resolve() == expected_cl.resolve()
 
-    # Curriculum training expects a VGAE artifact (use _mod to avoid importing heavy `src` package)
+    # Ensure the paths explicitly include model_size and distillation components
+    assert "teacher" in str(artifacts["autoencoder"]) and cfg.distillation in str(artifacts["autoencoder"])
+    assert "teacher" in str(artifacts["classifier"]) and cfg.distillation in str(artifacts["classifier"])
+
+    # Curriculum training expects a VGAE artifact at canonical unsupervised path
     CurriculumTrainingConfig = _mod.CurriculumTrainingConfig
     c_training = CurriculumTrainingConfig()
     cfg2 = CANGraphConfig(model=model, dataset=dataset, training=c_training)
     cfg2.experiment_root = str(tmp_path / "experiment_runs")
     artifacts_curr = cfg2.required_artifacts()
-    expected_curr = cfg2.canonical_experiment_dir().parent / "vgae" / "autoencoder" / "vgae_autoencoder.pth"
+    expected_curr = Path(cfg2.experiment_root) / cfg2.modality / cfg2.dataset.name / "unsupervised" / "vgae" / "teacher" / cfg2.distillation / "autoencoder" / "vgae_autoencoder.pth"
     assert Path(artifacts_curr["vgae"]).resolve() == expected_curr.resolve()
 
     # validate_config should raise a clear FileNotFoundError when VGAE is missing for curriculum
