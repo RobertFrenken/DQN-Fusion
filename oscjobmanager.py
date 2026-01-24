@@ -52,6 +52,7 @@ export OMP_NUM_THREADS={cpus}
 export MKL_NUM_THREADS={cpus}
 export NUMEXPR_NUM_THREADS={cpus}
 export OPENBLAS_NUM_THREADS={cpus}
+export PYTORCH_ALLOC_CONF=expandable_segments:True
 # Enable faulthandler to get Python tracebacks on crashes
 export PYTHONFAULTHANDLER=1
 # Echo python executable for quick debugging
@@ -178,7 +179,7 @@ class OSCJobManager:
                 'submit_host': 'owens.osc.edu',
                 'walltime': '02:00:00',
                 'memory': '32G',
-                'cpus_per_task': 8,
+                'cpus_per_task': 16,
                 'gpus_per_node': 1,
                 'gpu_type': 'v100',
             },

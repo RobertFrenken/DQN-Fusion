@@ -385,6 +385,8 @@ class HydraZenTrainer:
         
         # Setup model
         model = self.setup_model(num_ids)
+        # Override batch size for larger model
+        model.batch_size = 512 # ← ADD THIS LINE
         
         # Optimize batch size if requested (disabled by default to avoid warnings)
         if getattr(self.config.training, 'optimize_batch_size', False):
@@ -393,6 +395,8 @@ class HydraZenTrainer:
         else:
             logger.info(f"Using fixed batch size: {model.batch_size}")
         
+
+
         # Create dataloaders
         train_loader, val_loader = create_dataloaders(
             train_dataset, val_dataset, model.batch_size
@@ -799,22 +803,35 @@ class HydraZenTrainer:
             accelerator=self.config.trainer.accelerator,
             devices=self.config.trainer.devices,
             precision='32-true',
-            max_epochs=1,
+            max_steps=50,
+            max_epochs=None,
             enable_checkpointing=False,
             logger=False
         )
 
         tuner = Tuner(trainer)
 
+        # NOTE: Might need to create a temporary datamodule to get batch size tuner closer to right answer
+        # Easy fix is to half the batch size after the tuner
+
         try:
+            # BEFORE calling setup() or any dataloaders
+            if hasattr(datamodule, 'num_workers'):
+                datamodule.num_workers = 4
+            
             tuner.scale_batch_size(
                 model,
                 datamodule=datamodule,
                 mode=self.config.training.batch_size_mode,
-                steps_per_trial=3,
+                steps_per_trial=50,
                 init_val=datamodule.batch_size,
                 max_trials=getattr(self.config.training, 'max_batch_size_trials', 10)
             )
+            logger.info(f"Tuner used num_workers of : {datamodule.num_workers}")
+
+            # return num_workers to original after tuning
+            if hasattr(datamodule, 'num_workers'):
+                datamodule.num_workers = 8
 
             # Update datamodule batch size from tuned model
             datamodule.batch_size = model.batch_size
@@ -909,13 +926,15 @@ class HydraZenTrainer:
         logger.info("🔧 Optimizing batch size...")
         
         # Create temporary DataModule
-        temp_datamodule = CANGraphDataModule(train_dataset, val_dataset, model.batch_size)
+        temp_datamodule = CANGraphDataModule(train_dataset, val_dataset, model.batch_size, num_workers=4)
+        logger.info(f"Temp datamodule has num_workers of : {temp_datamodule.num_workers}")
         
         trainer = pl.Trainer(
             accelerator=self.config.trainer.accelerator,
             devices=self.config.trainer.devices,
             precision='32-true',
-            max_epochs=1,
+            max_steps=200,
+            max_epochs=None,
             enable_checkpointing=False,
             logger=False
         )
@@ -926,26 +945,15 @@ class HydraZenTrainer:
                 model,
                 datamodule=temp_datamodule,
                 mode=self.config.training.batch_size_mode,
-                steps_per_trial=3,
+                steps_per_trial=200,
                 init_val=self.config.training.batch_size,
-                max_trials=self.config.training.max_batch_size_trials
+                max_trials=self.config.training.max_batch_size_trials // 2
             )
+            logger.info(f"Tuner used num_workers of : {temp_datamodule.num_workers}")
             logger.info(f"Batch size optimized to: {model.batch_size}")
 
         except Exception as e:
             logger.warning(f"Batch size optimization failed: {e}. Using original size.")
-        finally:
-            # Cleanup any temporary Lightning Tuner checkpoint files created in cwd
-            try:
-                import glob, os
-                for f in glob.glob('.scale_batch_size_*.ckpt'):
-                    try:
-                        os.remove(f)
-                        logger.info(f"Removed temporary tuner file: {f}")
-                    except Exception:
-                        logger.debug(f"Could not remove tuner file: {f}")
-            except Exception:
-                logger.debug("No tuner cleanup necessary or cleanup failed")
 
         # Ensure we always return the model object (tuner may have failed and not set batch_size)
         try:

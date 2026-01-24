@@ -13,12 +13,12 @@ from src.preprocessing.preprocessing import GraphDataset
 
 class CANGraphDataModule(pl.LightningDataModule):
     """Lightning DataModule for efficient batch size tuning."""
-    def __init__(self, train_dataset, val_dataset, batch_size: int):
+    def __init__(self, train_dataset, val_dataset, batch_size: int, num_workers: int = 8):
         super().__init__()
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.batch_size = batch_size
-        self.num_workers = min(os.cpu_count() or 1, 8)
+        self.num_workers = num_workers
 
     def train_dataloader(self):
         return DataLoader(
@@ -183,11 +183,9 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
     num_ids = len(id_mapping) if id_mapping else 1000
     return train_dataset, val_dataset, num_ids
 
-def create_dataloaders(train_dataset, val_dataset, batch_size: int):
+def create_dataloaders(train_dataset, val_dataset, batch_size: int, num_workers: int = 8):
     """Create optimized dataloaders - standalone function."""
-    import os
     from torch_geometric.loader import DataLoader
-    num_workers = min(os.cpu_count() or 1, 8)
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
