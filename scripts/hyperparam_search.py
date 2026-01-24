@@ -24,7 +24,7 @@ from typing import List, Tuple
 # Ensure project src is importable when script run from repo root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.training.can_graph_module import CANGraphLightningModule
+from src.training.lightning_modules import CANGraphLightningModule
 from src.config.hydra_zen_configs import VGAEConfig, StudentVGAEConfig, GATConfig, StudentGATConfig, DQNConfig, StudentDQNConfig
 import random
 import subprocess

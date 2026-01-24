@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=automotive_set_04_unsupervised_vgae_teacher_no_aut
-#SBATCH --time=02:00:00
-#SBATCH --mem=32G
+#SBATCH --job-name=autoencoder_set_04
+#SBATCH --time=06:00:00
+#SBATCH --mem=64G
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --account=PAS3209
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=frenken.2@osu.edu
-#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/autoencoder_set_04_20260124_030813.log
-#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/autoencoder_set_04_20260124_030813.err
+#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_04/autoencoder/autoencoder_set_04_20260124_121930.log
+#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_04/autoencoder/autoencoder_set_04_20260124_121930.err
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
 
 # Minimal KD-GAT Slurm script (simplified for portability)
@@ -71,7 +71,7 @@ else
     echo "❌ JOB FAILED"
     echo "=========================================="
     echo "Exit code: $TRAIN_EXIT_CODE"
-    echo "Check logs: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/autoencoder_set_04_20260124_030813.err"
+    echo "Check logs: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_04/autoencoder/autoencoder_set_04_20260124_121930.err"
     echo ""
     exit 1
 fi

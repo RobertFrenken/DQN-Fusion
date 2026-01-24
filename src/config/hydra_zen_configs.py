@@ -265,7 +265,7 @@ class BaseTrainingConfig:
     mode: str = "normal"
     max_epochs: int = 400
     batch_size: int = 64  # Starting point for Lightning Tuner
-    learning_rate: float = 0.005
+    learning_rate: float = 0.003
     weight_decay: float = 0.0001
     
     # Optimization
@@ -285,6 +285,11 @@ class BaseTrainingConfig:
     optimize_batch_size: bool = True
     batch_size_mode: str = "power"
     max_batch_size_trials: int = 10
+    
+    # Graph data memory safety factor
+    # Graph operations have hidden memory overhead from message passing, attention, etc.
+    # Tuner doesn't account for this, so apply conservative factor to prevent OOM
+    graph_memory_safety_factor: float = 0.5  # Use 50% of tuner's suggestion (adjustable: 0.3-0.7)
     
     # Evaluation
     run_test: bool = True

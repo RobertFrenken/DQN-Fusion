@@ -28,7 +28,7 @@ def test_vgae_progressive_instantiation():
         dropout = 0.1
         batch_norm = True
         embedding_dim = 8
-    from src.training.can_graph_module import CANGraphLightningModule
+    from src.training.lightning_modules import CANGraphLightningModule
 
     vcfg = VGAEConfig()
     teacher = CANGraphLightningModule(model_config=vcfg, training_config=type('T', (), {'batch_size':32, 'mode':'autoencoder'})(), model_type='vgae', training_mode='autoencoder', num_ids=50).model

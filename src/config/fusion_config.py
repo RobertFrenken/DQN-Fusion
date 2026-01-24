@@ -3,21 +3,15 @@ Fusion Training Configuration for Hydra-Zen
 
 Contains dataset paths, fusion weights, and Hydra-Zen dataclass configs
 for DQN-based multi-model fusion training.
+
+Note: DATASET_PATHS is now centralized in src.paths.DATASET_PATHS
+This module re-exports it for backward compatibility.
 """
 
 from dataclasses import dataclass, field
 from typing import Optional, Dict, Any, List
 from src.config.hydra_zen_configs import BaseTrainingConfig
-
-# Dataset paths for different CAN bus datasets
-DATASET_PATHS = {
-    'hcrl_ch': r"datasets/can-train-and-test-v1.5/hcrl-ch",
-    'hcrl_sa': r"datasets/can-train-and-test-v1.5/hcrl-sa",
-    'set_01': r"datasets/can-train-and-test-v1.5/set_01",
-    'set_02': r"datasets/can-train-and-test-v1.5/set_02",
-    'set_03': r"datasets/can-train-and-test-v1.5/set_03",
-    'set_04': r"datasets/can-train-and-test-v1.5/set_04",
-}
+from src.paths import DATASET_PATHS  # Unified dataset paths
 
 # Fusion weights for composite anomaly scoring
 FUSION_WEIGHTS = {

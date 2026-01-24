@@ -62,7 +62,7 @@ def main():
         # Try to call load_dataset (may require heavy deps)
         try:
             logger.info("Attempting to run dataset loader (load_dataset)")
-            from src.training.can_graph_data import load_dataset
+            from src.training.datamodules import load_dataset
             # Create a minimal dummy config object only for this call
             class _Cfg:
                 class dataset:

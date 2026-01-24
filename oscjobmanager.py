@@ -177,8 +177,8 @@ class OSCJobManager:
                 'notification_type': 'END,FAIL',
                 'conda_env': 'gnn-experiments',
                 'submit_host': 'owens.osc.edu',
-                'walltime': '02:00:00',
-                'memory': '32G',
+                'walltime': '06:00:00',  # 6 hours default for standard datasets
+                'memory': '64G',         # 64GB default
                 'cpus_per_task': 16,
                 'gpus_per_node': 1,
                 'gpu_type': 'v100',
@@ -213,17 +213,41 @@ class OSCJobManager:
         memory = memory or self.cfg.osc.memory
         job_name = job_name or config_name[:50]  # Slurm limit
         
-        # Create experiment run directory
-        run_dir = experiment_dir / "slurm_runs"
-        run_dir.mkdir(parents=True, exist_ok=True)
-        
         # Derive a canonical preset name to use for script invocations
         preset_name = self._map_legacy_to_preset(config_name)
+        
+        # Extract dataset and training type for better organization
+        # e.g., "autoencoder_set_02" -> dataset="set_02", training="autoencoder"
+        dataset_name = None
+        training_type = None
+        for ds in ['hcrl_sa', 'hcrl_ch', 'set_01', 'set_02', 'set_03', 'set_04']:
+            if ds in preset_name:
+                dataset_name = ds
+                break
+        for tt in ['autoencoder', 'gat_normal', 'gat_curriculum', 'fusion', 'distillation']:
+            if tt in preset_name:
+                training_type = tt
+                break
+        
+        # Create organized log directory structure: slurm_runs/{dataset}/{training_type}/
+        if dataset_name and training_type:
+            log_subdir = experiment_dir / "slurm_runs" / dataset_name / training_type
+        elif dataset_name:
+            log_subdir = experiment_dir / "slurm_runs" / dataset_name
+        else:
+            log_subdir = experiment_dir / "slurm_runs" / "other"
+        
+        log_subdir.mkdir(parents=True, exist_ok=True)
+        
+        # Also keep script in main slurm_runs for backward compatibility
+        run_dir = experiment_dir / "slurm_runs"
+        run_dir.mkdir(parents=True, exist_ok=True)
 
         # Use canonical preset name for generated filenames (avoids legacy mismatches)
         job_name = job_name or preset_name[:50]
-        log_file = run_dir / f"{preset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        error_file = run_dir / f"{preset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.err"
+        timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+        log_file = log_subdir / f"{preset_name}_{timestamp}.log"
+        error_file = log_subdir / f"{preset_name}_{timestamp}.err"
 
         # Try to locate a local dataset path and pass it into the job if present
         data_path_flag = ""

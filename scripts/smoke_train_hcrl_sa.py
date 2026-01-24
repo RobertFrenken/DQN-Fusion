@@ -8,6 +8,7 @@ Designed to run in resource-constrained environments (login node) and exit quick
 import os
 import random
 import sys
+import logging
 from pathlib import Path
 # Ensure project root is on sys.path so imports like `src.*` resolve
 project_root = Path(__file__).resolve().parents[1]
@@ -16,6 +17,8 @@ if str(project_root) not in sys.path:
 
 from src.config.hydra_zen_configs import CANGraphConfigStore
 from train_with_hydra_zen import HydraZenTrainer
+
+logger = logging.getLogger(__name__)
 
 TMP_ROOT = Path('/tmp/hcrl_sa_smoke')
 DATASET_DIR = TMP_ROOT / 'hcrl_sa'
@@ -73,9 +76,12 @@ def run_smoke():
     trainer_manager = HydraZenTrainer(cfg)
 
     # Manually run minimal training without validation to avoid missing forward in validation hooks
-    from src.training.can_graph_data import load_dataset, create_dataloaders
+    from src.training.datamodules import load_dataset, create_dataloaders
     train_dataset, val_dataset, num_ids = load_dataset(cfg.dataset.name, cfg, force_rebuild_cache=True)
-
+    
+    # Ensure num_ids is at least the number we found
+    logger.info(f"Dataset reports {num_ids} unique CAN IDs")
+    
     model = trainer_manager.setup_model(num_ids)
     train_loader, _ = create_dataloaders(train_dataset, val_dataset, model.batch_size)
 

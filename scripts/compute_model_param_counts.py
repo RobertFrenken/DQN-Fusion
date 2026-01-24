@@ -11,7 +11,7 @@ import os
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
 from src.config import hydra_zen_configs as cfg_mod
-from src.training.can_graph_module import CANGraphLightningModule
+from src.training.lightning_modules import CANGraphLightningModule
 
 
 def count_parameters(model):
