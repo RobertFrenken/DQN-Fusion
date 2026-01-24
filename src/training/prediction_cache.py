@@ -173,5 +173,15 @@ def create_fusion_prediction_cache(
         split='val',
         max_samples=max_val_samples
     )
+
+    # Ensure all returned arrays have the same length by trimming to the smallest length (robustness for tiny datasets)
+    def _trim_to_min(a, b, c):
+        min_len = min(len(a), len(b), len(c))
+        if min_len != len(a) or min_len != len(b) or min_len != len(c):
+            logger.warning(f"Trimming fusion prediction arrays to min length={min_len}: (was {len(a)},{len(b)},{len(c)})")
+        return a[:min_len], b[:min_len], c[:min_len]
+
+    train_anomaly, train_gat, train_labels = _trim_to_min(train_anomaly, train_gat, train_labels)
+    val_anomaly, val_gat, val_labels = _trim_to_min(val_anomaly, val_gat, val_labels)
     
     return train_anomaly, train_gat, train_labels, val_anomaly, val_gat, val_labels

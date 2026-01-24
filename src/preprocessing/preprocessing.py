@@ -17,6 +17,7 @@ Key Features:
 import numpy as np
 import pandas as pd
 import torch
+import logging
 from torch_geometric.data import Dataset, Data
 import warnings
 
@@ -29,6 +30,7 @@ import warnings
 
 # Suppress pandas warnings for cleaner output
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
+logger = logging.getLogger(__name__)
 
 # ==================== Configuration Constants ====================
 
@@ -322,18 +324,29 @@ def dataset_creation_streaming(csv_path: str, id_mapping: Optional[Dict] = None,
     processed_chunks = []
     
     try:
-        # Read CSV in chunks to reduce memory usage
-        for chunk in pd.read_csv(csv_path, chunksize=chunk_size):
+        # Use the Python engine and explicit dtype to avoid C-parser segfaults on malformed files.
+        # Reading with chunks reduces memory usage.
+        reader = pd.read_csv(csv_path, chunksize=chunk_size, engine='python', dtype=str)
+        for chunk in reader:
+            # Ensure consistent columns even when dtype=str
             chunk.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
             chunk.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
-            
+
             # Process this chunk
             processed_chunk = _process_dataframe_chunk(chunk, id_mapping)
             processed_chunks.append(processed_chunk)
-    
+
     except Exception as e:
-        print(f"Error processing {csv_path}: {e}")
-        return pd.DataFrame()  # Return empty DataFrame on error
+        # As a last resort, try reading the entire file with engine='python' and no chunks
+        try:
+            full = pd.read_csv(csv_path, engine='python', dtype=str)
+            full.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
+            full.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
+            processed_full = _process_dataframe_chunk(full, id_mapping)
+            processed_chunks.append(processed_full)
+        except Exception as e2:
+            logger.warning(f"Error processing {csv_path} (also failed full-read fallback): {e2}")
+            return pd.DataFrame()  # Return empty DataFrame on error
     
     # Combine all chunks
     if processed_chunks:

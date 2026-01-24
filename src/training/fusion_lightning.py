@@ -109,6 +109,11 @@ class FusionLightningModule(pl.LightningModule):
         self.episode_accuracies = []
         self.episode_q_values = []
         self.validation_accuracies = []
+
+        # This module performs its own optimization inside the DQN agent (optimizer.step() is called
+        # within `EnhancedDQNFusionAgent.train_step`). Disable Lightning's automatic optimization to
+        # avoid double-optimization and gradient issues.
+        self.automatic_optimization = False
         
         # Target network update counter
         self.target_update_counter = 0
@@ -197,33 +202,35 @@ class FusionLightningModule(pl.LightningModule):
                 dones[i].item()
             )
         
-        # Train DQN step
+# Train DQN step - the agent handles optimization internally
         if len(self.fusion_agent.replay_buffer) >= self.fusion_agent.batch_size:
-            loss = self.fusion_agent.train_step()
+            loss = self.fusion_agent.train_step()  # returns a Python float or None
+            if loss is not None:
+                # Log the scalar loss
+                self.log('train_loss', float(loss), prog_bar=True)
         else:
-            loss = 0.0
-        
+            loss = None
+
         # Update target network periodically
         self.target_update_counter += 1
         if self.target_update_counter % self.target_update_freq == 0:
             self.fusion_agent.update_target_network()
-        
+
         # Logging
         accuracy = correct.mean()
         self.log('train_accuracy', accuracy, prog_bar=True)
         self.log('train_reward', rewards.mean(), prog_bar=True)
-        if loss > 0:
-            self.log('train_loss', loss, prog_bar=True)
         self.log('epsilon', self.fusion_agent.epsilon)
-        
+
         self.episode_accuracies.append(accuracy.item())
         self.episode_rewards.append(rewards.mean().item())
-        
+
         # Decay epsilon
         if batch_idx % 100 == 0:
             self.fusion_agent.decay_epsilon()
-        
-        return loss if loss > 0 else torch.tensor(0.0, device=self.device)
+
+        # With manual optimization we don't return a tensor for Lightning to backward
+        return None
     
     def validation_step(self, batch, batch_idx):
         """

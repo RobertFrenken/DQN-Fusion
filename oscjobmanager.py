@@ -19,6 +19,10 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(
 # SLURM SCRIPT TEMPLATE
 # ============================================================================
 
+# NOTE: `{data_env_exports}` may be populated by the job manager when a
+# canonical local dataset path is found on the submit host. This exports
+# `CAN_DATA_PATH`/`DATA_PATH` inside the job to ensure training finds the
+# same dataset location on the compute node.
 SLURM_SCRIPT_TEMPLATE = """#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH --time={walltime}
@@ -36,14 +40,29 @@ SLURM_SCRIPT_TEMPLATE = """#!/bin/bash
 set -euo pipefail
 
 echo "Starting KD-GAT job on $(hostname)"
-module load conda || true
-conda activate {conda_env} || true
+module load miniconda3/24.1.2-py310 || true
+source activate gnn-experiments || true
+module load cuda/11.8.0 || true
+# Limit OpenMP/BLAS threads to avoid oversubscription on shared nodes
+# GPU optimizations and CUDA debugging
+export CUDA_VISIBLE_DEVICES=0
+export CUDA_LAUNCH_BLOCKING=1  # Enable synchronous CUDA calls for better debugging
+export TORCH_USE_CUDA_DSA=1   # Enable device-side assertions
+export OMP_NUM_THREADS={cpus}
+export MKL_NUM_THREADS={cpus}
+export NUMEXPR_NUM_THREADS={cpus}
+export OPENBLAS_NUM_THREADS={cpus}
+# Enable faulthandler to get Python tracebacks on crashes
+export PYTHONFAULTHANDLER=1
+# Echo python executable for quick debugging
+echo "python -> $(python -c 'import sys; print(sys.executable)')" || true
+
+# Dataset environment exports (optional)
+{data_env_exports}
 
 # Run training (Hydra-Zen based)
-echo "Running: python src/training/train_with_hydra_zen.py --config_store={config_name}"
-python src/training/train_with_hydra_zen.py \
-    config_store={config_name} \
-    hydra.run.dir={run_dir}
+echo "Running: python train_with_hydra_zen.py --preset={preset_name} {data_path_flag}"
+python train_with_hydra_zen.py --preset {preset_name} {data_path_flag}
 
 EXIT_CODE=$?
 if [ $EXIT_CODE -eq 0 ]; then
@@ -56,9 +75,7 @@ fi
 
 # Run training with Hydra-Zen
 echo "🚀 Starting training..."
-python src/training/train_with_hydra_zen.py \\
-    config_store={config_name} \\
-    hydra.run.dir={run_dir}
+python src/training/train_with_hydra_zen.py --preset {preset_name} {data_path_flag}
 
 TRAIN_EXIT_CODE=$?
 
@@ -103,7 +120,53 @@ class OSCJobManager:
         
         # Job queue
         self.jobs: List[Dict] = []
-    
+
+    def _map_legacy_to_preset(self, name: str) -> str:
+        """Map legacy job identifiers to canonical preset names.
+
+        This is intentionally strict and only handles the known naming conventions that
+        our job generator historically produced. It avoids fuzzy runtime behaviour in
+        the training script while keeping generated Slurm scripts compatible.
+        """
+        s = name.lower()
+        # Normalize tokens
+        s = s.replace('automotive_', '')
+        s = s.replace('automotive', '')
+        s = s.replace('hcrlch', 'hcrl_ch')
+        s = s.replace('hcrlsa', 'hcrl_sa')
+
+        # Dataset detection
+        import re
+        ds_match = re.search(r'(hcrl_ch|hcrl_sa|set_0?\d|car_hacking)', s)
+        dataset = ds_match.group(0) if ds_match else None
+        if dataset:
+            # Normalize set_1 -> set_01
+            m = re.match(r'set_(\d)$', dataset)
+            if m:
+                dataset = f'set_0{m.group(1)}'
+
+        # Autoencoder / VGAE / Unsupervised
+        if dataset and any(k in s for k in ('autoencoder', 'vgae', 'unsupervised')):
+            return f'autoencoder_{dataset}'
+
+        # Supervised / GAT / Normal
+        if dataset and any(k in s for k in ('supervised', 'gat', 'normal')):
+            return f'gat_normal_{dataset}'
+
+        # Fusion
+        if dataset and 'fusion' in s:
+            return f'fusion_{dataset}'
+
+        # Distillation
+        if dataset and ('distill' in s or 'distillation' in s):
+            # Prefer balanced/default 0.5 if unspecified
+            for scale in ('0.5', '0.25', '0.75'):
+                candidate = f'distillation_{dataset}_scale_{scale}'
+                # We don't have access to preset list here; return the first plausible
+                return candidate
+
+        # Fallback to original name (caller should ensure preset exists)
+        return name    
     def _get_default_config(self) -> OmegaConf:
         """Get default OSC configuration"""
         return OmegaConf.create({
@@ -111,7 +174,7 @@ class OSCJobManager:
                 'account': 'PAS3209',
                 'email': 'frenken.2@osu.edu',
                 'notification_type': 'END,FAIL',
-                'conda_env': 'gnn-gpu',
+                'conda_env': 'gnn-experiments',
                 'submit_host': 'owens.osc.edu',
                 'walltime': '02:00:00',
                 'memory': '32G',
@@ -153,11 +216,37 @@ class OSCJobManager:
         run_dir = experiment_dir / "slurm_runs"
         run_dir.mkdir(parents=True, exist_ok=True)
         
-        # Log paths
-        log_file = run_dir / f"{config_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
-        error_file = run_dir / f"{config_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.err"
-        
-        # Create script
+        # Derive a canonical preset name to use for script invocations
+        preset_name = self._map_legacy_to_preset(config_name)
+
+        # Use canonical preset name for generated filenames (avoids legacy mismatches)
+        job_name = job_name or preset_name[:50]
+        log_file = run_dir / f"{preset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"
+        error_file = run_dir / f"{preset_name}_{datetime.now().strftime('%Y%m%d_%H%M%S')}.err"
+
+        # Try to locate a local dataset path and pass it into the job if present
+        data_path_flag = ""
+        data_env_exports = ""
+        try:
+            import re
+            ds_match = re.search(r'(hcrl_ch|hcrl_sa|set_0?\d|car_hacking)', preset_name)
+            if ds_match:
+                ds = ds_match.group(0)
+                # Normalize set_1 -> set_01
+                m = re.match(r'set_(\d)$', ds)
+                if m:
+                    ds = f'set_0{m.group(1)}'
+                candidate_path = self.project_root / 'data' / 'automotive' / ds
+                if candidate_path.exists():
+                    # Pass absolute path as CLI flag and export env vars inside job
+                    data_path_flag = f"--data-path {str(candidate_path)}"
+                    data_env_exports = (
+                        f"export CAN_DATA_PATH={str(candidate_path)}\n"
+                        f"export DATA_PATH={str(candidate_path)}\n"
+                    )
+        except Exception:
+            data_path_flag = ""
+
         script_content = SLURM_SCRIPT_TEMPLATE.format(
             job_name=job_name,
             walltime=walltime,
@@ -171,13 +260,15 @@ class OSCJobManager:
             error_path=str(error_file),
             project_root=self.project_root,
             conda_env=self.cfg.osc.conda_env,
-            config_name=config_name,
+            preset_name=preset_name,
+            data_path_flag=data_path_flag,
+            data_env_exports=data_env_exports,
             timestamp=datetime.now().isoformat(),
             run_dir=str(experiment_dir),
         )
         
         # Write script
-        script_path = run_dir / f"{config_name}.sh"
+        script_path = run_dir / f"{preset_name}.sh"
         script_path.write_text(script_content)
         script_path.chmod(0o755)
         

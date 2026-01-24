@@ -1,47 +1,5 @@
 """
 Hydra-Zen Configuration System for CAN-Graph
-
-This module replaces the YAML configuration files with type-safe Python configurations
-using hydra-zen. Benefits:
-- Type safety and IDE support
-- Programmatic config generation
-- Reduced file clutter
-- Better validation
-- Dynamic configuration composition
-
-Looking to change the configuration to the new pathing system:
-
-        self.osc_settings = {
-            "account": "PAS3209",  # Your account
-            "email": "frenken.2@osu.edu",  # Your email (used for SBATCH notifications if enabled)
-            "project_path": str(self.project_root),  # Project path (keeps previous behaviour but derived)
-            "conda_env": "gnn-gpu",  # Your conda environment
-            "notify_webhook": "",  # Optional: Slack/Teams webhook URL for concise completion notifications
-            "notify_email": "frenken.2@osu.edu"     # Optional: single email to receive job completion summaries (one per job)
-        }
-
-        self.osc_parameters = {
-            "wall_time": "02:00:00",
-            "memory": "32G",
-            "cpus": 8,
-            "gpus": 1
-        }
-
-        self.training_configurations = {
-            "modalities": ["automotive", "internet", "water_treatment"],
-            # will need to handle the pathing based on modalities in future
-            # right now automotive is the only modality used
-            "datasets": {"automotive": ["hcrl_sa", "hcrl_ch", "set_01", "set_02", "set_03", "set_04"],
-                         "internet": [],
-                         "water_treatment": []},
-            "learning_types": ["unsupervised", "supervised", "rl_fusion"],
-            "model_architectures": {"unsupervised": ["vgae"], "supervised": ["gat"], "rl_fusion": ["dqn"]},
-            # right now small = student and teacher = large with options to expand
-            "model_sizes": ["small", "medium", "large"],
-            "distillation": ["no", "standard"],
-            "training_modes": ["all_samples", "normals_only","curriculum_classifier", "curriculum_fusion"],
-        }
-
 """
 
 from dataclasses import dataclass, field
@@ -63,7 +21,7 @@ logger = logging.getLogger(__name__)
 class OptimizerConfig:
     """Optimizer configuration."""
     name: str = "adam"
-    lr: float = 0.001
+    lr: float = 0.005
     weight_decay: float = 0.0001
     momentum: float = 0.9  # For SGD
 
@@ -96,16 +54,19 @@ class GATConfig:
     input_dim: int = 11
     hidden_channels: int = 64
     output_dim: int = 2           # Binary classification (normal/attack)
-    num_layers: int = 5           # Matches paper: 5 GAT layers
-    heads: int = 8                # Matches paper: 8 attention heads
+    num_layers: int = 5           # Fixed shallow architecture: 5 GAT layers
+    heads: int = 8                # Attention heads
     dropout: float = 0.2
-    num_fc_layers: int = 3
+    # Reduce fully-connected head MLP depth to keep parameter budget within targets
+    num_fc_layers: int = 1
     embedding_dim: int = 32       # Matches paper: 32 dimensions
     use_jumping_knowledge: bool = True
     jk_mode: str = "cat"
     use_residual: bool = True
     use_batch_norm: bool = False
     activation: str = "relu"
+    # Expected parameter budget for this teacher GAT architecture
+    target_parameters: int = 1100000  # ~1.1M params (tunable)
 
 
 @dataclass
@@ -113,7 +74,7 @@ class StudentGATConfig:
     """Student GAT configuration for on-board deployment (55K parameters)."""
     type: str = "gat_student"
     input_dim: int = 11
-    hidden_channels: int = 32     # Smaller for student
+    hidden_channels: int = 24     # Reduced for student budget
     output_dim: int = 2           # Binary classification
     num_layers: int = 2           # Matches paper: 2 GAT layers
     heads: int = 4                # Matches paper: 4 attention heads
@@ -121,11 +82,11 @@ class StudentGATConfig:
     num_fc_layers: int = 2        # Simpler classification head
     embedding_dim: int = 8        # Matches paper: 8 dimensions
     use_jumping_knowledge: bool = False  # Simpler architecture
-    jk_mode: str = "max"
+    jk_mode: str = "cat"
     use_residual: bool = False    # Simpler for deployment
     use_batch_norm: bool = False
-    activation: str = "relu"
-
+    activation: str = "relu"    # Expected parameter budget for student GAT (on-board deployment)
+    target_parameters: int = 55000  # ~55K params (tunable)
 
 @dataclass
 class VGAEConfig:
@@ -133,13 +94,15 @@ class VGAEConfig:
     type: str = "vgae"
     input_dim: int = 11           # Same input as student
     node_embedding_dim: int = 256 # Richer embedding (from teacher_student.yaml)
-    hidden_dims: List[int] = field(default_factory=lambda: [256, 128, 96, 48])  # Multi-layer with proper compression
+    # Increase progressive hidden_dims to meet teacher parameter budget (~1.74M)
+    hidden_dims: List[int] = field(default_factory=lambda: [896, 448, 336, 48])  # Multi-layer with proper compression
     latent_dim: int = 48          # Larger latent space than student (from teacher_student.yaml)
     output_dim: int = 11          # Reconstruct input features
     
     # Architecture settings (from teacher_student.yaml)
     num_layers: int = 3           # Deep architecture for rich representations  
     attention_heads: int = 8      # 8 heads per layer (multi-head attention for complex patterns)
+    embedding_dim: int = 64       # Increase embedding dim to match parameter budget
     dropout: float = 0.15         # Higher dropout for regularization
     batch_norm: bool = True
     activation: str = "relu"
@@ -150,7 +113,6 @@ class VGAEConfig:
     
     # Legacy compatibility
     hidden_channels: int = 128    # Larger hidden size for teacher
-    embedding_dim: int = 32       # CAN ID embedding dimension (larger for teacher)
     beta: float = 1.0             # KL divergence weight
 
 @dataclass
@@ -158,9 +120,9 @@ class StudentVGAEConfig:
     """Student VGAE configuration for on-board deployment (~87K parameters)."""
     type: str = "vgae_student"
     input_dim: int = 11           # CAN features input
-    node_embedding_dim: int = 128 # Rich initial embedding (from teacher_student.yaml)
-    encoder_dims: List[int] = field(default_factory=lambda: [128, 64, 24])  # Proper compression
-    decoder_dims: List[int] = field(default_factory=lambda: [24, 64, 128])  # Proper decompression
+    node_embedding_dim: int = 96 # Rich initial embedding (from teacher_student.yaml)
+    encoder_dims: List[int] = field(default_factory=lambda: [200, 100, 24])  # Proper compression to meet budget
+    decoder_dims: List[int] = field(default_factory=lambda: [24, 100, 200])  # Proper decompression
     latent_dim: int = 24          # Compact latent space (from teacher_student.yaml)
     output_dim: int = 11          # Reconstruct input features
     
@@ -173,8 +135,7 @@ class StudentVGAEConfig:
     # Deployment constraints (from teacher_student.yaml)
     target_parameters: int = 87000    # ~87K params
     memory_budget_kb: int = 287       # 87KB model + 200KB buffer
-    inference_time_ms: int = 5        # Must be <20ms CAN message period
-    
+    inference_time_ms: int = 5        # Must be <20ms CAN message period    
     # Legacy compatibility
     hidden_channels: int = 64     # For backward compatibility
     num_layers: int = 2           # Simple encoder/decoder
@@ -304,7 +265,7 @@ class BaseTrainingConfig:
     mode: str = "normal"
     max_epochs: int = 400
     batch_size: int = 64  # Starting point for Lightning Tuner
-    learning_rate: float = 0.001
+    learning_rate: float = 0.005
     weight_decay: float = 0.0001
     
     # Optimization
@@ -338,6 +299,13 @@ class BaseTrainingConfig:
     log_every_n_steps: int = 50
     save_hyperparameters: bool = True
 
+    # Reproducibility and validation
+    seed: Optional[int] = None
+    deterministic_training: bool = True
+    cudnn_benchmark: bool = False
+    # Automatically validate saved artifacts after training (torch.load weights_only) and write sanitized copies if needed
+    validate_artifacts: bool = True
+
 
 @dataclass
 class NormalTrainingConfig(BaseTrainingConfig):
@@ -352,7 +320,8 @@ class AutoencoderTrainingConfig(BaseTrainingConfig):
     mode: str = "autoencoder"
     description: str = "Unsupervised autoencoder training on normal samples only"
     max_epochs: int = 400
-    learning_rate: float = 0.0005
+    learning_rate: float = 0.002
+    batch_size: int = 64  # Starting point for Lightning Tuner
     reconstruction_loss: str = "mse"
     use_normal_samples_only: bool = True
     early_stopping_patience: int = 100  # Longer patience for autoencoder convergence
@@ -794,6 +763,39 @@ class CANGraphConfigStore:
     
 
 
+# ---------------------------------------------------------------------------
+# Convenience factory helpers for presets (used by CLI and tests)
+# ---------------------------------------------------------------------------
+
+def create_gat_normal_config(dataset: str, **overrides) -> CANGraphConfig:
+    """Create a standard GAT normal-training preset for `dataset`."""
+    store = CANGraphConfigStore()
+    return store.create_config(model_type="gat", dataset_name=dataset, training_mode="normal", **overrides)
+
+
+def create_distillation_config(dataset: str, student_scale: float = 1.0, teacher_model_path: Optional[str] = None, **overrides) -> CANGraphConfig:
+    """Create a knowledge-distillation preset. Optionally set `teacher_model_path` and student scale."""
+    store = CANGraphConfigStore()
+    cfg = store.create_config(model_type="gat", dataset_name=dataset, training_mode="knowledge_distillation", **overrides)
+    # Apply teacher path/scale if provided
+    if teacher_model_path:
+        cfg.training.teacher_model_path = teacher_model_path
+    cfg.training.student_model_scale = student_scale
+    return cfg
+
+
+def create_autoencoder_config(dataset: str, **overrides) -> CANGraphConfig:
+    """Create an autoencoder (VGAE) preset for `dataset`."""
+    store = CANGraphConfigStore()
+    return store.create_config(model_type="vgae", dataset_name=dataset, training_mode="autoencoder", **overrides)
+
+
+def create_fusion_config(dataset: str, **overrides) -> CANGraphConfig:
+    """Create a fusion-training preset for `dataset`."""
+    store = CANGraphConfigStore()
+    return store.create_config(model_type="gat", dataset_name=dataset, training_mode="fusion", **overrides)
+
+
 # ============================================================================
 # Configuration Validation
 # ============================================================================
@@ -870,3 +872,50 @@ def validate_config(config: CANGraphConfig) -> bool:
 
 # Initialize the global store
 config_store = CANGraphConfigStore()
+
+
+# ---------------------------------------------------------------------------
+# PyTorch safe-globals registration
+#
+# PyTorch >=2.6 may refuse to unpickle objects whose globals are not explicitly
+# allow-listed. Lightning's tuner writes temporary checkpoints that can include
+# references to our config dataclasses (e.g., `VGAEConfig`). Register the
+# fully-qualified names of our config classes as safe globals so `torch.load`
+# succeeds when loading tuner checkpoints on training nodes.
+# ---------------------------------------------------------------------------
+try:
+    safe_globals = [
+        "src.config.hydra_zen_configs.OptimizerConfig",
+        "src.config.hydra_zen_configs.SchedulerConfig",
+        "src.config.hydra_zen_configs.MemoryOptimizationConfig",
+        "src.config.hydra_zen_configs.GATConfig",
+        "src.config.hydra_zen_configs.StudentGATConfig",
+        "src.config.hydra_zen_configs.VGAEConfig",
+        "src.config.hydra_zen_configs.StudentVGAEConfig",
+        "src.config.hydra_zen_configs.DQNConfig",
+        "src.config.hydra_zen_configs.StudentDQNConfig",
+        "src.config.hydra_zen_configs.BaseDatasetConfig",
+        "src.config.hydra_zen_configs.CANDatasetConfig",
+        "src.config.hydra_zen_configs.BaseTrainingConfig",
+        "src.config.hydra_zen_configs.NormalTrainingConfig",
+        "src.config.hydra_zen_configs.AutoencoderTrainingConfig",
+        "src.config.hydra_zen_configs.KnowledgeDistillationConfig",
+        "src.config.hydra_zen_configs.StudentBaselineTrainingConfig",
+        "src.config.hydra_zen_configs.FusionAgentConfig",
+        "src.config.hydra_zen_configs.FusionTrainingConfig",
+        "src.config.hydra_zen_configs.CurriculumTrainingConfig",
+        "src.config.hydra_zen_configs.EvaluationTrainingConfig",
+        "src.config.hydra_zen_configs.TrainerConfig",
+        "src.config.hydra_zen_configs.CANGraphConfig",
+    ]
+
+    if hasattr(torch, "serialization") and hasattr(torch.serialization, "add_safe_globals"):
+        try:
+            torch.serialization.add_safe_globals(safe_globals)
+            logger.info("Registered PyTorch safe-globals for config dataclasses")
+        except Exception:
+            logger.exception("Failed to register safe-globals with torch.serialization.add_safe_globals")
+    else:
+        logger.debug("torch.serialization.add_safe_globals not available; skipping safe-globals registration")
+except Exception:
+    logger.exception("Unexpected error while attempting to register PyTorch safe-globals for config classes")

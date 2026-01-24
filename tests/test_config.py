@@ -11,9 +11,12 @@ try:
     import torch  # noqa: F401
 except Exception:
     import types
-    sys.modules['torch'] = types.ModuleType('torch')
+    torch_stub = types.ModuleType('torch')
+    sys.modules['torch'] = torch_stub
     sys.modules['torch.nn'] = types.ModuleType('torch.nn')
     sys.modules['torch.cuda'] = types.ModuleType('torch.cuda')
+    # mark as a test stub so tests can detect and skip when real torch is required
+    setattr(torch_stub, '__is_test_stub__', True)
 
 import importlib.util
 

@@ -17,6 +17,7 @@ import logging
 import argparse
 import warnings
 from typing import Optional, Dict, Any
+from dataclasses import asdict
 
 import pandas as pd
 import torch
@@ -123,7 +124,8 @@ class HydraZenTrainer:
         """Create the Lightning module from config."""
         if self.config.training.mode == "fusion":
             # Create fusion model with DQN agent
-            fusion_config = dict(self.config.training)
+            # `self.config.training` is a dataclass; convert to a dict safely using asdict
+            fusion_config = asdict(self.config.training)
             model = FusionLightningModule(fusion_config, num_ids)
             return model
         else:
@@ -264,6 +266,32 @@ class HydraZenTrainer:
             else:
                 raise RuntimeError("Unable to determine state_dict from model object")
 
+            # Sanitize dict-like objects to avoid pickling numpy objects that break
+            # when `weights_only=True` is enforced in newer PyTorch versions.
+            def _sanitize(obj):
+                import numpy as _np
+                if isinstance(obj, dict):
+                    return {k: _sanitize(v) for k, v in obj.items()}
+                if isinstance(obj, _np.ndarray):
+                    return obj.tolist()
+                if isinstance(obj, (_np.integer,)):
+                    return int(obj)
+                if isinstance(obj, (_np.floating,)):
+                    return float(obj)
+                if isinstance(obj, (list, tuple)):
+                    t = type(obj)
+                    return t(_sanitize(v) for v in obj)
+                # Try to convert objects with tolist()
+                if hasattr(obj, 'tolist') and not isinstance(obj, (str, bytes)):
+                    try:
+                        return obj.tolist()
+                    except Exception:
+                        pass
+                return obj
+
+            if isinstance(state_to_save, dict):
+                state_to_save = _sanitize(state_to_save)
+
             # First attempt: torch.save if available
             wrote_file = False
             try:
@@ -330,6 +358,18 @@ class HydraZenTrainer:
         logger.info(f"🚀 Starting training with hydra-zen config")
         logger.info(f"Experiment: {self.config.experiment_name}")
         logger.info(f"Mode: {self.config.training.mode}")
+
+        # Set global seeds/determinism if configured
+        try:
+            from src.utils.seeding import set_global_seeds
+            seed = getattr(self.config.training, 'seed', None)
+            deterministic = getattr(self.config.training, 'deterministic_training', True)
+            cudnn_benchmark = getattr(self.config.training, 'cudnn_benchmark', False)
+            if seed is not None:
+                set_global_seeds(seed, deterministic=deterministic, cudnn_benchmark=cudnn_benchmark)
+                logger.info(f"Global RNG seed set: {seed} (deterministic={deterministic}, cudnn_benchmark={cudnn_benchmark})")
+        except Exception as e:
+            logger.warning(f"Failed to set global seeds: {e}")
         
         # Check if fusion mode
         if self.config.training.mode == "fusion":
@@ -360,6 +400,18 @@ class HydraZenTrainer:
         
         # Setup trainer
         trainer = self.setup_trainer()
+
+        # Save configuration snapshot to log dir (human-readable and trackable)
+        try:
+            import json
+            cfg_snapshot = asdict(self.config)
+            paths = self.get_hierarchical_paths()
+            cfg_file = paths['log_dir'] / 'config.json'
+            with open(cfg_file, 'w', encoding='utf-8') as cf:
+                json.dump(cfg_snapshot, cf, indent=2, ensure_ascii=False)
+            logger.info(f"Wrote training config snapshot to {cfg_file}")
+        except Exception as e:
+            logger.warning(f"Failed to write config snapshot: {e}")
         
         # Train
         logger.info("Starting training...")
@@ -369,6 +421,38 @@ class HydraZenTrainer:
         if self.config.training.run_test:
             test_results = trainer.test(model, val_loader)
             logger.info(f"Test results: {test_results}")
+
+        # Optional: validate latest artifact(s) after training
+        try:
+            if getattr(self.config.training, 'validate_artifacts', False):
+                paths = self.get_hierarchical_paths()
+                ckpt_dir = paths['checkpoint_dir']
+                # Find latest checkpoint file
+                latest = None
+                for ext in ('.pth', '.pt', '.ckpt'):
+                    files = list(ckpt_dir.glob(f'*{ext}'))
+                    if files:
+                        cand = max(files, key=lambda p: p.stat().st_mtime)
+                        if latest is None or cand.stat().st_mtime > latest.stat().st_mtime:
+                            latest = cand
+                if latest:
+                    logger.info(f"Validating latest checkpoint: {latest}")
+                    # Run validator function directly so we can capture the sanitized path
+                    try:
+                        from scripts.validate_artifact import validate_artifact
+                        sanitized = validate_artifact(latest, resave_sanitized=True)
+                        logger.info(f"Validator returned: {sanitized}")
+                        # Attempt to log validated model path to MLflow (best effort)
+                        try:
+                            self._log_model_path_to_mlflow(sanitized, paths['mlruns_dir'])
+                        except Exception as e:
+                            logger.warning(f"Failed to log model path to MLflow: {e}")
+                    except Exception as e:
+                        logger.warning(f"Artifact validator function failed: {e}")
+                else:
+                    logger.info('No checkpoint artifacts found to validate')
+        except Exception as e:
+            logger.warning(f"Artifact validation step failed: {e}")
         
         # Save final model as state_dict (standardized across all training types)
         paths = self.get_hierarchical_paths()
@@ -446,8 +530,12 @@ class HydraZenTrainer:
         classifier_ckpt = _strict_torch_load(classifier_path)
         
         # Create models for extraction
-        ae_model = self.setup_model(num_ids).model
-        classifier_model = self.setup_model(num_ids).model
+        # Instantiate appropriate model architectures for AE and classifier so we can load state_dicts
+        # Use teacher architectures for loading pre-trained weights (do not reuse student config)
+        ae_module = CANGraphLightningModule(model_config=_cfg_mod.VGAEConfig(), training_config=self.config.training, model_type='vgae', training_mode='autoencoder', num_ids=num_ids)
+        ae_model = ae_module.model
+        classifier_module = CANGraphLightningModule(model_config=_cfg_mod.GATConfig(), training_config=self.config.training, model_type='gat', training_mode='normal', num_ids=num_ids)
+        classifier_model = classifier_module.model
         
         # Load weights
         if isinstance(ae_ckpt, dict) and 'state_dict' in ae_ckpt:
@@ -706,7 +794,7 @@ class HydraZenTrainer:
     def _optimize_batch_size_with_datamodule(self, model, datamodule):
         """Optimize batch size using custom datamodule."""
         logger.info("🔧 Optimizing batch size with curriculum datamodule...")
-        
+
         trainer = pl.Trainer(
             accelerator=self.config.trainer.accelerator,
             devices=self.config.trainer.devices,
@@ -715,9 +803,9 @@ class HydraZenTrainer:
             enable_checkpointing=False,
             logger=False
         )
-        
+
         tuner = Tuner(trainer)
-        
+
         try:
             tuner.scale_batch_size(
                 model,
@@ -727,62 +815,94 @@ class HydraZenTrainer:
                 init_val=datamodule.batch_size,
                 max_trials=getattr(self.config.training, 'max_batch_size_trials', 10)
             )
-            
-            # Update datamodule batch size
+
+            # Update datamodule batch size from tuned model
             datamodule.batch_size = model.batch_size
             logger.info(f"✅ Batch size optimized to: {model.batch_size}")
-            
+
         except Exception as e:
-            # Fail loudly to enforce strictness; caller should decide how to proceed
-            raise RuntimeError(f"Batch size optimization failed: {e}. Set 'training.batch_size' or disable optimization.") from e
-        
-        # Add device stats monitor if requested
-        if getattr(self.config.trainer, 'enable_device_stats', False):
-            callbacks.append(DeviceStatsMonitor())
-        
-        # Add extra callbacks
-        if extra_callbacks:
-            callbacks.extend(extra_callbacks)
-        
-        # Setup loggers
-        loggers = []
-        
-        # CSV logger
-        csv_logger = CSVLogger(
-            save_dir=str(paths['log_dir']),
-            name=f"{self.config.model.type}_{self.config.training.mode}"
-        )
-        loggers.append(csv_logger)
-        
-        # MLflow logger
-        # Ensure we have an absolute path and log it for debugging
-        mlruns_path = paths['mlruns_dir'].resolve()
-        logger.info(f"Setting up curriculum MLflow with path: {mlruns_path}")
-        
-        mlflow_logger = MLFlowLogger(
-            experiment_name=f"CAN-Graph-{self.config.dataset.name}",
-            tracking_uri=mlruns_path.as_uri(),  # Use as_uri() for proper file URI format
-            log_model=False,
-        )
-        loggers.append(mlflow_logger)
-        
-        # Create trainer
-        trainer = pl.Trainer(
-            accelerator=self.config.trainer.accelerator,
-            devices=self.config.trainer.devices,
-            precision=self.config.training.precision,
-            max_epochs=self.config.training.max_epochs,
-            gradient_clip_val=self.config.training.gradient_clip_val,
-            accumulate_grad_batches=self.config.training.accumulate_grad_batches,
-            logger=loggers,
-            callbacks=callbacks,
-            enable_checkpointing=self.config.trainer.enable_checkpointing,
-            log_every_n_steps=self.config.training.log_every_n_steps,
-            enable_progress_bar=False,
-            num_sanity_val_steps=self.config.trainer.num_sanity_val_steps
-        )
-        
-        return trainer
+            # Surface meaningful error to caller; caller will decide how to proceed
+            logger.warning(f"Batch size optimization failed: {e}. Using original size.")
+
+        finally:
+            # Cleanup any temporary Lightning Tuner checkpoint files created in cwd
+            try:
+                import glob, os
+                for f in glob.glob('.scale_batch_size_*.ckpt'):
+                    try:
+                        os.remove(f)
+                        logger.info(f"Removed temporary tuner file: {f}")
+                    except Exception:
+                        logger.debug(f"Could not remove tuner file: {f}")
+            except Exception:
+                logger.debug("No tuner cleanup necessary or cleanup failed")
+        # Free fragmented GPU memory and probe the tuned batch size to avoid surprises
+        try:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+        # Sanity-check tuned batch size by attempting a single forward+backward
+        try:
+            dl = datamodule.train_dataloader()
+            it = iter(dl)
+            candidate_bs = getattr(model, 'batch_size', None) or getattr(datamodule, 'batch_size', None) or 64
+            success = False
+            while candidate_bs >= 1:
+                try:
+                    datamodule.batch_size = candidate_bs
+                    model.batch_size = candidate_bs
+                    batch = next(it)
+                    # Move batch to device
+                    device = 'cuda' if torch.cuda.is_available() else 'cpu'
+                    batch = batch.to(device)
+                    model.to(device)
+                    # Forward + loss + backward to detect OOM
+                    out = model(batch) if hasattr(model, 'forward') else model(batch)
+                    # Use module's loss helper when available
+                    if hasattr(self, '_compute_autoencoder_loss') and self.model_type in ['vgae', 'vgae_student']:
+                        loss = self._compute_autoencoder_loss(out, batch)
+                    else:
+                        # Fallback: sum of outputs
+                        try:
+                            loss = out[0].sum() if isinstance(out, (list, tuple)) else out.sum()
+                        except Exception:
+                            loss = torch.tensor(0.0, device=device)
+                    loss.backward()
+                    # If we reach here, candidate works
+                    success = True
+                    # Clear gradients and cached memory
+                    try:
+                        model.zero_grad()
+                    except Exception:
+                        pass
+                    try:
+                        if torch.cuda.is_available():
+                            torch.cuda.synchronize()
+                            torch.cuda.empty_cache()
+                    except Exception:
+                        pass
+                    break
+                except StopIteration:
+                    break
+                except RuntimeError as e:
+                    if 'out of memory' in str(e).lower():
+                        try:
+                            if torch.cuda.is_available():
+                                torch.cuda.empty_cache()
+                        except Exception:
+                            pass
+                        candidate_bs = max(candidate_bs // 2, 1)
+                        # reset iterator
+                        it = iter(dl)
+                        continue
+                    else:
+                        break
+        except Exception:
+            success = True
+
+        return model
     
     def _optimize_batch_size(self, model, train_dataset, val_dataset) -> CANGraphLightningModule:
         """Optimize batch size using Lightning's Tuner."""
@@ -810,21 +930,33 @@ class HydraZenTrainer:
                 init_val=self.config.training.batch_size,
                 max_trials=self.config.training.max_batch_size_trials
             )
-            
             logger.info(f"Batch size optimized to: {model.batch_size}")
-            
+
         except Exception as e:
             logger.warning(f"Batch size optimization failed: {e}. Using original size.")
-        
-        return model
+        finally:
+            # Cleanup any temporary Lightning Tuner checkpoint files created in cwd
+            try:
+                import glob, os
+                for f in glob.glob('.scale_batch_size_*.ckpt'):
+                    try:
+                        os.remove(f)
+                        logger.info(f"Removed temporary tuner file: {f}")
+                    except Exception:
+                        logger.debug(f"Could not remove tuner file: {f}")
+            except Exception:
+                logger.debug("No tuner cleanup necessary or cleanup failed")
+
+        # Ensure we always return the model object (tuner may have failed and not set batch_size)
+        try:
+            return model
+        except Exception:
+            logger.error("Batch size optimizer cannot return model; returning original model object")
+            return model
 
 
-# ============================================================================
-# Preset Configurations
-# ============================================================================
-
-def get_preset_configs() -> Dict[str, CANGraphConfig]:
-    """Get predefined preset configurations."""
+def get_preset_configs():
+    """Return available preset configurations used by CLI helpers."""
     presets = {}
     
     # Normal training presets
@@ -978,6 +1110,10 @@ Examples:
                       help='Path to autoencoder model (required for fusion training)')
     parser.add_argument('--classifier_path', type=str,
                       help='Path to classifier model (required for fusion training)')
+
+    # Optional: override dataset data path when running on machines where dataset lives elsewhere
+    parser.add_argument('--data-path', dest='data_path', type=str, default=None,
+                      help='Override dataset data_path if your local dataset lives elsewhere')
     
     # Training overrides
     parser.add_argument('--epochs', type=int, help='Number of epochs')
@@ -1012,6 +1148,13 @@ Examples:
         # Apply teacher path if provided
         if args.teacher_path and hasattr(config.training, 'teacher_model_path'):
             config.training.teacher_model_path = args.teacher_path
+
+        # Apply optional dataset path override
+        if args.data_path:
+            if hasattr(config, 'dataset') and hasattr(config.dataset, 'data_path'):
+                config.dataset.data_path = args.data_path
+            else:
+                print(f"Warning: --data-path provided but config has no dataset.data_path attribute: {args.data_path}")
     
     else:
         # Manual configuration

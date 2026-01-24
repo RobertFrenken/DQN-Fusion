@@ -47,17 +47,54 @@ def load_dataset(dataset_name: str, config, force_rebuild_cache: bool = False):
     from pathlib import Path
     import os
     import torch
-    # Use data_path from config strictly. No fallback discovery behavior allowed.
+    # Resolve dataset path with fallbacks so runs are more robust on different systems.
+    dataset_path = None
+    # 1) Explicit config value
     if hasattr(config.dataset, 'data_path') and config.dataset.data_path:
-        dataset_path = config.dataset.data_path
-    else:
-        # Fail fast: require explicit dataset path in the dataset config
-        raise ValueError(
-            "Dataset path must be explicitly set in the configuration (config.dataset.data_path). "
-            "No implicit discovery is performed. Example: 'datasets/can-train-and-test-v1.5/hcrl-sa'"
-        )
-    if not os.path.exists(dataset_path):
-        raise FileNotFoundError(f"Dataset not found: {dataset_path}")
+        dataset_path = str(config.dataset.data_path)
+
+    # 2) CLI override via env var commonly used by job managers
+    if not dataset_path:
+        for env_var in ('CAN_DATA_PATH', 'DATA_PATH', 'EXPERIMENT_DATA_PATH'):
+            if os.environ.get(env_var):
+                dataset_path = os.environ.get(env_var)
+                break
+
+    # 3) Try sensible locations inside the project (datasets/ or data/automotive)
+    project_root = Path(__file__).resolve().parents[2]
+    candidates = []
+    if dataset_path:
+        candidates.append(Path(dataset_path))
+    # common dataset layout used by this repo
+    candidates.append(project_root / 'datasets' / f'can-train-and-test-v1.5' / dataset_name)
+    candidates.append(project_root / 'data' / 'automotive' / dataset_name)
+    # also accept dataset_name as a direct folder under datasets
+    candidates.append(project_root / 'datasets' / dataset_name)
+
+    resolved = None
+    for c in candidates:
+        try:
+            if c and c.exists():
+                resolved = str(c)
+                break
+        except Exception:
+            continue
+
+    if resolved is None:
+        # Provide helpful guidance rather than a terse traceback
+        msg_lines = [
+            f"Dataset not found. Tried the following locations:",
+        ]
+        for c in candidates:
+            msg_lines.append(f"  - {c}")
+        msg_lines.append("\nSuggestions:")
+        msg_lines.append("  - Set `config.dataset.data_path` in your preset to the absolute dataset folder.")
+        msg_lines.append("  - Or run the script with `--data-path /path/to/dataset` to override the location.")
+        msg_lines.append("  - Or set the environment variable CAN_DATA_PATH or DATA_PATH to point to the dataset.")
+        full_msg = "\n".join(msg_lines)
+        raise FileNotFoundError(full_msg)
+
+    dataset_path = resolved
     if hasattr(config.dataset, 'get'):
         cache_enabled = config.dataset.get('preprocessing', {}).get('cache_processed_data', True)
         cache_dir = config.dataset.get('cache_dir', f"datasets/cache/{dataset_name}")

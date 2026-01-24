@@ -8,7 +8,8 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import lightning.pytorch as pl
-from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
+from src.models.models import GATWithJK
+from src.models.vgae import GraphAutoencoderNeighborhood
 
 class CANGraphLightningModule(pl.LightningModule):
     """
@@ -17,7 +18,9 @@ class CANGraphLightningModule(pl.LightningModule):
     """
     def __init__(self, model_config, training_config, model_type="gat", training_mode="normal", num_ids=1000):
         super().__init__()
-        self.save_hyperparameters()
+        # save_hyperparameters is provided by LightningModule in some versions; guard for compatibility in tests
+        if hasattr(self, "save_hyperparameters"):
+            self.save_hyperparameters()
         self.model_config = model_config
         self.training_config = training_config
         self.model_type = model_type
@@ -51,20 +54,33 @@ class CANGraphLightningModule(pl.LightningModule):
             gat_params['num_ids'] = self.num_ids
             return GATWithJK(**gat_params)
         elif self.model_type in ["vgae", "vgae_student"]:
-            if hasattr(self.model_config, 'vgae'):
-                vgae_params = dict(self.model_config.vgae)
+            # Build params from config and prefer explicit progressive `hidden_dims` if present
+            if hasattr(self.model_config, 'hidden_dims'):
+                hidden_dims = list(self.model_config.hidden_dims)
+            elif hasattr(self.model_config, 'encoder_dims'):
+                hidden_dims = list(self.model_config.encoder_dims)
             else:
-                vgae_params = {
-                    'in_channels': self.model_config.input_dim,
-                    'hidden_dim': self.model_config.hidden_channels,
-                    'latent_dim': getattr(self.model_config, 'latent_dim', 32),
-                    'num_ids': self.num_ids,
-                }
-            if 'num_ids' not in vgae_params:
-                vgae_params['num_ids'] = self.num_ids
+                hidden_dims = None
+
+            vgae_params = {
+                'num_ids': self.num_ids,
+                'in_channels': self.model_config.input_dim,
+                'hidden_dims': hidden_dims,
+                'latent_dim': getattr(self.model_config, 'latent_dim', (hidden_dims[-1] if hidden_dims else 32)),
+                'encoder_heads': getattr(self.model_config, 'attention_heads', 4),
+                'decoder_heads': getattr(self.model_config, 'attention_heads', 4),
+                'embedding_dim': getattr(self.model_config, 'embedding_dim', 32),
+                'dropout': getattr(self.model_config, 'dropout', 0.15),
+                'batch_norm': getattr(self.model_config, 'batch_norm', True)
+            }
             return GraphAutoencoderNeighborhood(**vgae_params)
         elif self.model_type in ["dqn", "dqn_student"]:
-            return nn.Identity()
+            # Use the DQN model factory functions to construct real DQN architectures
+            from src.models.models import create_dqn_teacher, create_dqn_student
+            if self.model_type == "dqn":
+                return create_dqn_teacher()
+            else:
+                return create_dqn_student()
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
 
@@ -146,6 +162,37 @@ class CANGraphLightningModule(pl.LightningModule):
         loss = self._compute_loss(output, batch)
         self.log('val_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
         return loss
+
+    def forward(self, batch):
+        """Forward dispatcher for the LightningModule.
+
+        Accepts a batched Graph data object (with attributes `x`, `edge_index`, `batch`) and
+        routes to the underlying `self.model` according to `self.model_type`.
+        Returns whatever the underlying model returns so training/validation code can
+        compute losses consistently.
+        """
+        # GAT models: expect the full Data object (and return logits)
+        if self.model_type in ["gat", "gat_student"]:
+            return self.model(batch)
+
+        # VGAE models: GraphAutoencoderNeighborhood.forward(x, edge_index, batch)
+        if self.model_type in ["vgae", "vgae_student"]:
+            x = getattr(batch, 'x', None)
+            edge_index = getattr(batch, 'edge_index', None)
+            b = getattr(batch, 'batch', None)
+            if x is None or edge_index is None or b is None:
+                raise ValueError("Batch is missing required attributes for VGAE forward: x, edge_index, batch")
+            return self.model(x, edge_index, b)
+
+        # DQN or other tabular models: pass through features
+        if self.model_type in ["dqn", "dqn_student"]:
+            x = getattr(batch, 'x', None)
+            if x is None:
+                raise ValueError("Batch is missing 'x' required for DQN forward")
+            # Flatten or select appropriate features for DQN
+            return self.model(x)
+
+        raise ValueError(f"Unsupported model_type in forward: {self.model_type}")
 
     def test_step(self, batch, batch_idx):
         output = self.forward(batch)
