@@ -1,7 +1,34 @@
 # Multi-Stage Knowledge-Distilled VGAE and GAT for Robust Controller-Area-Network Intrusion Detection
 
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
-<!-- ![Build Status](https://img.shields.io/badge/build-passing-brightgreen.svg) -->
+![Python](https://img.shields.io/badge/python-3.9+-blue.svg)
+![PyTorch](https://img.shields.io/badge/PyTorch-2.0+-red.svg)
+
+**Production-ready CAN intrusion detection with knowledge distillation for edge deployment**
+
+---
+
+## 🚀 Quick Start
+
+**New to this project?** → See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
+
+```bash
+# 1. Install environment
+conda env create -f environment.yml
+conda activate gnn-experiments
+
+# 2. Train your first model (GAT classifier)
+python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training normal
+
+# 3. Train VGAE autoencoder
+python train_with_hydra_zen.py --model vgae --dataset hcrl_sa --training autoencoder
+
+# 4. Train with knowledge distillation
+python train_with_hydra_zen.py --model gat_student --dataset hcrl_sa --training knowledge_distillation
+```
+
+**Complete documentation**: [docs/](docs/)
+
 ---
 
 ## Table of Contents
@@ -11,10 +38,11 @@
 - [Features](#features)
 - [Installation](#installation)
 - [Usage](#usage)
+- [Documentation](#documentation)
 - [Datasets](#datasets)
 - [Model Components](#model-components)
+- [Configuration](#configuration)
 - [License](#license)
-- [TODO](#TODO)
 
 ---
 
@@ -87,12 +115,28 @@ The framework addresses CAN bus cybersecurity by:
 - Other dependencies listed in `requirements.txt`
 
 ## Installation
+
+### Quick Install (Conda - Recommended)
+
 ```bash
-git clone https://github.com/robertfrenken/CAN-Graph.git
-cd CAN-Graph
+git clone <your-repo-url>
+cd KD-GAT
+
+# Create environment
+conda env create -f environment.yml
+conda activate gnn-experiments
+
+# Verify installation
+python -c "from src.config.hydra_zen_configs import CANGraphConfigStore; print('✓ Setup complete')"
+```
+
+### Alternative: Virtual Environment
+
+```bash
 python -m venv venv
-venv\Scripts\activate  # On Windows
-# source venv/bin/activate  # On Linux/Mac
+source venv/bin/activate  # Linux/Mac
+# venv\Scripts\activate  # Windows
+
 pip install -r requirements.txt
 ```
 
@@ -148,16 +192,50 @@ If you'd like, I can scaffold a `uv` lockfile in this repo; tell me which `uv` c
 
 ## Usage
 
-### Training the Multi-Stage Pipeline
-```bash
-# Train both stages of the pipeline
-python osc_training_AD.py
+### New Unified Training System (Recommended)
 
-# Alternative training with knowledge distillation
-python AD_KD_GPU.py
+**All training now uses `train_with_hydra_zen.py` with type-safe configurations:**
+
+```bash
+# Train teacher models
+python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training normal
+python train_with_hydra_zen.py --model vgae --dataset hcrl_sa --training autoencoder
+
+# Knowledge distillation (compress to student)
+python train_with_hydra_zen.py \
+  --model gat_student \
+  --dataset hcrl_sa \
+  --training knowledge_distillation \
+  --teacher-path experiment_runs/.../best_teacher_model.pth
+
+# Curriculum learning (hard sample mining)
+python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training curriculum
+
+# Multi-model fusion
+python train_with_hydra_zen.py --model dqn --dataset hcrl_sa --training fusion
 ```
 
-### Quick local smoke test ✅
+### Submit to SLURM (OSC)
+
+---
+
+## Documentation
+
+**Complete guide**: [docs/README.md](docs/README.md)
+
+### Essential Guides
+
+- **[Getting Started](docs/GETTING_STARTED.md)** - Quick setup & first training run
+- **[Code Templates](docs/CODE_TEMPLATES.md)** - Copy-paste working examples
+- **[Workflow Guide](docs/WORKFLOW_GUIDE.md)** - Job submission & pipelines
+- **[Troubleshooting](docs/TROUBLESHOOTING.md)** - Common errors & solutions
+
+### Reference Docs
+
+- **[Architecture Summary](docs/ARCHITECTURE_SUMMARY.md)** - System architecture
+- **[Quick References](docs/QUICK_REFERENCES.md)** - Fast command lookup
+- **[Job Templates](docs/JOB_TEMPLATES.md)** - Complete job configurations
+- **[Model Calculations](docs/MODEL_SIZE_CALCULATIONS.md)** - Parameter budgets
 A small convenience script helps create canonical experiment directories and optionally run a one-epoch smoke training (safe by default). Outputs are written to `experimentruns_test/` unless you set `--experiment-root`.
 
 ```bash
@@ -228,8 +306,79 @@ datasets/
 ### Stage 2: GAT Classification
 - **Input**: Graphs flagged as anomalous by Stage 1
 - **Architecture**: Multi-head attention with Jumping Knowledge
-- **Output**: Binary classification (normal vs. attack)
-- **Training**: Only on filtered anomalous graphs
+- *Configuration
+
+**Single source of truth**: `src/config/hydra_zen_configs.py`
+
+All model, dataset, and training configurations are consolidated in one place:
+
+```python
+from src.config.hydra_zen_configs import CANGraphConfigStore
+
+store = CANGraphConfigStore()
+config = store.create_config(
+    model_type="gat",
+    dataset_name="hcrl_sa", 
+    training_mode="normal"
+)
+```
+
+### Available Models
+
+| Model | Parameters | Purpose |
+|-------|------------|---------|
+| `gat` | ~1.1M | Teacher classifier |
+| `gat_student` | ~55K | Student classifier |
+| `vgae` | ~1.74M | Teacher autoencoder |
+| `vgae_student` | ~87K | Student autoencoder |
+| `dqn` | ~687K | Fusion agent |
+| `dqn_student` | ~32K | Student fusion |
+
+### Training Modes
+
+- `normal` - Standard supervised training
+- `autoencoder` - Unsupervised VGAE training
+- `curriculum` - Hard sample mining with VGAE guidance
+- `knowledge_distillation` - Teacher→Student compression
+- `fusion` - Multi-model ensemble with DQN
+
+See [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md) for complete configuration guide.
+
+---
+
+## Project Structure
+
+```
+KD-GAT/
+├── data/                         # CAN datasets
+├── experiment_runs/              # Training outputs (canonical paths)
+├── src/
+│   ├── config/
+│   │   └── hydra_zen_configs.py  # ⭐ Single config source
+│   ├── models/                   # GAT, VGAE, DQN architectures
+│   ├── training/
+│   │   ├── trainer.py            # Unified trainer
+│   │   ├── lightning_modules.py  # PyTorch Lightning wrappers
+│   │   └── modes/                # Training modes (fusion, curriculum)
+│   ├── paths.py                  # PathResolver for canonical paths
+│   └── utils/                    # Utilities
+├── train_with_hydra_zen.py       # ⭐ Main training script
+├── oscjobmanager.py              # ⭐ SLURM job submission
+├── docs/                         # ⭐ Complete documentation
+└── examples/                     # Configuration examples
+```
+
+---
+
+## Recent Updates (2026-01-24)
+
+- ✅ **Configuration consolidated** - Single source of truth in `hydra_zen_configs.py`
+- ✅ **Documentation streamlined** - Reduced from 30 to 12 essential files
+- ✅ **Training unified** - All modes through `train_with_hydra_zen.py`
+- ✅ **Paths standardized** - Canonical experiment directory structure
+- ✅ **No backward compatibility** - Clean, maintainable codebase
+
+See [CLEANUP_COMPLETE.md](CLEANUP_COMPLETE.md) for details.
 
 ---
 
@@ -237,10 +386,30 @@ datasets/
 
 This project is licensed under the MIT License. See the [LICENSE](LICENSE) file for details.
 
-## TODO
+---
 
-- [ ] Add configuration details for `base.yaml` files
-- [ ] Implement real-time CAN data processing pipeline
+## Citation
+
+If you use this work in your research, please cite:
+
+```bibtex
+@article{frenken2026kdgat,
+  title={Multi-Stage Knowledge-Distilled VGAE and GAT for Robust CAN Intrusion Detection},
+  author={Frenken, Robert},
+  journal={TBD},
+  year={2026}
+}
+```
+
+---
+
+## Support
+
+- **Documentation**: [docs/README.md](docs/README.md)
+- **Issues**: Check [docs/TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md)
+- **Questions**: Open an issue on GitHub
+
+**Ready to start?** → [docs/GETTING_STARTED.md](docs/GETTING_STARTED.md)
 - [ ] Add pre-trained model releases
 - [ ] Extend knowledge distillation to multi-teacher setups
 - [ ] Add support for federated learning scenarios

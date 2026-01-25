@@ -1,0 +1,10 @@
+{
+  "name": "Pipeline: VGAE → Curriculum GAT → Fusion DQN",
+  "description": "Sequential training with SLURM dependency chaining",
+  "datasets": ["hcrl_sa"],
+  "presets": [
+    "autoencoder_hcrl_sa",
+    "curriculum_hcrl_sa",
+    "fusion_hcrl_sa"
+  ]
+}

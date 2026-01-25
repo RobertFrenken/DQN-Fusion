@@ -383,7 +383,7 @@ class OSCJobManager:
             if result.returncode == 0:
                 # Extract job ID
                 job_id = result.stdout.strip().split()[-1]
-                logger.info(f"✅ Job submitted successfully")
+                logger.info("✅ Job submitted successfully")
                 logger.info(f"   Job ID: {job_id}")
                 logger.info(f"   Script: {script_path}")
 
@@ -396,7 +396,7 @@ class OSCJobManager:
 
                 return job_id
             else:
-                logger.error(f"❌ Failed to submit job")
+                logger.error("❌ Failed to submit job")
                 logger.error(f"   stdout: {result.stdout}")
                 logger.error(f"   stderr: {result.stderr}")
                 return None
@@ -446,7 +446,7 @@ class OSCJobManager:
                     job_count += 1
         
         logger.info(f"\n{'=' * 70}")
-        logger.info(f"📊 Sweep Summary")
+        logger.info("📊 Sweep Summary")
         logger.info(f"{'=' * 70}")
         logger.info(f"Configurations: {job_count}")
         logger.info(f"Model sizes: {len(model_sizes)}")

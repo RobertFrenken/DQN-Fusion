@@ -1,9 +1,0 @@
-{
-  "name": "gat_curriculum_all",
-  "datasets": "all",
-  "training_types": ["curriculum"],
-  "extra_args": {
-    "epochs": 10,
-    "batch_size": 32
-  }
-}

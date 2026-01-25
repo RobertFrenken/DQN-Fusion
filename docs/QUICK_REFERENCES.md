@@ -1,4 +1,19 @@
-# KD-GAT Hydra-Zen Quick Reference
+# KD-GAT Quick Reference
+
+**Fast access to commands, configs, and common patterns**
+
+---
+
+## Documentation Map
+
+- **New to project?** → [GETTING_STARTED.md](GETTING_STARTED.md)
+- **Need code examples?** → [CODE_TEMPLATES.md](CODE_TEMPLATES.md)
+- **Submitting jobs?** → [WORKFLOW_GUIDE.md](WORKFLOW_GUIDE.md)
+- **Hitting errors?** → [TROUBLESHOOTING.md](TROUBLESHOOTING.md)
+- **Architecture details?** → [ARCHITECTURE_SUMMARY.md](ARCHITECTURE_SUMMARY.md)
+- **Job reference?** → [JOB_TEMPLATES.md](JOB_TEMPLATES.md)
+
+---
 
 ## Core Concepts
 
@@ -41,6 +56,38 @@ experimentruns/automotive/hcrlch/unsupervised/VGAE/student/no/all_samples/run_00
     ├── known_unknowns/
     └── unknown_unknowns/
 ```
+
+## Configuration System (Updated 2026-01-24)
+
+**Single source of truth**: `src/config/hydra_zen_configs.py`
+
+All configs consolidated into one file:
+- Model configs: `GATConfig`, `VGAEConfig`, `DQNConfig` (+ student variants)
+- Dataset configs: `CANDatasetConfig`
+- Training configs: `NormalTrainingConfig`, `AutoencoderTrainingConfig`, etc.
+- Store: `CANGraphConfigStore`
+
+**DO NOT** create configs elsewhere. Obsolete files removed:
+- ❌ `hydra_configs/config_store.py` (deleted)
+- ❌ `src/config/training_presets.py` (deleted)
+- ❌ `src/config/fusion_config.py` (deleted)
+
+### Basic Usage
+
+```python
+from src.config.hydra_zen_configs import CANGraphConfigStore
+
+store = CANGraphConfigStore()
+
+# Create config
+config = store.create_config(
+    model_type="gat",
+    dataset_name="hcrl_sa",
+    training_mode="normal"
+)
+```
+
+---
 
 ## Command Reference
 

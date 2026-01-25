@@ -97,6 +97,11 @@ def get_preset_configs():
     for dataset in ["hcrl_sa", "hcrl_ch"]:
         presets[f"fusion_{dataset}"] = create_fusion_config(dataset)
     
+    # Curriculum learning presets
+    for dataset in ["hcrl_sa", "hcrl_ch"]:
+        from src.config.hydra_zen_configs import create_curriculum_config
+        presets[f"curriculum_{dataset}"] = create_curriculum_config(dataset)
+    
     return presets
 
 

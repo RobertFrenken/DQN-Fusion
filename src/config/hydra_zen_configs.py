@@ -658,24 +658,30 @@ class CANGraphConfigStore:
     
     def _register_base_configs(self):
         """Register base configuration components."""
-        # Models
-        self.store(GATConfig, name="gat", group="model")  # Teacher GAT
-        self.store(StudentGATConfig, name="gat_student", group="model")  # Student GAT
-        self.store(VGAEConfig, name="vgae", group="model")  # Teacher VGAE
-        self.store(StudentVGAEConfig, name="vgae_student", group="model")  # Student VGAE
-        self.store(DQNConfig, name="dqn", group="model")  # Teacher DQN
-        self.store(StudentDQNConfig, name="dqn_student", group="model")  # Student DQN
+        # Use try/except to handle cases where configs are already registered
+        configs_to_register = [
+            (GATConfig, "gat", "model"),  # Teacher GAT
+            (StudentGATConfig, "gat_student", "model"),  # Student GAT
+            (VGAEConfig, "vgae", "model"),  # Teacher VGAE
+            (StudentVGAEConfig, "vgae_student", "model"),  # Student VGAE
+            (DQNConfig, "dqn", "model"),  # Teacher DQN
+            (StudentDQNConfig, "dqn_student", "model"),  # Student DQN
+            (NormalTrainingConfig, "normal", "training"),
+            (AutoencoderTrainingConfig, "autoencoder", "training"),
+            (KnowledgeDistillationConfig, "knowledge_distillation", "training"),
+            (StudentBaselineTrainingConfig, "student_baseline", "training"),
+            (FusionTrainingConfig, "fusion", "training"),
+            (EvaluationTrainingConfig, "evaluation", "training"),
+            (TrainerConfig, "default", "trainer"),
+        ]
         
-        # Training modes
-        self.store(NormalTrainingConfig, name="normal", group="training")
-        self.store(AutoencoderTrainingConfig, name="autoencoder", group="training")
-        self.store(KnowledgeDistillationConfig, name="knowledge_distillation", group="training")
-        self.store(StudentBaselineTrainingConfig, name="student_baseline", group="training")
-        self.store(FusionTrainingConfig, name="fusion", group="training")
-        self.store(EvaluationTrainingConfig, name="evaluation", group="training")
-        
-        # Trainer
-        self.store(TrainerConfig, name="default", group="trainer")
+        for config_cls, name, group in configs_to_register:
+            try:
+                self.store(config_cls, name=name, group=group)
+            except ValueError as e:
+                # Config already registered, skip
+                if "already exists" not in str(e):
+                    raise
     
     def _register_presets(self):
         """Register common preset configurations."""
@@ -690,7 +696,12 @@ class CANGraphConfigStore:
         }
         
         for name, config in datasets.items():
-            self.store(config, name=name, group="dataset")
+            try:
+                self.store(config, name=name, group="dataset")
+            except ValueError as e:
+                # Config already registered, skip
+                if "already exists" not in str(e):
+                    raise
     
     def create_config(self, model_type: str = "gat", dataset_name: str = "hcrl_sa", 
                      training_mode: str = "normal", **overrides) -> CANGraphConfig:
@@ -778,10 +789,10 @@ def create_gat_normal_config(dataset: str, **overrides) -> CANGraphConfig:
     return store.create_config(model_type="gat", dataset_name=dataset, training_mode="normal", **overrides)
 
 
-def create_distillation_config(dataset: str, student_scale: float = 1.0, teacher_model_path: Optional[str] = None, **overrides) -> CANGraphConfig:
+def create_distillation_config(dataset: str, student_model: str = "gat_student", student_scale: float = 1.0, teacher_model_path: Optional[str] = None, **overrides) -> CANGraphConfig:
     """Create a knowledge-distillation preset. Optionally set `teacher_model_path` and student scale."""
     store = CANGraphConfigStore()
-    cfg = store.create_config(model_type="gat", dataset_name=dataset, training_mode="knowledge_distillation", **overrides)
+    cfg = store.create_config(model_type=student_model, dataset_name=dataset, training_mode="knowledge_distillation", **overrides)
     # Apply teacher path/scale if provided
     if teacher_model_path:
         cfg.training.teacher_model_path = teacher_model_path
@@ -798,7 +809,23 @@ def create_autoencoder_config(dataset: str, **overrides) -> CANGraphConfig:
 def create_fusion_config(dataset: str, **overrides) -> CANGraphConfig:
     """Create a fusion-training preset for `dataset`."""
     store = CANGraphConfigStore()
-    return store.create_config(model_type="gat", dataset_name=dataset, training_mode="fusion", **overrides)
+    return store.create_config(model_type="dqn", dataset_name=dataset, training_mode="fusion", **overrides)
+
+
+def create_curriculum_config(dataset: str, vgae_model_path: Optional[str] = None, **overrides) -> CANGraphConfig:
+    """Create curriculum learning config for GAT with VGAE-guided hard mining."""
+    store = CANGraphConfigStore()
+    cfg = store.create_config(model_type="gat", dataset_name=dataset, training_mode="curriculum", **overrides)
+    
+    # Set VGAE path if provided, otherwise use canonical location
+    if vgae_model_path:
+        cfg.training.vgae_model_path = vgae_model_path
+    else:
+        # Auto-set canonical VGAE path
+        vgae_dir = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder"
+        cfg.training.vgae_model_path = str(vgae_dir / "vgae_autoencoder.pth")
+    
+    return cfg
 
 
 # ============================================================================

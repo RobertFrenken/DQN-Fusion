@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=automotive_hcrl_sa_unsupervised_vgae_teacher_no_au
-#SBATCH --time=02:00:00
-#SBATCH --mem=32G
+#SBATCH --job-name=autoencoder_hcrl_sa
+#SBATCH --time=20:00:00
+#SBATCH --mem=256G
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --account=PAS3209
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=frenken.2@osu.edu
-#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/autoencoder_hcrl_sa_20260124_024231.log
-#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/autoencoder_hcrl_sa_20260124_024231.err
+#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/autoencoder/autoencoder_hcrl_sa_20260124_204822.log
+#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/autoencoder/autoencoder_hcrl_sa_20260124_204822.err
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
 
 # Minimal KD-GAT Slurm script (simplified for portability)
@@ -71,7 +71,7 @@ else
     echo "❌ JOB FAILED"
     echo "=========================================="
     echo "Exit code: $TRAIN_EXIT_CODE"
-    echo "Check logs: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/autoencoder_hcrl_sa_20260124_024231.err"
+    echo "Check logs: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/autoencoder/autoencoder_hcrl_sa_20260124_204822.err"
     echo ""
     exit 1
 fi

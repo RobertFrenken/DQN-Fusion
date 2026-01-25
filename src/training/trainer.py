@@ -12,15 +12,13 @@ This module provides:
 - Configuration validation
 """
 
-import os
 import json
 import logging
 from pathlib import Path
-from typing import Optional, Dict, Any, Tuple
+from typing import Dict
 from dataclasses import asdict
 
 import torch
-import torch.nn as nn
 import lightning.pytorch as pl
 from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger, MLFlowLogger
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, DeviceStatsMonitor
@@ -28,7 +26,12 @@ from lightning.pytorch.tuner import Tuner
 
 from src.paths import PathResolver
 from src.training.datamodules import load_dataset, create_dataloaders, CANGraphDataModule
-from src.training.lightning_modules import CANGraphLightningModule, FusionLightningModule
+from src.training.lightning_modules import (
+    VAELightningModule, 
+    GATLightningModule, 
+    DQNLightningModule, 
+    FusionLightningModule
+)
 from src.training.modes import FusionTrainer, CurriculumTrainer
 
 logger = logging.getLogger(__name__)
@@ -94,23 +97,27 @@ class HydraZenTrainer:
             num_ids: Number of unique CAN IDs
             
         Returns:
-            Lightning module (CANGraphLightningModule or FusionLightningModule)
+            Lightning module (VAELightningModule, GATLightningModule, DQNLightningModule, or FusionLightningModule)
         """
         if self.config.training.mode == "fusion":
             # Create fusion model with DQN agent
             fusion_config = asdict(self.config.training)
             model = FusionLightningModule(fusion_config, num_ids)
             return model
-        else:
-            # Standard GAT/VGAE models
-            model = CANGraphLightningModule(
-                model_config=self.config.model,
-                training_config=self.config.training,
-                model_type=self.config.model.type,
-                training_mode=self.config.training.mode,
-                num_ids=num_ids
-            )
+        elif self.config.model.type in ["vgae", "vgae_student"]:
+            # VGAE autoencoder
+            model = VAELightningModule(cfg=self.config, num_ids=num_ids)
             return model
+        elif self.config.model.type.startswith("gat"):
+            # GAT classifier (teacher or student)
+            model = GATLightningModule(cfg=self.config, num_ids=num_ids)
+            return model
+        elif self.config.model.type.startswith("dqn"):
+            # DQN agent (teacher or student)
+            model = DQNLightningModule(cfg=self.config, num_ids=num_ids)
+            return model
+        else:
+            raise ValueError(f"Unsupported model type: {self.config.model.type}")
     
     # ========================================================================
     # Trainer Setup
@@ -223,10 +230,10 @@ class HydraZenTrainer:
     
     def _optimize_batch_size(
         self, 
-        model: CANGraphLightningModule, 
+        model: pl.LightningModule, 
         train_dataset, 
         val_dataset
-    ) -> CANGraphLightningModule:
+    ) -> pl.LightningModule:
         """
         Optimize batch size using Lightning's Tuner.
         
@@ -309,7 +316,7 @@ class HydraZenTrainer:
         - curriculum: CurriculumTrainer
         - normal/kd/autoencoder: Standard training
         """
-        logger.info(f"🚀 Starting training with hydra-zen config")
+        logger.info("🚀 Starting training with hydra-zen config")
         logger.info(f"Experiment: {self.config.experiment_name}")
         logger.info(f"Mode: {self.config.training.mode}")
         
@@ -373,7 +380,7 @@ class HydraZenTrainer:
         model, trainer = curriculum_trainer.train(model, num_ids)
         
         # Post-training tasks
-        self._save_final_model(model, f"gat_curriculum.pth")
+        self._save_final_model(model, "gat_curriculum.pth")
         self._save_config_snapshot(paths)
         
         return model, trainer

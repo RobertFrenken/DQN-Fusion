@@ -712,9 +712,6 @@ def create_dataloaders(
 # Internal Helper Functions
 # ============================================================================
 
-# Path resolution functions moved to src.paths.PathResolver
-# These are kept as thin wrappers for backward compatibility
-
 
 def _load_cached_data(cache_file, id_mapping_file, dataset_name):
     """Load cached graphs and ID mapping."""

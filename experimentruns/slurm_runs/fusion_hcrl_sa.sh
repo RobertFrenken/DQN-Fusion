@@ -1,14 +1,14 @@
 #!/bin/bash
-#SBATCH --job-name=gat_normal_hcrl_sa
-#SBATCH --time=08:00:00
-#SBATCH --mem=64G
+#SBATCH --job-name=fusion_hcrl_sa
+#SBATCH --time=20:00:00
+#SBATCH --mem=256G
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:1
 #SBATCH --account=PAS3209
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=frenken.2@osu.edu
-#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/gat_normal/gat_normal_hcrl_sa_20260124_204014.log
-#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/gat_normal/gat_normal_hcrl_sa_20260124_204014.err
+#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/fusion/fusion_hcrl_sa_20260124_204823.log
+#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/fusion/fusion_hcrl_sa_20260124_204823.err
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
 
 # Minimal KD-GAT Slurm script (simplified for portability)
@@ -39,8 +39,8 @@ export DATA_PATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_
 
 
 # Run training (Hydra-Zen based)
-echo "Running: python train_with_hydra_zen.py --preset=gat_normal_hcrl_sa --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa"
-python train_with_hydra_zen.py --preset gat_normal_hcrl_sa --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa
+echo "Running: python train_with_hydra_zen.py --preset=fusion_hcrl_sa --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa"
+python train_with_hydra_zen.py --preset fusion_hcrl_sa --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa
 
 EXIT_CODE=$?
 if [ $EXIT_CODE -eq 0 ]; then
@@ -53,7 +53,7 @@ fi
 
 # Run training with Hydra-Zen
 echo "🚀 Starting training..."
-python src/training/train_with_hydra_zen.py --preset gat_normal_hcrl_sa --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa
+python src/training/train_with_hydra_zen.py --preset fusion_hcrl_sa --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa
 
 TRAIN_EXIT_CODE=$?
 
@@ -71,7 +71,7 @@ else
     echo "❌ JOB FAILED"
     echo "=========================================="
     echo "Exit code: $TRAIN_EXIT_CODE"
-    echo "Check logs: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/gat_normal/gat_normal_hcrl_sa_20260124_204014.err"
+    echo "Check logs: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/fusion/fusion_hcrl_sa_20260124_204823.err"
     echo ""
     exit 1
 fi

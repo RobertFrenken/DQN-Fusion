@@ -229,9 +229,8 @@ class PathResolver:
         """
         Get full hierarchical experiment directory path.
         
-        Structure:
-        experiment_root / modality / dataset / learning_type / model_architecture /
-        model_size / distillation / training_mode
+        Uses the config's canonical_experiment_dir() method to compute the path,
+        which handles all the logic for determining learning_type, model_architecture, etc.
         
         Args:
             create: If True, create directory (with parents)
@@ -240,43 +239,18 @@ class PathResolver:
             Experiment directory path
             
         Raises:
-            ValueError: If required config fields are missing
+            ValueError: If config is missing or doesn't support canonical_experiment_dir()
         """
         if not self.config:
             raise ValueError("Config required to determine experiment directory")
         
-        # Required fields
-        required = ['modality', 'dataset', 'learning_type', 'model_architecture',
-                   'model_size', 'distillation', 'training_mode']
-        
-        missing = []
-        for field in required:
-            if not hasattr(self.config, field) or getattr(self.config, field) is None:
-                missing.append(field)
-        
-        if missing:
+        # Use the config's method to compute canonical experiment directory
+        if hasattr(self.config, 'canonical_experiment_dir'):
+            path = self.config.canonical_experiment_dir()
+        else:
             raise ValueError(
-                f"Missing required config fields for experiment path: {missing}"
+                "Config must have canonical_experiment_dir() method"
             )
-        
-        # Build hierarchical path
-        exp_root = self.get_experiment_root()
-        
-        # Handle dataset - may be string or object with .name attribute
-        dataset_name = self.config.dataset
-        if hasattr(dataset_name, 'name'):
-            dataset_name = dataset_name.name
-        
-        path = (
-            exp_root
-            / self.config.modality
-            / str(dataset_name)
-            / self.config.learning_type
-            / self.config.model_architecture
-            / self.config.model_size
-            / self.config.distillation
-            / self.config.training_mode
-        )
         
         if create:
             path.mkdir(parents=True, exist_ok=True)
@@ -471,45 +445,3 @@ class PathResolver:
                 print(f"Cannot determine experiment paths: {e}")
         
         print("=" * 70 + "\n")
-
-
-# ============================================================================
-# Backward Compatibility Functions
-# ============================================================================
-
-def resolve_dataset_path(
-    dataset_name: str, 
-    config=None, 
-    explicit_path: Optional[str] = None
-) -> Path:
-    """
-    Backward-compatible function for dataset path resolution.
-    
-    Args:
-        dataset_name: Name of dataset
-        config: Optional config object
-        explicit_path: Optional explicit path
-        
-    Returns:
-        Resolved dataset path
-    """
-    resolver = PathResolver(config)
-    return resolver.resolve_dataset_path(dataset_name, explicit_path)
-
-
-def get_cache_paths(
-    dataset_name: str,
-    config=None
-) -> Tuple[bool, Path, Path]:
-    """
-    Backward-compatible function for cache path resolution.
-    
-    Args:
-        dataset_name: Name of dataset
-        config: Optional config object
-        
-    Returns:
-        Tuple of (cache_enabled, cache_file, id_mapping_file)
-    """
-    resolver = PathResolver(config)
-    return resolver.get_cache_paths(dataset_name)

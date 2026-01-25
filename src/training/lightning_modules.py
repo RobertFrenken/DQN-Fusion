@@ -32,7 +32,6 @@ from torch.utils.data import Dataset
 from src.models.models import GATWithJK, create_dqn_teacher, create_dqn_student
 from src.models.vgae import GraphAutoencoderNeighborhood
 from src.models.dqn import EnhancedDQNFusionAgent
-from src.utils.experiment_paths import ExperimentPathManager
 
 logger = logging.getLogger(__name__)
 
@@ -54,16 +53,17 @@ class BaseKDGATModule(pl.LightningModule):
     def __init__(
         self,
         cfg: DictConfig,
-        path_manager: ExperimentPathManager,
         train_loader: Any = None,
         val_loader: Any = None,
     ):
         super().__init__()
         
         self.cfg = cfg
-        self.path_manager = path_manager
         self.train_loader_ref = train_loader
         self.val_loader_ref = val_loader
+        
+        # Save batch size for backward compatibility
+        self.batch_size = cfg.training.batch_size if hasattr(cfg.training, 'batch_size') else 32
         
         # Save hyperparameters for checkpointing
         self.save_hyperparameters('cfg')
@@ -76,9 +76,9 @@ class BaseKDGATModule(pl.LightningModule):
         """Configure optimizer and learning rate scheduler."""
         
         # Select optimizer
-        optimizer_name = self.cfg.training_config.optimizer.lower()
-        lr = self.cfg.training_config.learning_rate
-        wd = self.cfg.training_config.weight_decay
+        optimizer_name = self.cfg.training.optimizer.name.lower()
+        lr = self.cfg.training.learning_rate
+        wd = self.cfg.training.weight_decay
         
         if optimizer_name == "adam":
             optimizer = torch.optim.Adam(self.parameters(), lr=lr, weight_decay=wd)
@@ -95,10 +95,10 @@ class BaseKDGATModule(pl.LightningModule):
             raise ValueError(f"Unknown optimizer: {optimizer_name}")
         
         # Configure scheduler if specified
-        if self.cfg.training_config.scheduler is None:
+        if not self.cfg.training.scheduler.use_scheduler:
             return optimizer
         
-        scheduler_name = self.cfg.training_config.scheduler.lower()
+        scheduler_name = self.cfg.training.scheduler.scheduler_type.lower()
         
         if scheduler_name == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
@@ -137,23 +137,11 @@ class BaseKDGATModule(pl.LightningModule):
     
     def on_train_start(self):
         """Called when training starts."""
-        logger.info(f"🚀 Starting training run from {self.path_manager.get_run_dir_safe()}")
+        logger.info("🚀 Starting training run")
     
     def on_train_end(self):
-        """Called when training ends - save final metrics."""
-        import json
-        
-        metrics = {
-            'train_losses': [float(x) for x in self.train_losses],
-            'val_losses': [float(x) for x in self.val_losses],
-            'best_val_loss': float(min(self.val_losses)) if self.val_losses else None,
-        }
-        
-        metrics_path = self.path_manager.get_training_metrics_path()
-        with open(metrics_path, 'w') as f:
-            json.dump(metrics, f, indent=2)
-        
-        logger.info(f"✅ Training metrics saved to {metrics_path}")
+        """Called when training ends."""
+        logger.info("✅ Training complete")
 
 
 # ============================================================================
@@ -171,12 +159,12 @@ class VAELightningModule(BaseKDGATModule):
     def __init__(
         self,
         cfg: DictConfig,
-        path_manager: ExperimentPathManager,
+        
         train_loader: Any = None,
         val_loader: Any = None,
         num_ids: int = 1000
     ):
-        super().__init__(cfg, path_manager, train_loader, val_loader)
+        super().__init__(cfg, train_loader, val_loader)
         
         self.num_ids = num_ids
         
@@ -185,7 +173,7 @@ class VAELightningModule(BaseKDGATModule):
         
         # Loss weights
         self.reconstruction_loss_fn = nn.MSELoss()
-        self.kl_weight = getattr(cfg.learning_config, 'kl_weight', 0.01)
+        self.kl_weight = getattr(cfg.training, 'kl_weight', 0.01)
         
         logger.info(
             f"✅ Initialized VGAE with {sum(p.numel() for p in self.model.parameters())} parameters"
@@ -194,27 +182,27 @@ class VAELightningModule(BaseKDGATModule):
     def _build_vgae(self) -> nn.Module:
         """Build VGAE model from config."""
         # Build params from config and prefer explicit progressive `hidden_dims` if present
-        if hasattr(self.cfg.model_config, 'hidden_dims'):
-            hidden_dims = list(self.cfg.model_config.hidden_dims)
-        elif hasattr(self.cfg.model_config, 'encoder_dims'):
-            hidden_dims = list(self.cfg.model_config.encoder_dims)
+        if hasattr(self.cfg.model, 'hidden_dims'):
+            hidden_dims = list(self.cfg.model.hidden_dims)
+        elif hasattr(self.cfg.model, 'encoder_dims'):
+            hidden_dims = list(self.cfg.model.encoder_dims)
         else:
             hidden_dims = None
 
         vgae_params = {
             'num_ids': self.num_ids,
-            'in_channels': self.cfg.model_config.input_dim,
+            'in_channels': self.cfg.model.input_dim,
             'hidden_dims': hidden_dims,
             'latent_dim': getattr(
-                self.cfg.model_config, 
+                self.cfg.model, 
                 'latent_dim', 
                 (hidden_dims[-1] if hidden_dims else 32)
             ),
-            'encoder_heads': getattr(self.cfg.model_config, 'attention_heads', 4),
-            'decoder_heads': getattr(self.cfg.model_config, 'attention_heads', 4),
-            'embedding_dim': getattr(self.cfg.model_config, 'embedding_dim', 32),
-            'dropout': getattr(self.cfg.model_config, 'dropout', 0.15),
-            'batch_norm': getattr(self.cfg.model_config, 'batch_norm', True)
+            'encoder_heads': getattr(self.cfg.model, 'attention_heads', 4),
+            'decoder_heads': getattr(self.cfg.model, 'attention_heads', 4),
+            'embedding_dim': getattr(self.cfg.model, 'embedding_dim', 32),
+            'dropout': getattr(self.cfg.model, 'dropout', 0.15),
+            'batch_norm': getattr(self.cfg.model, 'batch_norm', True)
         }
         
         return GraphAutoencoderNeighborhood(**vgae_params)
@@ -298,12 +286,11 @@ class GATLightningModule(BaseKDGATModule):
     def __init__(
         self,
         cfg: DictConfig,
-        path_manager: ExperimentPathManager,
         train_loader: Any = None,
         val_loader: Any = None,
         num_ids: int = 1000
     ):
-        super().__init__(cfg, path_manager, train_loader, val_loader)
+        super().__init__(cfg, train_loader, val_loader)
         
         self.num_ids = num_ids
         
@@ -319,18 +306,18 @@ class GATLightningModule(BaseKDGATModule):
     
     def _build_gat(self) -> nn.Module:
         """Build GAT model from config."""
-        if hasattr(self.cfg.model_config, 'gat'):
-            gat_params = dict(self.cfg.model_config.gat)
+        if hasattr(self.cfg.model, 'gat'):
+            gat_params = dict(self.cfg.model.gat)
         else:
             gat_params = {
-                'input_dim': self.cfg.model_config.input_dim,
-                'hidden_channels': self.cfg.model_config.hidden_channels,
-                'output_dim': self.cfg.model_config.output_dim,
-                'num_layers': self.cfg.model_config.num_layers,
-                'heads': self.cfg.model_config.heads,
-                'dropout': self.cfg.model_config.dropout,
-                'num_fc_layers': self.cfg.model_config.num_fc_layers,
-                'embedding_dim': self.cfg.model_config.embedding_dim,
+                'input_dim': self.cfg.model.input_dim,
+                'hidden_channels': self.cfg.model.hidden_channels,
+                'output_dim': self.cfg.model.output_dim,
+                'num_layers': self.cfg.model.num_layers,
+                'heads': self.cfg.model.heads,
+                'dropout': self.cfg.model.dropout,
+                'num_fc_layers': self.cfg.model.num_fc_layers,
+                'embedding_dim': self.cfg.model.embedding_dim,
             }
         
         # Normalize parameter names
@@ -410,11 +397,10 @@ class DQNLightningModule(BaseKDGATModule):
     def __init__(
         self,
         cfg: DictConfig,
-        path_manager: ExperimentPathManager,
         train_loader: Any = None,
         val_loader: Any = None,
     ):
-        super().__init__(cfg, path_manager, train_loader, val_loader)
+        super().__init__(cfg, train_loader, val_loader)
         
         # Build DQN model
         self.model = self._build_dqn()
@@ -424,8 +410,8 @@ class DQNLightningModule(BaseKDGATModule):
         self.target_network.load_state_dict(self.model.state_dict())
         
         # Hyperparameters
-        self.gamma = cfg.training_config.get('gamma', 0.99)
-        self.target_update_freq = cfg.training_config.get('target_update_freq', 100)
+        self.gamma = getattr(cfg.training, 'gamma', 0.99)
+        self.target_update_freq = getattr(cfg.training, 'target_update_freq', 100)
         self.update_counter = 0
         
         logger.info(
@@ -434,7 +420,7 @@ class DQNLightningModule(BaseKDGATModule):
     
     def _build_dqn(self) -> nn.Module:
         """Build DQN model from config."""
-        model_type = getattr(self.cfg.model_config, 'dqn_type', 'teacher')
+        model_type = getattr(self.cfg.model, 'dqn_type', 'teacher')
         
         if model_type == 'teacher':
             return create_dqn_teacher()
@@ -796,13 +782,6 @@ class FusionLightningModule(pl.LightningModule):
                     policy[i, j] = self.fusion_agent.alpha_values[best_action]
         
         return policy
-
-
-# ============================================================================
-# LEGACY UNIFIED MODULE (Backward Compatibility)
-# ============================================================================
-
-class CANGraphLightningModule(pl.LightningModule):
     """
     Legacy unified Lightning Module for CAN intrusion detection.
     

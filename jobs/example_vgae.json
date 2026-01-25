@@ -1,9 +1,0 @@
-{
-  "name": "vgae_autoencoder_all",
-  "datasets": "all",
-  "training_types": ["autoencoder"],
-  "extra_args": {
-    "epochs": 5,
-    "batch_size": 16
-  }
-}

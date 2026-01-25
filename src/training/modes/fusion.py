@@ -16,7 +16,12 @@ import lightning.pytorch as pl
 from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping
 from lightning.pytorch.loggers import CSVLogger
 
-from src.training.lightning_modules import FusionLightningModule, FusionPredictionCache, CANGraphLightningModule
+from src.training.lightning_modules import (
+    FusionLightningModule, 
+    FusionPredictionCache, 
+    VAELightningModule,
+    GATLightningModule
+)
 from src.training.prediction_cache import create_fusion_prediction_cache
 from src.training.datamodules import load_dataset, create_dataloaders
 from src.training.model_manager import ModelManager
@@ -160,23 +165,32 @@ class FusionTrainer:
         
         # Import config module for model instantiation
         from importlib import import_module
+        from omegaconf import DictConfig
         _cfg_mod = import_module('src.config.hydra_zen_configs')
         
-        # Create model architectures
-        ae_module = CANGraphLightningModule(
-            model_config=_cfg_mod.VGAEConfig(),
-            training_config=self.config.training,
-            model_type='vgae',
-            training_mode='autoencoder',
+        # Create VGAE config
+        vgae_cfg = DictConfig({
+            'model_config': _cfg_mod.VGAEConfig(),
+            'training_config': self.config.training,
+            'learning_config': self.config.training
+        })
+        
+        # Create GAT config
+        gat_cfg = DictConfig({
+            'model_config': _cfg_mod.GATConfig(),
+            'training_config': self.config.training,
+            'learning_config': self.config.training
+        })
+        
+        # Create model architectures using new specialized modules
+        ae_module = VAELightningModule(
+            cfg=vgae_cfg,
             num_ids=num_ids
         )
         ae_model = ae_module.model
         
-        classifier_module = CANGraphLightningModule(
-            model_config=_cfg_mod.GATConfig(),
-            training_config=self.config.training,
-            model_type='gat',
-            training_mode='normal',
+        classifier_module = GATLightningModule(
+            cfg=gat_cfg,
             num_ids=num_ids
         )
         classifier_model = classifier_module.model

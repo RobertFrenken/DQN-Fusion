@@ -134,15 +134,17 @@ def main():
             # Optionally write a short summary file under the run directory for traceability
             if args.write_summary:
                 try:
-                    from src.utils.experiment_paths import ExperimentPathManager
-                    pm = ExperimentPathManager(cfg)
-                    run_dir = pm.get_run_dir_safe()
+                    from src.paths import PathResolver
+                    pr = PathResolver(cfg)
+                    run_dir = pr.get_experiment_dir(cfg)
+                    if not run_dir.exists():
+                        run_dir.mkdir(parents=True, exist_ok=True)
                     summary = {
                         'model': cfg.model.type,
                         'dataset': cfg.dataset.name,
                         'data_path': cfg.dataset.data_path,
                         'training_mode': cfg.training.mode,
-                        'experiment_dir': str(pm.get_experiment_dir()),
+                        'experiment_dir': str(run_dir),
                     }
                     import json
                     with open(run_dir / 'summary.json', 'w') as f:
