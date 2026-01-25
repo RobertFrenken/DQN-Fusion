@@ -1,5 +1,5 @@
 #!/bin/bash
-#SBATCH --job-name=autoencoder_hcrl_sa
+#SBATCH --job-name=autoencoder_set_01
 #SBATCH --time=06:00:00
 #SBATCH --mem=48G
 #SBATCH --cpus-per-task=16
@@ -7,8 +7,8 @@
 #SBATCH --account=PAS3209
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=frenken.2@osu.edu
-#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/autoencoder/autoencoder_hcrl_sa_20260124_205512.log
-#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/autoencoder/autoencoder_hcrl_sa_20260124_205512.err
+#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_01/autoencoder/autoencoder_set_01_20260124_205540.log
+#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_01/autoencoder/autoencoder_set_01_20260124_205540.err
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
 
 # Minimal KD-GAT Slurm script (simplified for portability)
@@ -34,13 +34,13 @@ export PYTHONFAULTHANDLER=1
 echo "python -> $(python -c 'import sys; print(sys.executable)')" || true
 
 # Dataset environment exports (optional)
-export CAN_DATA_PATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa
-export DATA_PATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa
+export CAN_DATA_PATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/set_01
+export DATA_PATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/set_01
 
 
 # Run training (Hydra-Zen based)
-echo "Running: python train_with_hydra_zen.py --preset=autoencoder_hcrl_sa --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa"
-python train_with_hydra_zen.py --preset autoencoder_hcrl_sa --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa
+echo "Running: python train_with_hydra_zen.py --preset=autoencoder_set_01 --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/set_01"
+python train_with_hydra_zen.py --preset autoencoder_set_01 --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/set_01
 
 EXIT_CODE=$?
 if [ $EXIT_CODE -eq 0 ]; then
@@ -53,7 +53,7 @@ fi
 
 # Run training with Hydra-Zen
 echo "🚀 Starting training..."
-python src/training/train_with_hydra_zen.py --preset autoencoder_hcrl_sa --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/hcrl_sa
+python src/training/train_with_hydra_zen.py --preset autoencoder_set_01 --data-path /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/data/automotive/set_01
 
 TRAIN_EXIT_CODE=$?
 
@@ -71,7 +71,7 @@ else
     echo "❌ JOB FAILED"
     echo "=========================================="
     echo "Exit code: $TRAIN_EXIT_CODE"
-    echo "Check logs: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/autoencoder/autoencoder_hcrl_sa_20260124_205512.err"
+    echo "Check logs: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_01/autoencoder/autoencoder_set_01_20260124_205540.err"
     echo ""
     exit 1
 fi
