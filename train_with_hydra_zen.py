@@ -16,13 +16,10 @@ from pathlib import Path
 import logging
 import argparse
 import warnings
-from typing import Optional, Dict, Any
-from dataclasses import asdict
-
+from importlib import import_module
 import pandas as pd
-import torch
-import torch.nn as nn
 import lightning.pytorch as pl
+
 # Ensure minimal Lightning attributes exist when running under test shims
 if not hasattr(pl, 'LightningModule'):
     pl.LightningModule = object
@@ -30,20 +27,20 @@ if not hasattr(pl, 'Callback'):
     pl.Callback = object
 if not hasattr(pl, 'LightningDataModule'):
     pl.LightningDataModule = object
-from lightning.pytorch.loggers import CSVLogger, TensorBoardLogger, MLFlowLogger
-from lightning.pytorch.callbacks import ModelCheckpoint, EarlyStopping, DeviceStatsMonitor
-from lightning.pytorch.tuner import Tuner
-import types
-# Provide a safe Trainer fallback in case test shims replaced the module without full attributes
 if not hasattr(pl, 'Trainer'):
+    import types
     pl.Trainer = lambda *a, **k: types.SimpleNamespace(_kwargs=k, logger=k.get('logger', None))
+
+# Import unified training orchestrator
+from src.training.trainer import HydraZenTrainer
+
 # Add project root to path
 project_root = Path(__file__).parent
 sys.path.insert(0, str(project_root))
 
 # Import our modules (robust to path resolution issues in some SLURM environments)
 # Import config module and optional factory functions gracefully so tests can inject them
-from importlib import import_module
+
 _cfg_mod = import_module('src.config.hydra_zen_configs')
 CANGraphConfig = _cfg_mod.CANGraphConfig
 CANGraphConfigStore = getattr(_cfg_mod, 'CANGraphConfigStore', None)
@@ -53,13 +50,7 @@ create_autoencoder_config = getattr(_cfg_mod, 'create_autoencoder_config', None)
 create_fusion_config = getattr(_cfg_mod, 'create_fusion_config', None)
 validate_config = getattr(_cfg_mod, 'validate_config', lambda cfg: True)
 # import lighting loader modules
-from src.training.datamodules import CANGraphDataModule, load_dataset, create_dataloaders, EnhancedCANGraphDataModule, CurriculumCallback
-from src.training.lightning_modules import CANGraphLightningModule, FusionLightningModule
-from src.training.prediction_cache import create_fusion_prediction_cache
-# Import unified path resolver
-from src.paths import PathResolver
-# Import unified training orchestrator
-from src.training.trainer import HydraZenTrainer
+
 # Suppress warnings
 warnings.filterwarnings("ignore", message=".*pynvml.*deprecated.*")
 warnings.filterwarnings("ignore", message=".*torch-scatter.*")
@@ -78,8 +69,11 @@ def get_preset_configs():
     """Return available preset configurations used by CLI helpers."""
     presets = {}
     
+    # All datasets we support
+    ALL_DATASETS = ["hcrl_sa", "hcrl_ch", "set_01", "set_02", "set_03", "set_04"]
+    
     # Normal training presets
-    for dataset in ["hcrl_sa", "hcrl_ch", "set_01", "set_02", "set_03", "set_04"]:
+    for dataset in ALL_DATASETS:
         presets[f"gat_normal_{dataset}"] = create_gat_normal_config(dataset)
         presets[f"autoencoder_{dataset}"] = create_autoencoder_config(dataset)
     
@@ -90,16 +84,16 @@ def get_preset_configs():
             presets[name] = create_distillation_config(
                 dataset=dataset, 
                 student_scale=scale,
-                teacher_model_path=str(Path(__file__).parent.resolve() / "experiment_runs" / "automotive" / dataset / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder" / f"best_teacher_model_{dataset}.pth")
+                teacher_model_path=str(Path(__file__).parent.resolve() / "experimentruns" / "automotive" / dataset / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder" / f"best_teacher_model_{dataset}.pth")
             )
     
-    # Fusion presets
-    for dataset in ["hcrl_sa", "hcrl_ch"]:
+    # Fusion presets - now for ALL datasets
+    for dataset in ALL_DATASETS:
         presets[f"fusion_{dataset}"] = create_fusion_config(dataset)
     
-    # Curriculum learning presets
-    for dataset in ["hcrl_sa", "hcrl_ch"]:
-        from src.config.hydra_zen_configs import create_curriculum_config
+    # Curriculum learning presets - now for ALL datasets
+    from src.config.hydra_zen_configs import create_curriculum_config
+    for dataset in ALL_DATASETS:
         presets[f"curriculum_{dataset}"] = create_curriculum_config(dataset)
     
     return presets
@@ -115,6 +109,7 @@ def list_presets():
     categories = {
         "Normal Training": [k for k in presets.keys() if k.startswith("gat_normal")],
         "Autoencoder Training": [k for k in presets.keys() if k.startswith("autoencoder")],
+        "Curriculum Learning": [k for k in presets.keys() if k.startswith("curriculum")],
         "Knowledge Distillation": [k for k in presets.keys() if k.startswith("distillation")],
         "Fusion Training": [k for k in presets.keys() if k.startswith("fusion")]
     }
@@ -122,7 +117,7 @@ def list_presets():
     for category, preset_names in categories.items():
         if preset_names:
             print(f"\n{category}:")
-            for name in preset_names:
+            for name in sorted(preset_names):
                 print(f"  - {name}")
 
 
@@ -215,15 +210,17 @@ Examples:
                       choices=['normal', 'autoencoder', 'knowledge_distillation', 'curriculum', 'fusion'],
                       default='normal', help='Training mode')
     
-    # Knowledge distillation specific
+    # Knowledge distillation (toggle - can be used with any mode except fusion)
+    parser.add_argument('--use-kd', action='store_true',
+                      help='Enable knowledge distillation (requires --teacher_path)')
     parser.add_argument('--teacher_path', type=str,
-                      help='Path to teacher model (required for knowledge distillation)')
+                      help='Path to teacher model (required for --use-kd or mode=knowledge_distillation)')
     parser.add_argument('--student_scale', type=float, default=1.0,
                       help='Student model scale factor')
     parser.add_argument('--distillation_alpha', type=float, default=0.7,
-                      help='Distillation alpha weight')
+                      help='KD loss weight: alpha*KD_loss + (1-alpha)*task_loss')
     parser.add_argument('--temperature', type=float, default=4.0,
-                      help='Distillation temperature')
+                      help='KD temperature for soft labels (higher = softer)')
     
     # Curriculum learning specific
     parser.add_argument('--vgae_path', type=str,
@@ -254,11 +251,20 @@ Examples:
                       help='Path to a JSON dependency manifest to validate and apply for fusion training')
     
     args = parser.parse_args()
-    
+
     if args.list_presets:
         list_presets()
         return
-    
+
+    # Validate --use-kd flag
+    if getattr(args, 'use_kd', False):
+        if not args.teacher_path:
+            print("❌ --use-kd requires --teacher_path to specify the teacher model")
+            return
+        if args.training == 'fusion':
+            print("❌ --use-kd is not compatible with fusion mode (DQN uses already-distilled models)")
+            return
+
     # Create configuration
     if args.preset:
         presets = get_preset_configs()
@@ -286,6 +292,9 @@ Examples:
         
         # Prepare overrides
         overrides = {}
+        # Knowledge distillation toggle (new orthogonal approach)
+        if getattr(args, 'use_kd', False):
+            overrides['use_knowledge_distillation'] = True
         if args.teacher_path:
             overrides['teacher_model_path'] = args.teacher_path
         if args.student_scale != 1.0:

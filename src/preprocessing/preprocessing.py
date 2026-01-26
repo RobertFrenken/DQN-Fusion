@@ -876,7 +876,7 @@ class TestPreprocessing(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
         """Set up test environment."""
-        cls.test_root = r"datasets/can-train-and-test-v1.5/hcrl-sa"
+        cls.test_root = r"data/automotive/hcrl_sa"
         cls.small_window_size = 10  # Smaller for faster testing
         cls.test_stride = 5
     

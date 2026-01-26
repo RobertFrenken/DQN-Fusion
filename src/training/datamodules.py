@@ -23,6 +23,7 @@ from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 
 import torch
+import torch.nn.functional as F
 import numpy as np
 from torch.utils.data import Dataset, DataLoader as TorchDataLoader
 from torch_geometric.loader import DataLoader
@@ -192,12 +193,24 @@ class AdaptiveGraphDataset(Dataset):
                 try:
                     # Forward pass through VGAE
                     x, edge_index = graph.x, graph.edge_index
-                    z = self.vgae_model.encode(x, edge_index)
-                    adj_recon = self.vgae_model.decode(z, edge_index)
                     
-                    # Compute reconstruction loss as difficulty
-                    loss = self.vgae_model.recon_loss(adj_recon, graph.edge_index)
-                    score = loss.item()
+                    # VGAE.encode() returns (z, kl_loss) tuple
+                    z, kl_loss = self.vgae_model.encode(x, edge_index)
+                    
+                    # Decode to get reconstructed features
+                    cont_out, canid_logits = self.vgae_model.decode_node(z, edge_index)
+                    
+                    # Compute reconstruction loss as difficulty score
+                    # Higher reconstruction error = harder example
+                    continuous_features = x[:, 1:]  # Exclude CAN ID column
+                    recon_loss = F.mse_loss(cont_out, continuous_features, reduction='mean')
+                    
+                    # Also consider CAN ID prediction error
+                    canid_targets = x[:, 0].long()
+                    canid_loss = F.cross_entropy(canid_logits, canid_targets, reduction='mean')
+                    
+                    # Combined difficulty score (weighted reconstruction + classification error)
+                    score = (recon_loss.item() + 0.1 * canid_loss.item())
                     
                     # Cache the score
                     self.difficulty_cache[graph_id] = score
@@ -551,10 +564,7 @@ class CurriculumCallback(pl.Callback):
                     collate_fn=collate_fn
                 )
                 
-                pl_module.ewc.compute_fisher_information(
-                    balanced_loader, 
-                    pl_module.device
-                )
+                pl_module.ewc.consolidate(balanced_loader)
                 logger.info("✅ EWC initialized with balanced examples")
     
     def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
@@ -565,20 +575,28 @@ class CurriculumCallback(pl.Callback):
         # Track normal confidence
         with torch.no_grad():
             logits = pl_module(batch)
-            probs = torch.sigmoid(logits)
+            # GAT outputs 2-class logits, use softmax not sigmoid
+            if logits.dim() > 1 and logits.size(-1) > 1:
+                probs = torch.softmax(logits, dim=-1)
+                # Confidence = probability of predicted class
+                confidence = probs.max(dim=-1).values
+            else:
+                # Binary single-output case
+                probs = torch.sigmoid(logits)
+                confidence = torch.max(probs, 1 - probs)
             
             normal_mask = batch.y == 0
             if normal_mask.sum() > 0:
-                normal_confidence = probs[normal_mask].mean().item()
+                normal_confidence = confidence[normal_mask].mean().item()
                 self.normal_confidences.append(normal_confidence)
         
         # Add EWC loss after balanced phase
         if hasattr(pl_module, 'ewc') and trainer.current_epoch > trainer.max_epochs * 0.3:
-            ewc_loss = pl_module.ewc.compute_ewc_loss()
+            ewc_loss = pl_module.ewc.penalty()
             
-            if 'loss' in outputs:
-                outputs['loss'] += ewc_loss * 0.1
-            
+            # Note: outputs is typically a tensor (loss value), not a dict
+            # EWC loss should be added during the forward pass, not here
+            # Just log the EWC penalty for monitoring
             pl_module.log('ewc_loss', ewc_loss)
     
     def on_train_epoch_end(self, trainer, pl_module):
@@ -714,15 +732,32 @@ def create_dataloaders(
 
 
 def _load_cached_data(cache_file, id_mapping_file, dataset_name):
-    """Load cached graphs and ID mapping."""
+    """Load cached graphs and ID mapping with robust error handling.
+    
+    Note: Uses weights_only=False to support PyTorch Geometric Data objects.
+    This is safe for our own cached data but should not be used with untrusted files.
+    TODO: Migrate to safetensors format for improved security.
+    """
     if not (cache_file.exists() and id_mapping_file.exists()):
         return None, None
     
     try:
         import pickle
-        graphs = torch.load(cache_file)
+        # Note: weights_only=False is required for PyG Data objects
+        # This is safe for our own cached data but be cautious with untrusted files
+        try:
+            graphs = torch.load(cache_file, map_location='cpu', weights_only=False)
+        except Exception as e:
+            logger.warning(f"Cache load failed (possibly corrupted): {e}")
+            return None, None
+            
         with open(id_mapping_file, 'rb') as f:
             id_mapping = pickle.load(f)
+        
+        # Validate loaded data
+        if not isinstance(graphs, list) or not isinstance(id_mapping, dict):
+            logger.warning(f"Invalid cache format. Expected list of graphs and dict mapping.")
+            return None, None
         
         logger.info(f"Loaded {len(graphs)} cached graphs with {len(id_mapping)} unique IDs")
         
@@ -752,6 +787,14 @@ def _load_cached_data(cache_file, id_mapping_file, dataset_name):
         
         return graphs, id_mapping
         
+    except (pickle.UnpicklingError, AttributeError, EOFError) as e:
+        logger.warning(f"Cache file corrupted ({type(e).__name__}). Deleting and rebuilding.")
+        try:
+            cache_file.unlink(missing_ok=True)
+            id_mapping_file.unlink(missing_ok=True)
+        except:
+            pass
+        return None, None
     except Exception as e:
         logger.warning(f"Failed to load cached data: {e}. Processing from scratch.")
         return None, None
@@ -806,13 +849,28 @@ def _process_dataset_from_scratch(
         verbose=True
     )
     
-    # Save cache
+    # Save cache atomically
     if cache_enabled:
         import pickle
         cache_file.parent.mkdir(parents=True, exist_ok=True)
         logger.info(f"Saving processed data to cache: {cache_file}")
-        torch.save(graphs, cache_file)
-        with open(id_mapping_file, 'wb') as f:
-            pickle.dump(id_mapping, f)
+        
+        # Use atomic write with temp file
+        temp_cache = cache_file.with_suffix('.tmp')
+        temp_mapping = id_mapping_file.with_suffix('.tmp')
+        
+        try:
+            torch.save(graphs, temp_cache, pickle_protocol=4)
+            with open(temp_mapping, 'wb') as f:
+                pickle.dump(id_mapping, f, protocol=4)
+            
+            # Atomic rename
+            temp_cache.rename(cache_file)
+            temp_mapping.rename(id_mapping_file)
+            logger.info(f"✅ Cache saved successfully: {len(graphs)} graphs")
+        except Exception as e:
+            logger.error(f"Failed to save cache: {e}")
+            temp_cache.unlink(missing_ok=True)
+            temp_mapping.unlink(missing_ok=True)
     
     return graphs, id_mapping

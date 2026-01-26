@@ -3,7 +3,7 @@
 
 Features:
 - Search over VGAE and StudentVGAE hyperparameters (hidden_dims, heads, embedding_dim)
-- Instantiate models via `CANGraphLightningModule` (uses project wiring)
+- Instantiate models directly from model classes (GraphAutoencoderNeighborhood, GATWithJK, etc.)
 - Compute total parameter count and detailed module breakdown
 - Output top candidates by closeness to target parameter budget
 - Save results to CSV for further analysis
@@ -24,7 +24,8 @@ from typing import List, Tuple
 # Ensure project src is importable when script run from repo root
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), '..')))
 
-from src.training.lightning_modules import CANGraphLightningModule
+from src.models.vgae import GraphAutoencoderNeighborhood
+from src.models.models import GATWithJK, create_dqn_teacher, create_dqn_student
 from src.config.hydra_zen_configs import VGAEConfig, StudentVGAEConfig, GATConfig, StudentGATConfig, DQNConfig, StudentDQNConfig
 import random
 import subprocess
@@ -90,25 +91,49 @@ def breakdown_vgae(model) -> dict:
     return breakdown
 
 
-def evaluate_vgae_combo(hidden_dims: List[int], heads: int, emb: int, latent_dim: int = 48, num_ids=50):
+def evaluate_vgae_combo(hidden_dims: List[int], heads: int, emb: int, latent_dim: int = 48, num_ids=50, mlp_hidden: int = None):
     cfg = VGAEConfig()
     cfg.hidden_dims = list(hidden_dims)
     cfg.attention_heads = heads
     cfg.embedding_dim = emb
     cfg.latent_dim = latent_dim
-    model = CANGraphLightningModule(model_config=cfg, training_config=type('T', (), {'batch_size': 32, 'mode': 'normal'})(), model_type='vgae', training_mode='normal', num_ids=num_ids).model
+    # Instantiate model directly
+    model = GraphAutoencoderNeighborhood(
+        num_ids=num_ids,
+        in_channels=cfg.input_dim,
+        hidden_dims=list(hidden_dims),
+        latent_dim=latent_dim,
+        encoder_heads=heads,
+        decoder_heads=heads,
+        embedding_dim=emb,
+        dropout=cfg.dropout,
+        batch_norm=getattr(cfg, 'batch_norm', True),
+        mlp_hidden=mlp_hidden
+    )
     total = count_params(model)
     breakdown = breakdown_vgae(model)
     return total, breakdown
 
 
-def evaluate_vgae_student_combo(encoder_dims: List[int], heads: int, emb: int, latent_dim: int = 24, num_ids=50):
+def evaluate_vgae_student_combo(encoder_dims: List[int], heads: int, emb: int, latent_dim: int = 24, num_ids=50, mlp_hidden: int = None):
     cfg = StudentVGAEConfig()
     cfg.encoder_dims = list(encoder_dims)
     cfg.attention_heads = heads
     cfg.embedding_dim = emb
     cfg.latent_dim = latent_dim
-    model = CANGraphLightningModule(model_config=cfg, training_config=type('T', (), {'batch_size': 32, 'mode': 'normal'})(), model_type='vgae_student', training_mode='normal', num_ids=num_ids).model
+    # Instantiate model directly
+    model = GraphAutoencoderNeighborhood(
+        num_ids=num_ids,
+        in_channels=cfg.input_dim,
+        hidden_dims=list(encoder_dims),
+        latent_dim=latent_dim,
+        encoder_heads=heads,
+        decoder_heads=heads,
+        embedding_dim=emb,
+        dropout=cfg.dropout,
+        batch_norm=getattr(cfg, 'batch_norm', True),
+        mlp_hidden=mlp_hidden
+    )
     total = count_params(model)
     breakdown = breakdown_vgae(model)
     return total, breakdown
@@ -143,7 +168,18 @@ def evaluate_gat_combo(hidden_channels: int, heads: int, num_layers: int, num_fc
     cfg.num_layers = num_layers
     cfg.num_fc_layers = num_fc_layers
     cfg.embedding_dim = embedding_dim
-    model = CANGraphLightningModule(model_config=cfg, training_config=type('T', (), {'batch_size': 32, 'mode': 'normal'})(), model_type='gat', training_mode='normal', num_ids=num_ids).model
+    # Instantiate model directly
+    model = GATWithJK(
+        num_ids=num_ids,
+        in_channels=cfg.input_dim,
+        hidden_channels=hidden_channels,
+        out_channels=cfg.output_dim,
+        num_layers=num_layers,
+        heads=heads,
+        dropout=cfg.dropout,
+        num_fc_layers=num_fc_layers,
+        embedding_dim=embedding_dim
+    )
     total = count_params(model)
     breakdown = breakdown_gat(model)
     return total, breakdown
@@ -156,7 +192,18 @@ def evaluate_gat_student_combo(hidden_channels: int, heads: int, num_layers: int
     cfg.num_layers = num_layers
     cfg.num_fc_layers = num_fc_layers
     cfg.embedding_dim = embedding_dim
-    model = CANGraphLightningModule(model_config=cfg, training_config=type('T', (), {'batch_size': 32, 'mode': 'normal'})(), model_type='gat_student', training_mode='normal', num_ids=num_ids).model
+    # Instantiate model directly
+    model = GATWithJK(
+        num_ids=num_ids,
+        in_channels=cfg.input_dim,
+        hidden_channels=hidden_channels,
+        out_channels=cfg.output_dim,
+        num_layers=num_layers,
+        heads=heads,
+        dropout=cfg.dropout,
+        num_fc_layers=num_fc_layers,
+        embedding_dim=embedding_dim
+    )
     total = count_params(model)
     breakdown = breakdown_gat(model)
     return total, breakdown
@@ -178,8 +225,8 @@ def evaluate_dqn_combo(hidden_units: int, num_layers: int, input_dim: int = 20, 
     cfg.num_layers = num_layers
     cfg.input_dim = input_dim
     cfg.output_dim = output_dim
-    # use can_graph_module to construct
-    model = CANGraphLightningModule(model_config=cfg, training_config=type('T', (), {'batch_size': 32, 'mode': 'normal'})(), model_type='dqn', training_mode='normal', num_ids=50).model
+    # Instantiate model directly
+    model = create_dqn_teacher(cfg, num_ids=50)
     total = count_params(model)
     breakdown = breakdown_dqn(model)
     return total, breakdown
@@ -191,7 +238,8 @@ def evaluate_dqn_student_combo(hidden_units: int, num_layers: int, input_dim: in
     cfg.num_layers = num_layers
     cfg.input_dim = input_dim
     cfg.output_dim = output_dim
-    model = CANGraphLightningModule(model_config=cfg, training_config=type('T', (), {'batch_size': 32, 'mode': 'normal'})(), model_type='dqn_student', training_mode='normal', num_ids=50).model
+    # Instantiate model directly
+    model = create_dqn_student(cfg, num_ids=50)
     total = count_params(model)
     breakdown = breakdown_dqn(model)
     return total, breakdown

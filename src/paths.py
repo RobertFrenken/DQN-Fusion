@@ -32,13 +32,14 @@ logger = logging.getLogger(__name__)
 # ============================================================================
 
 # Standard dataset paths (relative to project root)
+# CORRECT PATHS: data/automotive/{dataset}
 DATASET_PATHS = {
-    'hcrl_ch': 'datasets/can-train-and-test-v1.5/hcrl-ch',
-    'hcrl_sa': 'datasets/can-train-and-test-v1.5/hcrl-sa',
-    'set_01': 'datasets/can-train-and-test-v1.5/set_01',
-    'set_02': 'datasets/can-train-and-test-v1.5/set_02',
-    'set_03': 'datasets/can-train-and-test-v1.5/set_03',
-    'set_04': 'datasets/can-train-and-test-v1.5/set_04',
+    'hcrl_ch': 'data/automotive/hcrl_ch',
+    'hcrl_sa': 'data/automotive/hcrl_sa',
+    'set_01': 'data/automotive/set_01',
+    'set_02': 'data/automotive/set_02',
+    'set_03': 'data/automotive/set_03',
+    'set_04': 'data/automotive/set_04',
 }
 
 # Environment variables to check for dataset paths
@@ -121,11 +122,11 @@ class PathResolver:
             if env_path:
                 candidates.append(Path(env_path))
         
-        # 4) Standard locations
+        # 4) Standard locations - data/automotive is the CORRECT primary location
         standard_paths = [
-            self._project_root / 'datasets' / 'can-train-and-test-v1.5' / dataset_name,
             self._project_root / 'data' / 'automotive' / dataset_name,
             self._project_root / 'datasets' / dataset_name,
+            self._project_root / 'datasets' / 'can-train-and-test-v1.5' / dataset_name,
         ]
         candidates.extend(standard_paths)
         
@@ -188,7 +189,7 @@ class PathResolver:
         
         # Default cache directory
         if not cache_dir:
-            cache_dir = self._project_root / 'experiment_runs' / 'automotive' / dataset_name / 'cache'
+            cache_dir = self._project_root / 'experimentruns' / 'automotive' / dataset_name / 'cache'
         else:
             cache_dir = Path(cache_dir)
         
@@ -212,17 +213,17 @@ class PathResolver:
             ValueError: If experiment_root not properly configured
         """
         if not self.config:
-            return self._project_root / 'experiment_runs'
-        
+            return self._project_root / 'experimentruns'
+
         experiment_root = getattr(self.config, 'experiment_root', None)
         if not experiment_root or str(experiment_root) == 'None':
             # Try to get from dataset config
             if hasattr(self.config, 'dataset'):
                 experiment_root = getattr(self.config.dataset, 'experiment_root', None)
-        
+
         if not experiment_root or str(experiment_root) == 'None':
-            experiment_root = self._project_root / 'experiment_runs'
-        
+            experiment_root = self._project_root / 'experimentruns'
+
         return Path(experiment_root)
     
     def get_experiment_dir(self, create: bool = False) -> Path:
@@ -418,6 +419,244 @@ class PathResolver:
                     return path
         
         return None
+    
+    # ========================================================================
+    # Flexible Model Discovery (glob-based)
+    # ========================================================================
+    
+    def discover_model(
+        self,
+        base_dir: Path,
+        model_type: str,
+        patterns: Optional[List[str]] = None,
+        require_exists: bool = True
+    ) -> Optional[Path]:
+        """
+        Discover a model file using flexible glob patterns.
+        
+        This is the PREFERRED method for finding models - it navigates to the 
+        canonical directory and uses pattern matching rather than hardcoded paths.
+        
+        Args:
+            base_dir: Base directory to search in (typically from canonical_experiment_dir())
+            model_type: Type of model ('vgae', 'gat', 'dqn', 'fusion')
+            patterns: Optional list of glob patterns to try. If None, uses defaults.
+            require_exists: If True, raises FileNotFoundError when not found
+            
+        Returns:
+            Path to discovered model, or None if not found (and require_exists=False)
+            
+        Raises:
+            FileNotFoundError: If require_exists=True and no model found
+            
+        Example:
+            >>> resolver = PathResolver(config)
+            >>> vgae_dir = resolver.get_experiment_dir() / ".." / "autoencoder"
+            >>> model = resolver.discover_model(vgae_dir, "vgae")
+        """
+        # Default patterns for each model type
+        default_patterns = {
+            'vgae': ['models/vgae*.pth', 'vgae*.pth', '**/*vgae*.pth'],
+            'gat': ['models/gat*.pth', 'gat*.pth', 'best_*.pth', '**/*gat*.pth'],
+            'dqn': ['models/dqn*.pth', 'dqn*.pth', 'agent*.pth', '**/*dqn*.pth'],
+            'fusion': ['models/fusion*.pth', 'fusion*.pth', '**/*fusion*.pth'],
+            'teacher': ['models/*teacher*.pth', '*teacher*.pth', 'best_*.pth'],
+            'student': ['models/*student*.pth', '*student*.pth'],
+        }
+        
+        search_patterns = patterns or default_patterns.get(model_type, ['models/*.pth', '*.pth'])
+        base_dir = Path(base_dir)
+        
+        if not base_dir.exists():
+            if require_exists:
+                raise FileNotFoundError(
+                    f"Base directory does not exist: {base_dir}\n"
+                    f"Cannot discover {model_type} model."
+                )
+            return None
+        
+        # Try each pattern in order
+        for pattern in search_patterns:
+            matches = list(base_dir.glob(pattern))
+            if matches:
+                # If multiple matches, prefer the most recently modified
+                if len(matches) > 1:
+                    matches.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+                    logger.info(f"Multiple {model_type} models found, using most recent: {matches[0].name}")
+                return matches[0]
+        
+        if require_exists:
+            raise FileNotFoundError(
+                f"No {model_type} model found in {base_dir}\n"
+                f"Searched patterns: {search_patterns}\n"
+                f"Directory contents: {list(base_dir.iterdir()) if base_dir.exists() else 'N/A'}"
+            )
+        return None
+    
+    def discover_artifact(
+        self,
+        artifact_type: str,
+        config_override: Optional['DictConfig'] = None,
+        require_exists: bool = True
+    ) -> Optional[Path]:
+        """
+        High-level artifact discovery using config semantics.
+        
+        This combines canonical directory resolution with flexible model discovery.
+        It's the single entry point for "find me the VGAE for this config".
+        
+        Args:
+            artifact_type: One of 'vgae', 'gat_teacher', 'gat_curriculum', 'classifier', 'autoencoder'
+            config_override: Optional config to use instead of self.config
+            require_exists: If True, raises FileNotFoundError when not found
+            
+        Returns:
+            Path to artifact, or None if not found (and require_exists=False)
+        """
+        cfg = config_override or self.config
+        if not cfg:
+            raise ValueError("Config required for artifact discovery")
+        
+        exp_root = Path(getattr(cfg, 'experiment_root', self._project_root / 'experimentruns'))
+        modality = getattr(cfg, 'modality', 'automotive')
+        dataset_name = getattr(cfg.dataset, 'name', 'unknown') if hasattr(cfg, 'dataset') else 'unknown'
+        
+        # Map artifact types to their canonical locations
+        artifact_dirs = {
+            'vgae': exp_root / modality / dataset_name / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder",
+            'vgae_student': exp_root / modality / dataset_name / "unsupervised" / "vgae" / "student" / "distilled" / "knowledge_distillation",
+            'gat_teacher': exp_root / modality / dataset_name / "supervised" / "gat" / "teacher" / "no_distillation" / "normal",
+            'gat_curriculum': exp_root / modality / dataset_name / "supervised" / "gat" / "teacher" / "no_distillation" / "curriculum",
+            'gat_student': exp_root / modality / dataset_name / "supervised" / "gat" / "student" / "distilled" / "knowledge_distillation",
+        }
+        
+        # Determine model_type for pattern matching
+        model_type_map = {
+            'vgae': 'vgae', 'vgae_student': 'vgae',
+            'gat_teacher': 'gat', 'gat_curriculum': 'gat', 'gat_student': 'gat',
+        }
+        
+        if artifact_type not in artifact_dirs:
+            raise ValueError(f"Unknown artifact type: {artifact_type}. Valid: {list(artifact_dirs.keys())}")
+        
+        base_dir = artifact_dirs[artifact_type]
+        model_type = model_type_map.get(artifact_type, artifact_type)
+        
+        return self.discover_model(base_dir, model_type, require_exists=require_exists)
+    
+    def discover_artifact_for_mode(
+        self,
+        mode: str,
+        artifact_name: str,
+        experiment_root: Optional[Path] = None,
+        modality: str = "automotive",
+        dataset_name: str = "hcrl_sa",
+        model_size: str = "teacher",
+        distillation: str = "no_distillation",
+        require_exists: bool = False
+    ) -> Optional[Path]:
+        """
+        Mode-aware artifact discovery - the canonical way to find any required model.
+        
+        This is the PREFERRED method for finding dependent models. Given a training
+        mode and the artifact needed, it navigates to the canonical directory and
+        uses glob-based discovery to find the model regardless of exact filename.
+        
+        Args:
+            mode: Training mode that needs the artifact ('curriculum', 'fusion', 'knowledge_distillation')
+            artifact_name: Name of artifact ('vgae', 'gat', 'teacher_model', 'autoencoder', 'classifier')
+            experiment_root: Base experiment directory
+            modality: Data modality (default 'automotive')
+            dataset_name: Dataset name (default 'hcrl_sa')
+            model_size: 'teacher' or 'student'
+            distillation: 'no_distillation' or 'distilled'
+            require_exists: If True and not found, raises FileNotFoundError
+            
+        Returns:
+            Path to discovered artifact, or None if not found (and require_exists=False)
+            
+        Example:
+            >>> resolver = PathResolver(config)
+            >>> vgae = resolver.discover_artifact_for_mode(
+            ...     mode='curriculum',
+            ...     artifact_name='vgae',
+            ...     experiment_root=Path('experimentruns/automotive/hcrl_sa')
+            ... )
+        """
+        exp_root = experiment_root or (self._project_root / 'experimentruns')
+        base = exp_root / modality / dataset_name if modality not in str(exp_root) else exp_root
+        
+        # Define canonical locations for each mode's required artifacts
+        artifact_locations = {
+            # CURRICULUM mode needs VGAE from autoencoder training
+            ('curriculum', 'vgae'): (
+                base / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder",
+                'vgae'
+            ),
+            
+            # FUSION mode (teacher) needs VGAE and GAT
+            ('fusion', 'autoencoder'): (
+                base / "unsupervised" / "vgae" / model_size / distillation / "autoencoder",
+                'vgae'
+            ),
+            ('fusion', 'classifier'): (
+                base / "supervised" / "gat" / model_size / distillation / "curriculum",
+                'gat'
+            ),
+            
+            # FUSION mode (student) 
+            ('fusion_student', 'autoencoder'): (
+                base / "unsupervised" / "vgae" / "student" / "distilled" / "knowledge_distillation",
+                'vgae'
+            ),
+            ('fusion_student', 'classifier'): (
+                base / "supervised" / "gat" / "student" / "distilled" / "knowledge_distillation",
+                'gat'
+            ),
+            
+            # KNOWLEDGE_DISTILLATION needs teacher models
+            ('knowledge_distillation', 'teacher_vgae'): (
+                base / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder",
+                'vgae'
+            ),
+            ('knowledge_distillation', 'teacher_gat'): (
+                # Try curriculum first, then normal
+                [
+                    base / "supervised" / "gat" / "teacher" / "no_distillation" / "curriculum",
+                    base / "supervised" / "gat" / "teacher" / "no_distillation" / "normal",
+                ],
+                'gat'
+            ),
+        }
+        
+        key = (mode, artifact_name)
+        if key not in artifact_locations:
+            # Try without mode prefix for generic artifacts
+            for (m, a), (loc, model_type) in artifact_locations.items():
+                if a == artifact_name:
+                    key = (m, a)
+                    break
+            else:
+                if require_exists:
+                    raise ValueError(f"Unknown artifact: mode={mode}, artifact={artifact_name}")
+                return None
+        
+        location_info, model_type = artifact_locations[key]
+        
+        # Handle multiple possible locations (e.g., curriculum OR normal for GAT teacher)
+        if isinstance(location_info, list):
+            for loc in location_info:
+                result = self.discover_model(loc, model_type, require_exists=False)
+                if result:
+                    return result
+            if require_exists:
+                raise FileNotFoundError(
+                    f"Artifact '{artifact_name}' for mode '{mode}' not found.\n"
+                    f"Searched locations:\n" + "\n".join(f"  - {loc}" for loc in location_info)
+                )
+            return None
+        else:
+            return self.discover_model(location_info, model_type, require_exists=require_exists)
     
     # ========================================================================
     # Utility Methods

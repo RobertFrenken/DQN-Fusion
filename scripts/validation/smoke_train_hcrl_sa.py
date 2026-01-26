@@ -61,7 +61,7 @@ def run_smoke():
 
     # Apply smoke overrides
     cfg.dataset.data_path = str(DATASET_DIR)
-    cfg.experiment_root = str(TMP_ROOT / 'experiment_runs')
+    cfg.experiment_root = str(TMP_ROOT / 'experimentruns')
     cfg.trainer.max_epochs = 1
     cfg.training.max_epochs = 1
     cfg.training.batch_size = 4

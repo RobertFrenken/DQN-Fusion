@@ -23,7 +23,7 @@ def find_summaries(experiment_root: Path):
 
 def main():
     parser = argparse.ArgumentParser(description='Collect summary.json files across runs')
-    parser.add_argument('--experiment-root', default='experiment_runs')
+    parser.add_argument('--experiment-root', default='experimentruns')
     parser.add_argument('--json', action='store_true', help='Print JSON output')
     args = parser.parse_args()
 

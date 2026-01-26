@@ -105,64 +105,12 @@ class CurriculumTrainer:
         vgae_path = self._resolve_vgae_path()
         logger.info(f"Loading VGAE from: {vgae_path}")
         
-        # Load VGAE checkpoint and extract model
-        vgae_module = VAELightningModule.load_from_checkpoint(
-            str(vgae_path),
-            cfg=self.config,
-            num_ids=num_ids,
-            map_location='cpu'
-        )
-        vgae_model = vgae_module.model
+        # Load VGAE - handle both state dict and Lightning checkpoint formats
+        vgae_model = self._load_vgae_model(vgae_path, num_ids)
         vgae_model.eval()
         
         # Create enhanced datamodule
-        initial_batch_size = getattr(self.config.training_config, 'batch_size', 64)
-        
-        datamodule = EnhancedCANGraphDataModule(
-            train_normal=train_normal,
-            train_attack=train_attack, 
-            val_normal=val_normal,
-            val_attack=val_attack,
-            vgae_model=vgae_model,
-            batch_size=initial_batch_size,
-            num_workers=min(8, os.cpu_count() or 1),
-            total_epochs=self.config.training_config.max_epochs
-        )
-        
-        # Set dynamic batch recalculation threshold
-        recalc_threshold = getattr(
-            self.config.training_config,
-            'dynamic_batch_recalc_threshold',
-            2.0
-        )
-        datamodule.train_dataset.recalc_threshold = recalc_threshold
-        logger.info(
-            f"🔧 Dynamic batch recalculation enabled "
-            f"(threshold: {recalc_threshold}x dataset growth)"
-        )
-        
-        return datamodule, vgae_model
-    
-    def _resolve_vgae_path(self) -> Path:
-        """Resolve path to trained VGAE model."""
-        # Try PathResolver first
-        vgae_path = self.path_resolver.resolve_autoencoder_path()
-        
-        # Fallback to config artifacts if resolver returns None
-        if not vgae_path:
-            if hasattr(self.config, 'required_artifacts'):
-                artifacts = self.config.required_artifacts()
-                vgae_path = artifacts.get('vgae')
-            elif hasattr(self.config.training_config, 'vgae_model_path'):
-                vgae_path = self.config.training_config.vgae_model_path
-        
-        if not vgae_path or not Path(vgae_path).exists():
-            raise FileNotFoundError(
-                f"Curriculum training requires VGAE model at {vgae_path}. "
-                "Train a VGAE model first using training=autoencoder mode."
-            )
-        
-        return Path(vgae_path)
+        initial_batch_size = getattr(self.config.training, 'batch_size', 64)
         
         datamodule = EnhancedCANGraphDataModule(
             train_normal=train_normal,
@@ -189,28 +137,145 @@ class CurriculumTrainer:
         
         return datamodule, vgae_model
     
+    def _load_vgae_model(self, vgae_path: Path, num_ids: int):
+        """Load VGAE model from checkpoint, handling both state dict and Lightning formats.
+        
+        This method infers model architecture from the checkpoint shapes when needed,
+        making it robust to different training configurations.
+        
+        Args:
+            vgae_path: Path to VGAE checkpoint
+            num_ids: Number of unique CAN IDs for model initialization
+            
+        Returns:
+            VGAE model ready for inference
+        """
+        from src.models.vgae import GraphAutoencoderNeighborhood
+        
+        # Load checkpoint
+        checkpoint = torch.load(str(vgae_path), map_location='cpu', weights_only=False)
+        
+        # Determine format and extract state dict
+        if isinstance(checkpoint, dict):
+            if 'pytorch-lightning_version' in checkpoint:
+                # Full Lightning checkpoint - use load_from_checkpoint
+                logger.info("Loading VGAE from Lightning checkpoint format")
+                vgae_module = VAELightningModule.load_from_checkpoint(
+                    str(vgae_path),
+                    cfg=self.config,
+                    num_ids=num_ids,
+                    map_location='cpu'
+                )
+                return vgae_module.model
+            elif 'state_dict' in checkpoint:
+                # State dict wrapped in dict
+                logger.info("Loading VGAE from wrapped state dict format")
+                state_dict = checkpoint['state_dict']
+            elif any(k.startswith(('encoder', 'decoder', 'id_embedding')) for k in checkpoint.keys()):
+                # Raw state dict (OrderedDict with model parameter names)
+                logger.info("Loading VGAE from raw state dict format")
+                state_dict = checkpoint
+            else:
+                # Unknown dict format, try as state dict
+                logger.warning(f"Unknown checkpoint dict keys: {list(checkpoint.keys())[:5]}, trying as state dict")
+                state_dict = checkpoint
+        else:
+            raise ValueError(f"Unknown checkpoint format: {type(checkpoint)}")
+        
+        # Infer complete model architecture from checkpoint shapes
+        # This makes loading robust to different training configurations
+        inferred_num_ids, embedding_dim = state_dict['id_embedding.weight'].shape
+        latent_dim = state_dict['z_mean.weight'].shape[0]  # Output dim of z_mean layer
+        
+        # Infer hidden_dims from encoder batch norm layers (NOT including latent_dim)
+        # The model expects hidden_dims to be the schedule BEFORE latent projection
+        hidden_dims = []
+        for i in range(10):  # Check up to 10 layers
+            key = f'encoder_bns.{i}.weight'
+            if key in state_dict:
+                hidden_dims.append(state_dict[key].shape[0])
+            else:
+                break
+        
+        # Infer encoder_heads from first attention layer shape
+        encoder_heads = state_dict['encoder_layers.0.att_src'].shape[1]
+        
+        # Infer decoder_heads from first decoder attention layer shape
+        decoder_heads = state_dict['decoder_layers.0.att_src'].shape[1]
+        
+        # Infer in_channels from first encoder layer input dimension
+        # Model uses: gat_in_dim = embedding_dim + (in_channels - 1)
+        # So: in_channels = gat_in_dim - embedding_dim + 1
+        first_layer_in = state_dict['encoder_layers.0.lin.weight'].shape[1]
+        in_channels = first_layer_in - embedding_dim + 1
+        
+        logger.info(f"Inferred VGAE architecture: num_ids={inferred_num_ids}, "
+                   f"embedding_dim={embedding_dim}, hidden_dims={hidden_dims}, "
+                   f"latent_dim={latent_dim}, encoder_heads={encoder_heads}, "
+                   f"decoder_heads={decoder_heads}, in_channels={in_channels}")
+        
+        # Create VGAE model with inferred architecture
+        vgae_model = GraphAutoencoderNeighborhood(
+            num_ids=inferred_num_ids,
+            in_channels=in_channels,
+            hidden_dims=hidden_dims,  # Just the encoder schedule, not including latent
+            latent_dim=latent_dim,
+            embedding_dim=embedding_dim,
+            encoder_heads=encoder_heads,
+            decoder_heads=decoder_heads,
+        )
+        
+        # Handle potential key mismatches (e.g., 'model.' prefix from Lightning)
+        clean_state_dict = {}
+        for key, value in state_dict.items():
+            clean_key = key.replace('model.', '') if key.startswith('model.') else key
+            clean_state_dict[clean_key] = value
+        
+        vgae_model.load_state_dict(clean_state_dict, strict=True)
+        logger.info(f"✅ Loaded VGAE model with {sum(p.numel() for p in vgae_model.parameters())} parameters")
+        
+        return vgae_model
+    
     def _resolve_vgae_path(self) -> Path:
-        """Resolve path to trained VGAE model."""
-        # Use PathResolver for unified resolution
-        path_resolver = PathResolver(self.config)
-        vgae_path = path_resolver.resolve_autoencoder_path()
+        """Resolve path to trained VGAE model using flexible discovery.
         
-        # Fallback to config artifacts if resolver returns None
-        if not vgae_path:
-            artifacts = self.config.required_artifacts()
-            vgae_path = getattr(
-                self.config.training,
-                'vgae_model_path',
-                None
-            ) or artifacts.get('vgae')
+        Resolution priority:
+        1. Explicit path from config.training.vgae_model_path (if it exists)
+        2. Path from config.required_artifacts() (canonical location)
+        3. Flexible glob-based discovery via PathResolver.discover_artifact()
         
-        if not vgae_path or not Path(vgae_path).exists():
-            raise FileNotFoundError(
-                f"Curriculum training requires VGAE model at {vgae_path}. "
-                "Please ensure it's available under experiment_runs."
-            )
+        This approach is more robust than hardcoded paths - it will find
+        any VGAE model (vgae*.pth) in the canonical autoencoder directory.
+        """
+        # Priority 1: Check explicit config path first (if file exists)
+        explicit_path = getattr(self.config.training, 'vgae_model_path', None)
+        if explicit_path and Path(explicit_path).exists():
+            logger.info(f"Using explicitly configured VGAE path: {explicit_path}")
+            return Path(explicit_path)
         
-        return Path(vgae_path)
+        # Priority 2: Use required_artifacts() canonical path
+        artifacts = self.config.required_artifacts()
+        artifact_path = artifacts.get('vgae')
+        if artifact_path and Path(artifact_path).exists():
+            logger.info(f"Using VGAE from required_artifacts: {artifact_path}")
+            return Path(artifact_path)
+        
+        # Priority 3: Flexible discovery - glob for any vgae*.pth in canonical dir
+        try:
+            discovered = self.path_resolver.discover_artifact('vgae', require_exists=True)
+            if discovered:
+                logger.info(f"Discovered VGAE via glob search: {discovered}")
+                return discovered
+        except FileNotFoundError:
+            pass
+        
+        # Provide helpful error with canonical expected location
+        expected_path = artifacts.get('vgae', 'unknown')
+        raise FileNotFoundError(
+            f"Curriculum training requires VGAE model.\n"
+            f"Expected location: {expected_path}\n"
+            f"Please run autoencoder training first to create this model."
+        )
     
     def _optimize_batch_size_for_curriculum(
         self,
@@ -219,7 +284,7 @@ class CurriculumTrainer:
     ) -> GATLightningModule:
         """Optimize batch size for curriculum learning."""
         
-        optimize_batch = getattr(self.config.training_config, 'optimize_batch_size', True)
+        optimize_batch = getattr(self.config.training, 'optimize_batch_size', True)
         
         if not optimize_batch:
             # Use conservative batch size if optimization disabled
@@ -240,20 +305,20 @@ class CurriculumTrainer:
         
         try:
             optimizer = BatchSizeOptimizer(
-                accelerator=self.config.trainer_config.accelerator,
-                devices=self.config.trainer_config.devices,
+                accelerator=self.config.trainer.accelerator,
+                devices=self.config.trainer.devices,
                 graph_memory_safety_factor=getattr(
-                    self.config.training_config,
+                    self.config.training,
                     'graph_memory_safety_factor',
                     0.5
                 ),
                 max_batch_size_trials=getattr(
-                    self.config.training_config,
+                    self.config.training,
                     'max_batch_size_trials',
                     10
                 ),
                 batch_size_mode=getattr(
-                    self.config.training_config,
+                    self.config.training,
                     'batch_size_mode',
                     'power'
                 )
@@ -269,7 +334,7 @@ class CurriculumTrainer:
             )
             # Use conservative fallback
             safe_batch_size = datamodule.get_conservative_batch_size(
-                getattr(self.config.training_config, 'batch_size', 64)
+                getattr(self.config.training, 'batch_size', 64)
             )
             datamodule.batch_size = safe_batch_size
         
@@ -290,20 +355,20 @@ class CurriculumTrainer:
         checkpoint_callback = ModelCheckpoint(
             dirpath=str(self.paths['checkpoint_dir']),
             filename=f'gat_curriculum_{{epoch:02d}}_{{val_loss:.3f}}',
-            save_top_k=getattr(self.config.training_config, 'save_top_k', 3),
-            monitor=getattr(self.config.training_config, 'monitor_metric', 'val_loss'),
-            mode=getattr(self.config.training_config, 'monitor_mode', 'min'),
+            save_top_k=getattr(self.config.training, 'save_top_k', 3),
+            monitor=getattr(self.config.training, 'monitor_metric', 'val_loss'),
+            mode=getattr(self.config.training, 'monitor_mode', 'min'),
             auto_insert_metric_name=False
         )
         
         early_stop = EarlyStopping(
-            monitor=getattr(self.config.training_config, 'monitor_metric', 'val_loss'),
+            monitor=getattr(self.config.training, 'monitor_metric', 'val_loss'),
             patience=getattr(
-                self.config.training_config,
+                self.config.training,
                 'early_stopping_patience',
                 50
             ),
-            mode=getattr(self.config.training_config, 'monitor_mode', 'min'),
+            mode=getattr(self.config.training, 'monitor_mode', 'min'),
             verbose=True
         )
         
@@ -313,19 +378,19 @@ class CurriculumTrainer:
         )
         
         return pl.Trainer(
-            accelerator=self.config.trainer_config.accelerator,
-            devices=self.config.trainer_config.devices,
-            precision=getattr(self.config.training_config, 'precision', '32-true'),
-            max_epochs=self.config.training_config.max_epochs,
+            accelerator=self.config.trainer.accelerator,
+            devices=self.config.trainer.devices,
+            precision=getattr(self.config.training, 'precision', '32-true'),
+            max_epochs=self.config.training.max_epochs,
             gradient_clip_val=getattr(
-                self.config.training_config,
+                self.config.training,
                 'gradient_clip_val',
                 1.0
             ),
             callbacks=[checkpoint_callback, early_stop, curriculum_callback],
             logger=csv_logger,
             enable_checkpointing=True,
-            log_every_n_steps=getattr(self.config.training_config, 'log_every_n_steps', 50),
+            log_every_n_steps=getattr(self.config.training, 'log_every_n_steps', 50),
             enable_progress_bar=True
         )
     
@@ -335,7 +400,8 @@ class CurriculumTrainer:
         trainer: pl.Trainer
     ):
         """Save final curriculum-trained model as state dict."""
-        model_path = self.paths['model_save_dir'] / f"gat_{self.config.dataset.name}_curriculum.pth"
+        # Use consistent filename: gat_curriculum.pth (matches trainer.py and fusion expectations)
+        model_path = self.paths['model_save_dir'] / "gat_curriculum.pth"
         model_path.parent.mkdir(parents=True, exist_ok=True)
 
         try:

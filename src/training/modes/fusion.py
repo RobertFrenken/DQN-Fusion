@@ -8,7 +8,7 @@ reinforcement learning (DQN) for adaptive decision making.
 import os
 import logging
 from pathlib import Path
-from typing import Tuple
+from typing import Tuple, Dict, Any
 
 import torch
 from torch.utils.data import DataLoader
@@ -18,9 +18,7 @@ from lightning.pytorch.loggers import CSVLogger
 
 from src.training.lightning_modules import (
     FusionLightningModule, 
-    FusionPredictionCache, 
-    VAELightningModule,
-    GATLightningModule
+    FusionPredictionCache
 )
 from src.training.prediction_cache import create_fusion_prediction_cache
 from src.training.datamodules import load_dataset, create_dataloaders
@@ -28,6 +26,112 @@ from src.training.model_manager import ModelManager
 from src.paths import PathResolver
 
 logger = logging.getLogger(__name__)
+
+
+def infer_vgae_architecture(state_dict: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+    """Infer VGAE model architecture from checkpoint state dict.
+    
+    This makes loading robust - we determine architecture from saved weights
+    rather than relying on config defaults that may not match.
+    """
+    # Infer from embedding layer
+    inferred_num_ids, embedding_dim = state_dict['id_embedding.weight'].shape
+    latent_dim = state_dict['z_mean.weight'].shape[0]
+    
+    # Infer hidden_dims from encoder batch norm layers
+    hidden_dims = []
+    for i in range(10):
+        key = f'encoder_bns.{i}.weight'
+        if key in state_dict:
+            hidden_dims.append(state_dict[key].shape[0])
+        else:
+            break
+    
+    # Infer heads from attention layers
+    encoder_heads = state_dict['encoder_layers.0.att_src'].shape[1]
+    decoder_heads = state_dict['decoder_layers.0.att_src'].shape[1]
+    
+    # Infer in_channels: gat_in_dim = embedding_dim + (in_channels - 1)
+    first_layer_in = state_dict['encoder_layers.0.lin.weight'].shape[1]
+    in_channels = first_layer_in - embedding_dim + 1
+    
+    # Infer mlp_hidden from neighborhood_decoder.0.weight shape
+    # neighborhood_decoder.0 is Linear(latent_dim, mlp_hidden)
+    mlp_hidden = state_dict['neighborhood_decoder.0.weight'].shape[0]
+    
+    logger.info(f"Inferred VGAE: num_ids={inferred_num_ids}, embedding_dim={embedding_dim}, "
+               f"hidden_dims={hidden_dims}, latent_dim={latent_dim}, heads={encoder_heads}, "
+               f"mlp_hidden={mlp_hidden}")
+    
+    return {
+        'num_ids': inferred_num_ids,
+        'in_channels': in_channels,
+        'hidden_dims': hidden_dims,
+        'latent_dim': latent_dim,
+        'encoder_heads': encoder_heads,
+        'decoder_heads': decoder_heads,
+        'embedding_dim': embedding_dim,
+        'mlp_hidden': mlp_hidden,
+    }
+
+
+def infer_gat_architecture(state_dict: Dict[str, torch.Tensor]) -> Dict[str, Any]:
+    """Infer GATWithJK model architecture from checkpoint state dict.
+    
+    GATWithJK architecture:
+    - id_embedding: (num_ids, embedding_dim)
+    - convs.0.lin.weight: (hidden_channels * heads, gat_in_dim) where gat_in_dim = embedding_dim + in_channels - 1
+    - convs.{i}.att_src: (1, heads, hidden_channels)
+    - fc_layers: series of linear layers ending in output dim
+    """
+    # Infer from embedding layer
+    inferred_num_ids, embedding_dim = state_dict['id_embedding.weight'].shape
+    
+    # Count conv layers (num_layers)
+    num_layers = 0
+    for i in range(20):
+        if f'convs.{i}.lin.weight' in state_dict:
+            num_layers += 1
+        else:
+            break
+    
+    # Infer heads and hidden_channels from first conv attention
+    heads, hidden_channels = state_dict['convs.0.att_src'].shape[1:3]
+    
+    # Infer in_channels from first conv input dim
+    # gat_in_dim = embedding_dim + (in_channels - 1)
+    first_conv_in = state_dict['convs.0.lin.weight'].shape[1]
+    in_channels = first_conv_in - embedding_dim + 1
+    
+    # Infer output dim from last fc layer
+    # Find the last fc layer
+    num_fc_layers = 0
+    out_channels = 2  # default
+    for i in range(20):
+        key = f'fc_layers.{i}.weight'
+        if key in state_dict:
+            out_channels = state_dict[key].shape[0]
+            num_fc_layers += 1
+    
+    # num_fc_layers in GATWithJK counts actual Linear layers (bias too)
+    # The Sequential has: Linear, ReLU, Dropout, Linear, ReLU, Dropout, ...
+    # So we count by looking at weight keys
+    fc_layer_count = len([k for k in state_dict if k.startswith('fc_layers.') and k.endswith('.weight')])
+    
+    logger.info(f"Inferred GAT: num_ids={inferred_num_ids}, embedding_dim={embedding_dim}, "
+               f"hidden_channels={hidden_channels}, num_layers={num_layers}, heads={heads}, "
+               f"out_channels={out_channels}, num_fc_layers={fc_layer_count}")
+    
+    return {
+        'num_ids': inferred_num_ids,
+        'in_channels': in_channels,
+        'hidden_channels': hidden_channels,
+        'out_channels': out_channels,
+        'num_layers': num_layers,
+        'heads': heads,
+        'embedding_dim': embedding_dim,
+        'num_fc_layers': fc_layer_count,
+    }
 
 
 class FusionTrainer:
@@ -119,16 +223,18 @@ class FusionTrainer:
         """Resolve paths to pre-trained VGAE and GAT models."""
         logger.info("📦 Loading pre-trained models for prediction caching")
         
-        # Use PathResolver for unified artifact resolution
-        path_resolver = PathResolver(self.config)
-        ae_path = path_resolver.resolve_autoencoder_path()
-        classifier_path = path_resolver.resolve_classifier_path()
+        # Use config.required_artifacts() first - it has the correct canonical paths
+        artifacts = self.config.required_artifacts()
+        ae_path = artifacts.get('autoencoder')
+        classifier_path = artifacts.get('classifier')
         
-        # Fallback to config artifacts if resolver returns None
-        if not ae_path or not classifier_path:
-            artifacts = self.config.required_artifacts()
-            ae_path = ae_path or artifacts.get('autoencoder')
-            classifier_path = classifier_path or artifacts.get('classifier')
+        # Fallback to PathResolver if artifacts don't exist
+        if not ae_path or not Path(ae_path).exists():
+            path_resolver = PathResolver(self.config)
+            ae_path = path_resolver.resolve_autoencoder_path() or ae_path
+        if not classifier_path or not Path(classifier_path).exists():
+            path_resolver = PathResolver(self.config)
+            classifier_path = path_resolver.resolve_classifier_path() or classifier_path
 
         # Validate existence
         missing = []
@@ -157,43 +263,45 @@ class FusionTrainer:
         val_loader,
         num_ids: int
     ) -> Tuple[FusionPredictionCache, FusionPredictionCache]:
-        """Build prediction caches from pre-trained models."""
+        """Build prediction caches from pre-trained models.
+        
+        Architecture is INFERRED from checkpoint shapes, not config defaults.
+        This ensures we load models correctly regardless of config mismatches.
+        """
         
         # Load checkpoints
         ae_ckpt = self.model_manager.load_state_dict(ae_path)
         classifier_ckpt = self.model_manager.load_state_dict(classifier_path)
         
-        # Import config module for model instantiation
-        from importlib import import_module
-        from omegaconf import DictConfig
-        _cfg_mod = import_module('src.config.hydra_zen_configs')
+        # Import model classes directly
+        from src.models.vgae import GraphAutoencoderNeighborhood
+        from src.models.models import GATWithJK
         
-        # Create VGAE config
-        vgae_cfg = DictConfig({
-            'model_config': _cfg_mod.VGAEConfig(),
-            'training_config': self.config.training,
-            'learning_config': self.config.training
-        })
-        
-        # Create GAT config
-        gat_cfg = DictConfig({
-            'model_config': _cfg_mod.GATConfig(),
-            'training_config': self.config.training,
-            'learning_config': self.config.training
-        })
-        
-        # Create model architectures using new specialized modules
-        ae_module = VAELightningModule(
-            cfg=vgae_cfg,
-            num_ids=num_ids
+        # INFER VGAE architecture from checkpoint (not config)
+        vgae_arch = infer_vgae_architecture(ae_ckpt)
+        ae_model = GraphAutoencoderNeighborhood(
+            num_ids=vgae_arch['num_ids'],
+            in_channels=vgae_arch['in_channels'],
+            hidden_dims=vgae_arch['hidden_dims'],
+            latent_dim=vgae_arch['latent_dim'],
+            encoder_heads=vgae_arch['encoder_heads'],
+            decoder_heads=vgae_arch['decoder_heads'],
+            embedding_dim=vgae_arch['embedding_dim'],
+            mlp_hidden=vgae_arch['mlp_hidden'],
         )
-        ae_model = ae_module.model
         
-        classifier_module = GATLightningModule(
-            cfg=gat_cfg,
-            num_ids=num_ids
+        # INFER GAT architecture from checkpoint (not config)
+        gat_arch = infer_gat_architecture(classifier_ckpt)
+        classifier_model = GATWithJK(
+            num_ids=gat_arch['num_ids'],
+            in_channels=gat_arch['in_channels'],
+            hidden_channels=gat_arch['hidden_channels'],
+            out_channels=gat_arch['out_channels'],
+            num_layers=gat_arch['num_layers'],
+            heads=gat_arch['heads'],
+            embedding_dim=gat_arch['embedding_dim'],
+            num_fc_layers=gat_arch['num_fc_layers'],
         )
-        classifier_model = classifier_module.model
         
         # Load weights
         ae_model.load_state_dict(ae_ckpt)
@@ -325,15 +433,16 @@ class FusionTrainer:
     
     def _save_fusion_agent(self, fusion_model: FusionLightningModule):
         """Save fusion agent with fallback to compact state dict."""
-        agent_path = self.paths['model_save_dir'] / f'fusion_agent_{self.config.dataset.name}.pth'
+        # Use consistent filename: dqn_fusion.pth (matches trainer.py model_name pattern)
+        agent_path = self.paths['model_save_dir'] / 'dqn_fusion.pth'
         
         # Save using agent's built-in method
         fusion_model.fusion_agent.save_agent(str(agent_path))
         logger.info(f"✓ Fusion agent saved to {agent_path}")
 
-        # Also save compact DQN state dict for compatibility
+        # Also save compact DQN state dict for compatibility with legacy names
         try:
-            agent_state_name = f"dqn_agent_{self.config.dataset.name}.pth"
+            agent_state_name = f"fusion_agent_{self.config.dataset.name}.pth"
             self.model_manager.save_state_dict(
                 fusion_model, 
                 self.paths['model_save_dir'], 

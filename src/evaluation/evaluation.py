@@ -773,14 +773,14 @@ def main(dataset_key: str):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     print(f"Using device: {device}")
     
-    # Dataset paths
+    # Dataset paths - CORRECT: data/automotive/{dataset}
     root_folders = {
-        'hcrl_ch': r"datasets/can-train-and-test-v1.5/hcrl-ch",
-        'hcrl_sa': r"datasets/can-train-and-test-v1.5/hcrl-sa",
-        'set_01': r"datasets/can-train-and-test-v1.5/set_01",
-        'set_02': r"datasets/can-train-and-test-v1.5/set_02",
-        'set_03': r"datasets/can-train-and-test-v1.5/set_03",
-        'set_04': r"datasets/can-train-and-test-v1.5/set_04",
+        'hcrl_ch': r"data/automotive/hcrl_ch",
+        'hcrl_sa': r"data/automotive/hcrl_sa",
+        'set_01': r"data/automotive/set_01",
+        'set_02': r"data/automotive/set_02",
+        'set_03': r"data/automotive/set_03",
+        'set_04': r"data/automotive/set_04",
     }
     
     if dataset_key not in root_folders:

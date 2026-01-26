@@ -7,7 +7,7 @@ import pytest
 
 # Load train_with_hydra_zen module by path (avoid heavy import at collection)
 # Provide a lightweight shim for hydra_zen if it's not installed in the test environment
-_t_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'train_with_hydra_zen.py'))
+_t_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'train_with_hydra_zen.py'))
 _spec = importlib.util.spec_from_file_location('train_with_hydra_zen', _t_path)
 _train_mod = importlib.util.module_from_spec(_spec)
 import types
@@ -16,7 +16,7 @@ if 'hydra_zen' not in sys.modules:
 _spec.loader.exec_module(_train_mod)
 
 # Load dependency_manifest util by path (avoid heavy imports in fusion_training)
-_dm_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src', 'utils', 'dependency_manifest.py'))
+_dm_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'utils', 'dependency_manifest.py'))
 _spec2 = importlib.util.spec_from_file_location('dependency_manifest', _dm_path)
 _fusion_mod = importlib.util.module_from_spec(_spec2)
 _spec2.loader.exec_module(_fusion_mod)

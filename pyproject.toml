@@ -14,3 +14,6 @@ dependencies = [
     "hydra-core>=1.3.0",
     # ... other dependencies
 ]
+
+[project.scripts]
+can-train = "src.cli.main:main"

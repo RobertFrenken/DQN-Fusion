@@ -11,9 +11,9 @@ help:
 	@echo "  just install-conda       # Create & populate conda env (for cluster/OSC)"
 	@echo "  just smoke               # Run short smoke experiment (requires dataset or --use-synthetic-data)"
 	@echo "  just smoke-synthetic     # Run smoke using synthetic dataset"
-	@echo "  just mlflow              # Start mlflow UI for experiment_runs"
+	@echo "  just mlflow              # Start mlflow UI for experimentruns"
 	@echo "  just preview             # Preview a sweep with oscjobmanager"
-	@echo "  just collect-summaries   # Collect summary.json files across experiment_runs"
+	@echo "  just collect-summaries   # Collect summary.json files across experimentruns"
 	@echo "  just submit-dryrun       # Create slurm script for a config (dry-run)"
 
 # Check environment (non-fatal - prints diagnostics)
@@ -58,8 +58,8 @@ check-data-load:
 
 # Start MLflow UI pointing at canonical experiment root
 mlflow:
-	@echo "Starting MLflow UI pointing at experiment_runs/.mlruns"
-	mlflow ui --backend-store-uri experiment_runs/.mlruns
+	@echo "Starting MLflow UI pointing at experimentruns/.mlruns"
+	mlflow ui --backend-store-uri experimentruns/.mlruns
 
 # Preview a sweep via oscjobmanager
 preview:
@@ -67,7 +67,7 @@ preview:
 
 # Collect summary.json files
 collect-summaries:
-	python scripts/collect_summaries.py --experiment-root experiment_runs
+	python scripts/collect_summaries.py --experiment-root experimentruns
 
 # Generate a dry-run slurm script (edit config_name)
 submit-dryrun:

@@ -68,6 +68,56 @@ class HydraZenTrainer:
         except ImportError:
             # Validation function not available - skip
             pass
+
+    def get_safety_factor_from_json(self, dataset_name: str) -> float:
+        """
+        Read safety factor from config/batch_size_factors.json.
+
+        Checks for KD-specific keys first when knowledge distillation is enabled
+        (keys with '_kd' suffix, e.g., 'hcrl_sa_kd').
+
+        Args:
+            dataset_name: Name of the dataset (e.g., 'hcrl_ch', 'set_02')
+
+        Returns:
+            Safety factor from JSON file, or None if not found
+        """
+        json_path = Path(__file__).parent.parent.parent / "config" / "batch_size_factors.json"
+
+        if not json_path.exists():
+            return None
+
+        try:
+            with open(json_path, 'r') as f:
+                factors = json.load(f)
+
+            # Check if KD is enabled - use KD-specific factors (~25% more conservative)
+            use_kd = getattr(self.config.training, 'use_knowledge_distillation', False)
+
+            if use_kd:
+                # First try KD-specific key (e.g., 'hcrl_sa_kd')
+                kd_key = f"{dataset_name}_kd"
+                if kd_key in factors:
+                    logger.info(f"Using KD-specific safety factor: {kd_key}")
+                    return factors[kd_key]
+
+                # Fall back to KD default
+                if "_default_kd" in factors:
+                    logger.info(f"Using KD default safety factor")
+                    return factors["_default_kd"]
+
+            # Check for exact dataset match (non-KD)
+            if dataset_name in factors:
+                return factors[dataset_name]
+
+            # Check for default
+            if "_default" in factors:
+                return factors["_default"]
+
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to read batch_size_factors.json: {e}")
+            return None
     
     # ========================================================================
     # Path Management
@@ -201,11 +251,14 @@ class HydraZenTrainer:
         
         # TensorBoard Logger (if enabled)
         if getattr(self.config.logging, 'use_tensorboard', True):
-            tb_logger = TensorBoardLogger(
-                save_dir=str(paths['log_dir']),
-                name='tensorboard_logs'
-            )
-            loggers.append(tb_logger)
+            try:
+                tb_logger = TensorBoardLogger(
+                    save_dir=str(paths['log_dir']),
+                    name='tensorboard_logs'
+                )
+                loggers.append(tb_logger)
+            except ModuleNotFoundError:
+                logger.warning("TensorBoard not installed. Install with: pip install tensorboard. Skipping TensorBoard logging.")
         
         # MLflow Logger (if enabled)
         if getattr(self.config.logging, 'use_mlflow', True):
@@ -255,6 +308,10 @@ class HydraZenTrainer:
             num_workers=4
         )
         
+        # Create temporary directory for tuner checkpoints
+        import tempfile
+        temp_dir = tempfile.mkdtemp(prefix='tuner_', dir='.')
+        
         trainer = pl.Trainer(
             accelerator=self.config.trainer.accelerator,
             devices=self.config.trainer.devices,
@@ -262,25 +319,50 @@ class HydraZenTrainer:
             max_steps=200,
             max_epochs=None,
             enable_checkpointing=False,
-            logger=False
+            logger=False,
+            default_root_dir=temp_dir
         )
-        
-        # Graph data safety factor for hidden memory overhead
-        graph_memory_safety_factor = getattr(
-            self.config.training,
-            'graph_memory_safety_factor',
-            0.5  # Default 50% reduction for graph overhead
-        )
+
+        # Dataset-size-aware safety factor
+        # Priority: 1) JSON file (easy to edit), 2) config, 3) auto-select by dataset size
+        dataset_size = len(train_dataset) + len(val_dataset)
+        dataset_name = self.config.dataset.name
+
+        # First, try to get factor from JSON file (config/batch_size_factors.json)
+        json_factor = self.get_safety_factor_from_json(dataset_name)
+
+        if json_factor is not None:
+            graph_memory_safety_factor = json_factor
+            logger.info(f"Using safety factor from batch_size_factors.json: {graph_memory_safety_factor} (dataset: {dataset_name})")
+        elif hasattr(self.config.training, 'graph_memory_safety_factor') and self.config.training.graph_memory_safety_factor is not None:
+            # Use user-specified factor from config
+            graph_memory_safety_factor = self.config.training.graph_memory_safety_factor
+            logger.info(f"Using config-specified safety factor: {graph_memory_safety_factor}")
+        else:
+            # Auto-determine based on dataset size
+            if dataset_size < 50000:
+                graph_memory_safety_factor = 0.6  # Small datasets
+            elif dataset_size < 100000:
+                graph_memory_safety_factor = 0.5  # Medium datasets
+            else:
+                graph_memory_safety_factor = 0.35  # Large datasets (set_02: 203K graphs)
+            logger.info(
+                f"Auto-selected safety factor {graph_memory_safety_factor} "
+                f"for dataset size {dataset_size:,} graphs"
+            )
         
         tuner = Tuner(trainer)
         initial_bs = model.batch_size
-        
+
+        # Get batch size mode from config (default to 'binsearch' for more accuracy)
+        batch_size_mode = getattr(self.config.training, 'batch_size_mode', 'binsearch')
+
         try:
             # Run tuner - modifies model.batch_size in place
             tuner.scale_batch_size(
                 model,
                 datamodule=temp_datamodule,
-                mode='power',
+                mode=batch_size_mode,
                 steps_per_trial=3,
                 init_val=initial_bs
             )
@@ -300,6 +382,18 @@ class HydraZenTrainer:
         except Exception as e:
             logger.warning(f"Batch size optimization failed: {e}. Using initial batch size.")
             model.batch_size = initial_bs
+        finally:
+            # Clean up temporary files and directory
+            import shutil
+            import glob
+            try:
+                # Clean up tuner checkpoints in root directory
+                for ckpt in glob.glob('.scale_batch_size_*.ckpt'):
+                    Path(ckpt).unlink(missing_ok=True)
+                # Clean up temp directory
+                shutil.rmtree(temp_dir, ignore_errors=True)
+            except Exception as cleanup_error:
+                logger.debug(f"Cleanup warning: {cleanup_error}")
         
         return model
     
@@ -355,8 +449,8 @@ class HydraZenTrainer:
         fusion_trainer = FusionTrainer(self.config, paths)
         model, trainer = fusion_trainer.train()
         
-        # Post-training tasks
-        self._save_final_model(model, "fusion_agent.pth")
+        # Post-training tasks (FusionTrainer already saves dqn_fusion.pth, config snapshot is extra)
+        self._save_final_model(model, "dqn_fusion.pth")
         self._save_config_snapshot(paths)
         
         return model, trainer
@@ -373,11 +467,9 @@ class HydraZenTrainer:
             force_rebuild_cache=force_rebuild
         )
         
-        model = self.setup_model(num_ids)
-        
         paths = self.get_hierarchical_paths()
         curriculum_trainer = CurriculumTrainer(self.config, paths)
-        model, trainer = curriculum_trainer.train(model, num_ids)
+        model, trainer = curriculum_trainer.train(num_ids)
         
         # Post-training tasks
         self._save_final_model(model, "gat_curriculum.pth")

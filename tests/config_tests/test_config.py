@@ -104,9 +104,10 @@ def test_required_artifacts_kd_paths(tmp_path):
     cfg = CANGraphConfig(model=model, dataset=dataset, training=training)
     cfg.experiment_root = str(tmp_path / "experiment_runs")
 
-    # Default teacher path when not explicitly set
+    # Default teacher path when not explicitly set - for GAT KD, defaults to curriculum-trained GAT
     artifacts = cfg.required_artifacts()
-    expected_default = cfg.canonical_experiment_dir() / "teacher" / f"best_teacher_model_{cfg.dataset.name}.pth"
+    # GAT KD looks for curriculum-trained teacher first (pipeline default)
+    expected_default = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / "supervised" / "gat" / "teacher" / "no_distillation" / "curriculum" / "models" / "gat_curriculum.pth"
     assert "teacher_model" in artifacts
     assert Path(artifacts["teacher_model"]).resolve() == expected_default.resolve()
 
@@ -128,9 +129,10 @@ def test_required_artifacts_fusion_and_curriculum(tmp_path):
     artifacts = cfg.required_artifacts()
     exp_dir = cfg.canonical_experiment_dir()
 
-    # Expect canonical absolute locations under experiment_root
-    expected_ae = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / "unsupervised" / "vgae" / "teacher" / cfg.distillation / "autoencoder" / "vgae_autoencoder.pth"
-    expected_cl = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / "supervised" / "gat" / "teacher" / cfg.distillation / "normal" / f"gat_{cfg.dataset.name}_normal.pth"
+    # Expect canonical absolute locations under experiment_root (models saved in models/ subdir)
+    # Teacher fusion uses autoencoder-trained VGAE and curriculum-trained GAT
+    expected_ae = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / "unsupervised" / "vgae" / "teacher" / cfg.distillation / "autoencoder" / "models" / "vgae_autoencoder.pth"
+    expected_cl = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / "supervised" / "gat" / "teacher" / cfg.distillation / "curriculum" / "models" / "gat_curriculum.pth"
 
     assert Path(artifacts["autoencoder"]).resolve() == expected_ae.resolve()
     assert Path(artifacts["classifier"]).resolve() == expected_cl.resolve()
@@ -145,7 +147,7 @@ def test_required_artifacts_fusion_and_curriculum(tmp_path):
     cfg2 = CANGraphConfig(model=model, dataset=dataset, training=c_training)
     cfg2.experiment_root = str(tmp_path / "experiment_runs")
     artifacts_curr = cfg2.required_artifacts()
-    expected_curr = Path(cfg2.experiment_root) / cfg2.modality / cfg2.dataset.name / "unsupervised" / "vgae" / "teacher" / cfg2.distillation / "autoencoder" / "vgae_autoencoder.pth"
+    expected_curr = Path(cfg2.experiment_root) / cfg2.modality / cfg2.dataset.name / "unsupervised" / "vgae" / "teacher" / cfg2.distillation / "autoencoder" / "models" / "vgae_autoencoder.pth"
     assert Path(artifacts_curr["vgae"]).resolve() == expected_curr.resolve()
 
     # validate_config should raise a clear FileNotFoundError when VGAE is missing for curriculum

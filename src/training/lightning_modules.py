@@ -1,4 +1,4 @@
-"""
+"""  
 Unified Lightning Modules for CAN-Graph Training
 
 Consolidates all PyTorch Lightning modules into a single coherent file.
@@ -9,7 +9,6 @@ Components:
 - GATLightningModule: Graph Attention Network (classification)
 - DQNLightningModule: DQN training for fusion
 - FusionLightningModule: DQN-based fusion with prediction caching
-- CANGraphLightningModule: Legacy unified module (backward compatibility)
 
 Replaces:
 - src/training/can_graph_module.py (310 lines)
@@ -32,6 +31,7 @@ from torch.utils.data import Dataset
 from src.models.models import GATWithJK, create_dqn_teacher, create_dqn_student
 from src.models.vgae import GraphAutoencoderNeighborhood
 from src.models.dqn import EnhancedDQNFusionAgent
+from src.training.knowledge_distillation import KDHelper, cleanup_memory
 
 logger = logging.getLogger(__name__)
 
@@ -48,6 +48,7 @@ class BaseKDGATModule(pl.LightningModule):
     - Common optimizer configuration
     - Metrics tracking
     - Checkpoint management
+    - Memory management (cleanup between epochs)
     """
     
     def __init__(
@@ -66,11 +67,44 @@ class BaseKDGATModule(pl.LightningModule):
         self.batch_size = cfg.training.batch_size if hasattr(cfg.training, 'batch_size') else 32
         
         # Save hyperparameters for checkpointing
-        self.save_hyperparameters('cfg')
+        # Convert to dict to avoid OmegaConf Union serialization issues
+        from dataclasses import asdict
+        try:
+            cfg_dict = asdict(cfg)
+            self.save_hyperparameters({'cfg': cfg_dict})
+        except Exception:
+            # If conversion fails, save minimal info
+            logger.warning("Could not serialize full config, saving minimal hyperparameters")
+            self.save_hyperparameters({
+                'model_type': getattr(cfg.model, 'type', 'unknown'),
+                'dataset': cfg.dataset.name,
+                'batch_size': self.batch_size
+            })
         
-        # Metrics tracking
+        # Metrics tracking (limited size to prevent memory leaks)
+        self._max_loss_history = 1000  # Keep last N losses only
         self.train_losses = []
         self.val_losses = []
+    
+    def on_train_epoch_end(self):
+        """Clean up memory at end of training epoch."""
+        # Trim loss history to prevent unbounded growth
+        if len(self.train_losses) > self._max_loss_history:
+            self.train_losses = self.train_losses[-self._max_loss_history:]
+        
+        # Release GPU memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    
+    def on_validation_epoch_end(self):
+        """Clean up memory at end of validation epoch."""
+        # Trim loss history to prevent unbounded growth
+        if len(self.val_losses) > self._max_loss_history:
+            self.val_losses = self.val_losses[-self._max_loss_history:]
+        
+        # Release GPU memory
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
         
     def configure_optimizers(self):
         """Configure optimizer and learning rate scheduler."""
@@ -103,14 +137,14 @@ class BaseKDGATModule(pl.LightningModule):
         if scheduler_name == "cosine":
             scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
                 optimizer,
-                T_max=self.cfg.training_config.epochs,
+                T_max=self.cfg.training.max_epochs,
             )
         elif scheduler_name == "linear":
             scheduler = torch.optim.lr_scheduler.LinearLR(
                 optimizer,
                 start_factor=1.0,
                 end_factor=0.1,
-                total_iters=self.cfg.training_config.epochs,
+                total_iters=self.cfg.training.max_epochs,
             )
         elif scheduler_name == "exponential":
             scheduler = torch.optim.lr_scheduler.ExponentialLR(
@@ -151,60 +185,93 @@ class BaseKDGATModule(pl.LightningModule):
 class VAELightningModule(BaseKDGATModule):
     """
     Lightning module for Variational Graph AutoEncoder (VGAE).
-    
+
     Used for unsupervised pretraining and anomaly detection.
     Reconstructs graph structure and node features.
+
+    Supports knowledge distillation when cfg.training.use_knowledge_distillation=True.
+    KD signals: latent space + reconstruction (dual-signal approach).
     """
-    
+
     def __init__(
         self,
         cfg: DictConfig,
-        
+
         train_loader: Any = None,
         val_loader: Any = None,
         num_ids: int = 1000
     ):
         super().__init__(cfg, train_loader, val_loader)
-        
+
         self.num_ids = num_ids
-        
+
         # Build VGAE model
         self.model = self._build_vgae()
-        
+
         # Loss weights
         self.reconstruction_loss_fn = nn.MSELoss()
         self.kl_weight = getattr(cfg.training, 'kl_weight', 0.01)
-        
+
+        # Initialize KD helper (no-op if disabled)
+        self.kd_helper = KDHelper(cfg, self.model, model_type="vgae")
+
+        # Track KD losses for logging
+        self.kd_latent_losses = []
+        self.kd_recon_losses = []
+
         logger.info(
             f"✅ Initialized VGAE with {sum(p.numel() for p in self.model.parameters())} parameters"
         )
+        if self.kd_helper.enabled:
+            logger.info(f"   Knowledge Distillation: ENABLED (alpha={self.kd_helper.alpha})")
     
     def _build_vgae(self) -> nn.Module:
         """Build VGAE model from config."""
         # Build params from config and prefer explicit progressive `hidden_dims` if present
-        if hasattr(self.cfg.model, 'hidden_dims'):
+        if hasattr(self.cfg.model, 'hidden_dims') and self.cfg.model.hidden_dims:
             hidden_dims = list(self.cfg.model.hidden_dims)
-        elif hasattr(self.cfg.model, 'encoder_dims'):
+        elif hasattr(self.cfg.model, 'encoder_dims') and self.cfg.model.encoder_dims:
             hidden_dims = list(self.cfg.model.encoder_dims)
         else:
             hidden_dims = None
+
+        # Get latent_dim - ensure it's explicitly from config, not falling back incorrectly
+        latent_dim = getattr(self.cfg.model, 'latent_dim', None)
+        if latent_dim is None:
+            latent_dim = hidden_dims[-1] if hidden_dims else 32
+            logger.warning(f"latent_dim not in config, using fallback: {latent_dim}")
+
+        # Log the configuration for debugging
+        logger.info(f"🔧 VGAE Build Config:")
+        logger.info(f"   hidden_dims: {hidden_dims}")
+        logger.info(f"   latent_dim: {latent_dim}")
+        logger.info(f"   input_dim: {self.cfg.model.input_dim}")
+        logger.info(f"   num_ids: {self.num_ids}")
 
         vgae_params = {
             'num_ids': self.num_ids,
             'in_channels': self.cfg.model.input_dim,
             'hidden_dims': hidden_dims,
-            'latent_dim': getattr(
-                self.cfg.model, 
-                'latent_dim', 
-                (hidden_dims[-1] if hidden_dims else 32)
-            ),
+            'latent_dim': latent_dim,
             'encoder_heads': getattr(self.cfg.model, 'attention_heads', 4),
             'decoder_heads': getattr(self.cfg.model, 'attention_heads', 4),
             'embedding_dim': getattr(self.cfg.model, 'embedding_dim', 32),
             'dropout': getattr(self.cfg.model, 'dropout', 0.15),
             'batch_norm': getattr(self.cfg.model, 'batch_norm', True)
         }
-        
+
+        logger.info(f"   embedding_dim: {vgae_params['embedding_dim']}")
+        logger.info(f"   encoder_heads: {vgae_params['encoder_heads']}")
+
+        # Add gradient checkpointing if enabled in config
+        if hasattr(self.cfg.training, 'memory_optimization'):
+            use_checkpointing = getattr(self.cfg.training.memory_optimization, 'gradient_checkpointing', False)
+            vgae_params['use_checkpointing'] = use_checkpointing
+            if use_checkpointing:
+                logger.info("✅ Gradient checkpointing ENABLED for VGAE (memory-efficient training)")
+            else:
+                logger.warning("⚠️  Gradient checkpointing DISABLED - may cause OOM on large datasets")
+
         return GraphAutoencoderNeighborhood(**vgae_params)
     
     def forward(self, batch):
@@ -215,28 +282,59 @@ class VAELightningModule(BaseKDGATModule):
         return self.model(x, edge_index, b)
     
     def training_step(self, batch, batch_idx):
-        """Training step with reconstruction + KL loss."""
+        """Training step with reconstruction + KL loss, with optional KD."""
         # Forward pass
         cont_out, canid_logits, neighbor_logits, z, kl_loss = self.forward(batch)
-        
+
         # Reconstruction losses
         continuous_features = batch.x[:, 1:]
         reconstruction_loss = self.reconstruction_loss_fn(cont_out, continuous_features)
-        
+
         canid_targets = batch.x[:, 0].long()
         canid_loss = F.cross_entropy(canid_logits, canid_targets)
-        
-        # Total loss
-        total_loss = reconstruction_loss + 0.1 * canid_loss + self.kl_weight * kl_loss
-        
+
+        # Task loss (base loss without KD)
+        task_loss = reconstruction_loss + 0.1 * canid_loss + self.kl_weight * kl_loss
+
+        # Knowledge distillation (if enabled)
+        if self.kd_helper.enabled:
+            # Get teacher outputs (latent z and reconstructions)
+            teacher_outputs = self.kd_helper.get_teacher_outputs(batch)
+
+            # Package student reconstruction outputs
+            student_recon = {
+                'cont_out': cont_out,
+                'canid_logits': canid_logits,
+                'neighbor_logits': neighbor_logits
+            }
+
+            # Compute VGAE-specific KD loss (latent + reconstruction)
+            kd_loss = self.kd_helper.compute_vgae_kd_loss(
+                student_z=z,
+                student_recon=student_recon,
+                teacher_outputs=teacher_outputs
+            )
+
+            # Combine task loss and KD loss
+            total_loss = self.kd_helper.combine_losses(task_loss, kd_loss)
+
+            # Log KD-specific metrics
+            self.log('kd_loss', kd_loss, on_epoch=True)
+        else:
+            total_loss = task_loss
+
         self.train_losses.append(total_loss.item())
-        
+
         # Logging
         self.log('train_loss', total_loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('train_recon_loss', reconstruction_loss, on_epoch=True)
         self.log('train_canid_loss', canid_loss, on_epoch=True)
         self.log('train_kl_loss', kl_loss, on_epoch=True)
-        
+
+        # Memory cleanup every 20 batches
+        if batch_idx % 20 == 0:
+            cleanup_memory()
+
         return total_loss
     
     def validation_step(self, batch, batch_idx):
@@ -264,12 +362,36 @@ class VAELightningModule(BaseKDGATModule):
     def test_step(self, batch, batch_idx):
         """Test step."""
         cont_out, canid_logits, neighbor_logits, z, kl_loss = self.forward(batch)
-        
+
         continuous_features = batch.x[:, 1:]
         reconstruction_loss = self.reconstruction_loss_fn(cont_out, continuous_features)
-        
+
         self.log('test_recon_loss', reconstruction_loss)
         return {'test_loss': reconstruction_loss}
+
+    def configure_optimizers(self):
+        """Configure optimizer, including projection layer if KD enabled."""
+        # Get base optimizer config from parent
+        optimizer_config = super().configure_optimizers()
+
+        # Add projection layer parameters if KD enabled
+        if self.kd_helper.enabled and self.kd_helper.projection_layer is not None:
+            # Get the optimizer from the config
+            if isinstance(optimizer_config, dict):
+                optimizer = optimizer_config['optimizer']
+            else:
+                optimizer = optimizer_config
+
+            # Add projection layer params with separate learning rate
+            proj_params = list(self.kd_helper.projection_layer.parameters())
+            optimizer.add_param_group({
+                'params': proj_params,
+                'lr': 1e-3,  # Separate LR for projection layer
+                'weight_decay': 1e-5
+            })
+            logger.info(f"   Added projection layer params to optimizer (lr=1e-3)")
+
+        return optimizer_config
 
 
 # ============================================================================
@@ -279,10 +401,13 @@ class VAELightningModule(BaseKDGATModule):
 class GATLightningModule(BaseKDGATModule):
     """
     Lightning module for Graph Attention Network (GAT).
-    
+
     Used for supervised classification of normal vs attack traffic.
+
+    Supports knowledge distillation when cfg.training.use_knowledge_distillation=True.
+    KD signal: soft label distillation with temperature scaling.
     """
-    
+
     def __init__(
         self,
         cfg: DictConfig,
@@ -291,18 +416,23 @@ class GATLightningModule(BaseKDGATModule):
         num_ids: int = 1000
     ):
         super().__init__(cfg, train_loader, val_loader)
-        
+
         self.num_ids = num_ids
-        
+
         # Build GAT model
         self.model = self._build_gat()
-        
+
         # Loss function
         self.loss_fn = nn.CrossEntropyLoss()
-        
+
+        # Initialize KD helper (no-op if disabled)
+        self.kd_helper = KDHelper(cfg, self.model, model_type="gat")
+
         logger.info(
             f"✅ Initialized GAT with {sum(p.numel() for p in self.model.parameters())} parameters"
         )
+        if self.kd_helper.enabled:
+            logger.info(f"   Knowledge Distillation: ENABLED (alpha={self.kd_helper.alpha})")
     
     def _build_gat(self) -> nn.Module:
         """Build GAT model from config."""
@@ -319,18 +449,27 @@ class GATLightningModule(BaseKDGATModule):
                 'num_fc_layers': self.cfg.model.num_fc_layers,
                 'embedding_dim': self.cfg.model.embedding_dim,
             }
-        
+
         # Normalize parameter names
         gat_params['in_channels'] = gat_params.pop('input_dim')
         gat_params['out_channels'] = gat_params.pop('output_dim')
-        
+
         # Remove unused params
-        for unused_param in ['use_jumping_knowledge', 'jk_mode', 'use_residual', 
+        for unused_param in ['use_jumping_knowledge', 'jk_mode', 'use_residual',
                             'use_batch_norm', 'activation']:
             gat_params.pop(unused_param, None)
-        
+
         gat_params['num_ids'] = self.num_ids
-        
+
+        # Add gradient checkpointing if enabled in config
+        if hasattr(self.cfg.training, 'memory_optimization'):
+            use_checkpointing = getattr(self.cfg.training.memory_optimization, 'gradient_checkpointing', False)
+            gat_params['use_checkpointing'] = use_checkpointing
+            if use_checkpointing:
+                logger.info("✅ Gradient checkpointing ENABLED for GAT (memory-efficient training)")
+            else:
+                logger.warning("⚠️  Gradient checkpointing DISABLED - may cause OOM on large datasets")
+
         return GATWithJK(**gat_params)
     
     def forward(self, batch):
@@ -338,19 +477,42 @@ class GATLightningModule(BaseKDGATModule):
         return self.model(batch)
     
     def training_step(self, batch, batch_idx):
-        """Training step with classification loss."""
+        """Training step with classification loss, with optional KD."""
         logits = self.forward(batch)
-        loss = self.loss_fn(logits, batch.y)
-        
+        task_loss = self.loss_fn(logits, batch.y)
+
+        # Knowledge distillation (if enabled)
+        if self.kd_helper.enabled:
+            # Get teacher outputs (soft labels)
+            teacher_outputs = self.kd_helper.get_teacher_outputs(batch)
+
+            # Compute GAT-specific KD loss (soft label distillation)
+            kd_loss = self.kd_helper.compute_gat_kd_loss(
+                student_logits=logits,
+                teacher_logits=teacher_outputs['logits']
+            )
+
+            # Combine task loss and KD loss
+            loss = self.kd_helper.combine_losses(task_loss, kd_loss)
+
+            # Log KD-specific metrics
+            self.log('kd_loss', kd_loss, on_epoch=True)
+        else:
+            loss = task_loss
+
         self.train_losses.append(loss.item())
-        
+
         # Compute accuracy
         preds = logits.argmax(dim=1)
         acc = (preds == batch.y).float().mean()
-        
+
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True)
         self.log('train_acc', acc, on_epoch=True)
-        
+
+        # Memory cleanup every 20 batches
+        if batch_idx % 20 == 0:
+            cleanup_memory()
+
         return loss
     
     def validation_step(self, batch, batch_idx):
@@ -571,12 +733,21 @@ class FusionLightningModule(pl.LightningModule):
             num_ids: Number of unique CAN IDs (unused but for compatibility)
         """
         super().__init__()
-        self.save_hyperparameters(ignore=['num_ids'])
+        # Save hyperparameters (avoid complex nested objects)
+        self.save_hyperparameters({
+            'alpha_steps': fusion_config.get('alpha_steps', 21),
+            'fusion_lr': fusion_config.get('fusion_lr', 0.001),
+            'gamma': fusion_config.get('gamma', 0.9)
+        })
         
         self.fusion_config = fusion_config
         self.num_ids = num_ids
         
         # Initialize DQN fusion agent
+        # Determine device - use cuda if available, else cpu
+        import torch
+        device_str = 'cuda' if torch.cuda.is_available() else 'cpu'
+        
         self.fusion_agent = EnhancedDQNFusionAgent(
             alpha_steps=fusion_config.get('alpha_steps', 21),
             state_dim=2,  # anomaly_score, gat_prob
@@ -587,7 +758,7 @@ class FusionLightningModule(pl.LightningModule):
             min_epsilon=fusion_config.get('fusion_min_epsilon', 0.2),
             buffer_size=fusion_config.get('fusion_buffer_size', 100000),
             batch_size=fusion_config.get('fusion_batch_size', 256),
-            device=self.device if self.device.type == 'cuda' else 'cpu'
+            device=device_str
         )
         
         # Training tracking
@@ -637,6 +808,7 @@ class FusionLightningModule(pl.LightningModule):
         
         # Normalize and stack states
         states = torch.stack([anomaly_scores, gat_probs], dim=1)  # [batch_size, 2]
+        states = states.to(self.device)  # Move to device
         
         # Forward pass: get Q-values for all actions
         q_values = self.fusion_agent.q_network(states)  # [batch_size, num_actions]
@@ -729,6 +901,7 @@ class FusionLightningModule(pl.LightningModule):
         
         # Normalize and stack states
         states = torch.stack([anomaly_scores, gat_probs], dim=1)
+        states = states.to(self.device)  # Move to device
         
         # Get Q-values and select greedy actions
         with torch.no_grad():
@@ -782,384 +955,8 @@ class FusionLightningModule(pl.LightningModule):
                     policy[i, j] = self.fusion_agent.alpha_values[best_action]
         
         return policy
-    """
-    Legacy unified Lightning Module for CAN intrusion detection.
-    
-    Handles GAT, VGAE, autoencoder, knowledge distillation, and fusion modes.
-    
-    DEPRECATED: Use specialized modules (VAELightningModule, GATLightningModule, etc.)
-    Kept for backward compatibility with existing code.
-    """
-    
-    def __init__(
-        self, 
-        model_config, 
-        training_config, 
-        model_type="gat", 
-        training_mode="normal", 
-        num_ids=1000
-    ):
-        super().__init__()
-        
-        if hasattr(self, "save_hyperparameters"):
-            self.save_hyperparameters()
-        
-        self.model_config = model_config
-        self.training_config = training_config
-        self.model_type = model_type
-        self.training_mode = training_mode
-        self.num_ids = num_ids
-        self.batch_size = training_config.batch_size
-        
-        self.model = self._create_model()
-        self.teacher_model = None
-        
-        if training_mode == "knowledge_distillation":
-            self.setup_knowledge_distillation()
-    
-    def _create_model(self):
-        """Create model based on model_type."""
-        if self.model_type in ["gat", "gat_student"]:
-            if hasattr(self.model_config, 'gat'):
-                gat_params = dict(self.model_config.gat)
-            else:
-                gat_params = {
-                    'input_dim': self.model_config.input_dim,
-                    'hidden_channels': self.model_config.hidden_channels,
-                    'output_dim': self.model_config.output_dim,
-                    'num_layers': self.model_config.num_layers,
-                    'heads': self.model_config.heads,
-                    'dropout': self.model_config.dropout,
-                    'num_fc_layers': self.model_config.num_fc_layers,
-                    'embedding_dim': self.model_config.embedding_dim,
-                }
-            
-            gat_params['in_channels'] = gat_params.pop('input_dim')
-            gat_params['out_channels'] = gat_params.pop('output_dim')
-            
-            for unused in ['use_jumping_knowledge', 'jk_mode', 'use_residual', 
-                          'use_batch_norm', 'activation']:
-                gat_params.pop(unused, None)
-            
-            gat_params['num_ids'] = self.num_ids
-            return GATWithJK(**gat_params)
-        
-        elif self.model_type in ["vgae", "vgae_student"]:
-            if hasattr(self.model_config, 'hidden_dims'):
-                hidden_dims = list(self.model_config.hidden_dims)
-            elif hasattr(self.model_config, 'encoder_dims'):
-                hidden_dims = list(self.model_config.encoder_dims)
-            else:
-                hidden_dims = None
 
-            vgae_params = {
-                'num_ids': self.num_ids,
-                'in_channels': self.model_config.input_dim,
-                'hidden_dims': hidden_dims,
-                'latent_dim': getattr(
-                    self.model_config, 
-                    'latent_dim', 
-                    (hidden_dims[-1] if hidden_dims else 32)
-                ),
-                'encoder_heads': getattr(self.model_config, 'attention_heads', 4),
-                'decoder_heads': getattr(self.model_config, 'attention_heads', 4),
-                'embedding_dim': getattr(self.model_config, 'embedding_dim', 32),
-                'dropout': getattr(self.model_config, 'dropout', 0.15),
-                'batch_norm': getattr(self.model_config, 'batch_norm', True)
-            }
-            return GraphAutoencoderNeighborhood(**vgae_params)
-        
-        elif self.model_type in ["dqn", "dqn_student"]:
-            if self.model_type == "dqn":
-                return create_dqn_teacher()
-            else:
-                return create_dqn_student()
-        
-        else:
-            raise ValueError(f"Unknown model type: {self.model_type}")
-    
-    def training_step(self, batch, batch_idx):
-        """Dispatch to the appropriate training step based on training_mode."""
-        if self.training_mode == "autoencoder":
-            return self._autoencoder_training_step(batch, batch_idx)
-        elif self.training_mode == "knowledge_distillation":
-            return self._knowledge_distillation_step(batch, batch_idx)
-        elif self.training_mode == "fusion":
-            return self._fusion_training_step(batch, batch_idx)
-        else:
-            return self._normal_training_step(batch, batch_idx)
-    
-    def _normal_training_step(self, batch, batch_idx):
-        """Standard training step."""
-        if self.model_type == "gat":
-            output = self.model(batch)
-        else:
-            output = self.forward(batch)
 
-        base_loss = self._compute_loss(output, batch)
-        
-        try:
-            batch_size = batch.y.size(0)
-        except Exception:
-            batch_size = None
-        
-        self.log('train_loss', base_loss, prog_bar=True, batch_size=batch_size)
-        return base_loss
-    
-    def _autoencoder_training_step(self, batch, batch_idx):
-        """Autoencoder training step (normal traffic only)."""
-        if hasattr(batch, 'y'):
-            normal_mask = batch.y == 0
-            if normal_mask.sum() == 0:
-                return None
-            filtered_batch = self._filter_batch_by_mask(batch, normal_mask)
-            output = self.forward(filtered_batch)
-            loss = self._compute_autoencoder_loss(output, filtered_batch)
-        else:
-            output = self.forward(batch)
-            loss = self._compute_autoencoder_loss(output, batch)
-        
-        self.log('train_autoencoder_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
-        return loss
-    
-    def _knowledge_distillation_step(self, batch, batch_idx):
-        """Knowledge distillation training step."""
-        student_output = self.forward(batch)
-        teacher_output = self._get_teacher_output_cached(batch)
-        
-        distillation_loss = self._compute_distillation_loss(
-            student_output, teacher_output, batch
-        )
-        
-        # Log teacher-student comparison
-        if self.training_config.get('log_teacher_student_comparison', True):
-            with torch.no_grad():
-                if hasattr(batch, 'y'):
-                    if isinstance(teacher_output, tuple):
-                        teacher_logits = teacher_output[1]
-                        student_logits = (student_output[1] if isinstance(student_output, tuple) 
-                                        else student_output)
-                    else:
-                        teacher_logits = teacher_output
-                        student_logits = (student_output[1] if isinstance(student_output, tuple) 
-                                        else student_output)
-                    
-                    teacher_acc = (teacher_logits.argmax(dim=-1) == batch.y).float().mean()
-                    student_acc = (student_logits.argmax(dim=-1) == batch.y).float().mean()
-                    
-                    self.log('teacher_accuracy', teacher_acc, prog_bar=False, 
-                           batch_size=batch.y.size(0))
-                    self.log('student_accuracy', student_acc, prog_bar=False, 
-                           batch_size=batch.y.size(0))
-                    self.log('accuracy_gap', teacher_acc - student_acc, prog_bar=False, 
-                           batch_size=batch.y.size(0))
-                
-                teacher_flat = (teacher_output[0].flatten() if isinstance(teacher_output, tuple) 
-                              else teacher_output.flatten())
-                student_flat = (student_output[0].flatten() if isinstance(student_output, tuple) 
-                              else student_output.flatten())
-                similarity = F.cosine_similarity(
-                    teacher_flat.unsqueeze(0), 
-                    student_flat.unsqueeze(0)
-                )
-                self.log('teacher_student_similarity', similarity, prog_bar=False, 
-                       batch_size=batch.y.size(0))
-        
-        self.log('train_distillation_loss', distillation_loss, prog_bar=True, 
-               batch_size=batch.y.size(0))
-        return distillation_loss
-    
-    def _fusion_training_step(self, batch, batch_idx):
-        """Fusion training step."""
-        output = self.forward(batch)
-        loss = self._compute_loss(output, batch)
-        self.log('train_fusion_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
-        return loss
-    
-    def validation_step(self, batch, batch_idx):
-        """Validation step."""
-        output = self.forward(batch)
-        loss = self._compute_loss(output, batch)
-        self.log('val_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
-        return loss
-    
-    def test_step(self, batch, batch_idx):
-        """Test step."""
-        output = self.forward(batch)
-        loss = self._compute_loss(output, batch)
-        self.log('test_loss', loss, prog_bar=True, batch_size=batch.y.size(0))
-        return loss
-    
-    def forward(self, batch):
-        """Forward dispatcher based on model_type."""
-        if self.model_type in ["gat", "gat_student"]:
-            return self.model(batch)
-        
-        if self.model_type in ["vgae", "vgae_student"]:
-            x = getattr(batch, 'x', None)
-            edge_index = getattr(batch, 'edge_index', None)
-            b = getattr(batch, 'batch', None)
-            if x is None or edge_index is None or b is None:
-                raise ValueError(
-                    "Batch missing required attributes for VGAE: x, edge_index, batch"
-                )
-            return self.model(x, edge_index, b)
-        
-        if self.model_type in ["dqn", "dqn_student"]:
-            x = getattr(batch, 'x', None)
-            if x is None:
-                raise ValueError("Batch missing 'x' required for DQN forward")
-            return self.model(x)
-        
-        raise ValueError(f"Unsupported model_type in forward: {self.model_type}")
-    
-    def _compute_loss(self, output, batch):
-        """Compute loss based on model type."""
-        if self.model_type in ["vgae", "vgae_student"]:
-            cont_out, canid_logits, neighbor_logits, z, kl_loss = output
-            reconstruction_loss = F.mse_loss(cont_out, batch.x[:, 1:])
-            canid_loss = F.cross_entropy(canid_logits, batch.x[:, 0].long())
-            return reconstruction_loss + 0.1 * canid_loss + 0.01 * kl_loss
-        else:
-            if hasattr(batch, 'y'):
-                return F.cross_entropy(output, batch.y)
-            else:
-                return F.mse_loss(output, batch.x)
-    
-    def _compute_autoencoder_loss(self, output, batch):
-        """Compute autoencoder loss."""
-        if self.model_type in ["vgae", "vgae_student"]:
-            cont_out, canid_logits, neighbor_logits, z, kl_loss = output
-            continuous_features = batch.x[:, 1:]
-            reconstruction_loss = F.mse_loss(cont_out, continuous_features)
-            canid_targets = batch.x[:, 0].long()
-            canid_loss = F.cross_entropy(canid_logits, canid_targets)
-            return reconstruction_loss + 0.1 * canid_loss + 0.01 * kl_loss
-        else:
-            return F.mse_loss(output, batch.x)
-    
-    def _compute_distillation_loss(self, student_output, teacher_output, batch):
-        """Compute knowledge distillation loss."""
-        temperature = self.training_config.get('distillation_temperature', 4.0)
-        alpha = self.training_config.get('distillation_alpha', 0.7)
-        
-        if hasattr(batch, 'y'):
-            hard_loss = self._compute_loss(student_output, batch)
-            
-            if student_output.dim() > 1 and student_output.size(-1) > 1:
-                soft_targets = torch.softmax(teacher_output / temperature, dim=-1)
-                soft_prob = torch.log_softmax(student_output / temperature, dim=-1)
-                soft_loss = F.kl_div(
-                    soft_prob, soft_targets, reduction='batchmean'
-                ) * (temperature ** 2)
-            else:
-                soft_loss = F.mse_loss(student_output, teacher_output)
-            
-            total_loss = alpha * soft_loss + (1 - alpha) * hard_loss
-            
-            self.log('hard_loss', hard_loss, prog_bar=False, batch_size=student_output.size(0))
-            self.log('soft_loss', soft_loss, prog_bar=False, batch_size=student_output.size(0))
-            
-            return total_loss
-    
-    def _filter_batch_by_mask(self, batch, mask):
-        """Filter batch by mask (simplified implementation)."""
-        return batch
-    
-    def configure_optimizers(self):
-        """Configure optimizer and scheduler."""
-        def get_config_value(key, default=None):
-            if hasattr(self.training_config, 'get'):
-                return self.training_config.get(key, default)
-            else:
-                return getattr(self.training_config, key, default)
-        
-        # Get optimizer parameters
-        if hasattr(self.training_config, 'optimizer'):
-            optimizer_config = self.training_config.optimizer
-            optimizer_name = optimizer_config.name.lower()
-            learning_rate = optimizer_config.lr
-            weight_decay = optimizer_config.weight_decay
-        else:
-            optimizer_name = get_config_value('optimizer', 'adam').lower()
-            learning_rate = get_config_value('learning_rate', 0.001)
-            weight_decay = get_config_value('weight_decay', 0.0001)
-        
-        # Create optimizer
-        if optimizer_name == 'adam':
-            optimizer = torch.optim.Adam(
-                self.parameters(), lr=learning_rate, weight_decay=weight_decay
-            )
-        elif optimizer_name == 'adamw':
-            optimizer = torch.optim.AdamW(
-                self.parameters(), lr=learning_rate, weight_decay=weight_decay
-            )
-        elif optimizer_name == 'sgd':
-            momentum = get_config_value('momentum', 0.9)
-            optimizer = torch.optim.SGD(
-                self.parameters(), lr=learning_rate, 
-                weight_decay=weight_decay, momentum=momentum
-            )
-        else:
-            raise ValueError(f"Unsupported optimizer: {optimizer_name}")
-        
-        # Check if scheduler is needed
-        use_scheduler = get_config_value('use_scheduler', False)
-        if hasattr(self.training_config, 'scheduler') and self.training_config.scheduler:
-            use_scheduler = self.training_config.scheduler.use_scheduler
-        
-        if not use_scheduler:
-            return optimizer
-        
-        # Create scheduler
-        if hasattr(self.training_config, 'scheduler'):
-            scheduler_config = self.training_config.scheduler
-            scheduler_type = scheduler_config.scheduler_type.lower()
-            scheduler_params = scheduler_config.params
-            
-            if scheduler_type == 'cosine':
-                T_max = scheduler_params.get('T_max', self.training_config.max_epochs)
-                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=T_max)
-            elif scheduler_type == 'step':
-                step_size = scheduler_params.get('step_size', 30)
-                gamma = scheduler_params.get('gamma', 0.1)
-                scheduler = torch.optim.lr_scheduler.StepLR(
-                    optimizer, step_size=step_size, gamma=gamma
-                )
-            elif scheduler_type == 'exponential':
-                gamma = scheduler_params.get('gamma', 0.95)
-                scheduler = torch.optim.lr_scheduler.ExponentialLR(optimizer, gamma=gamma)
-            else:
-                raise ValueError(f"Unsupported scheduler: {scheduler_type}")
-        else:
-            scheduler_type = get_config_value('scheduler_type', 'cosine').lower()
-            scheduler_params = get_config_value('scheduler_params', {})
-            
-            if scheduler_type == 'cosine':
-                scheduler = torch.optim.lr_scheduler.CosineAnnealingLR(
-                    optimizer, 
-                    T_max=scheduler_params.get('T_max', self.training_config.max_epochs)
-                )
-            elif scheduler_type == 'step':
-                scheduler = torch.optim.lr_scheduler.StepLR(
-                    optimizer, 
-                    step_size=scheduler_params.get('step_size', 30), 
-                    gamma=scheduler_params.get('gamma', 0.1)
-                )
-            elif scheduler_type == 'exponential':
-                scheduler = torch.optim.lr_scheduler.ExponentialLR(
-                    optimizer, 
-                    gamma=scheduler_params.get('gamma', 0.95)
-                )
-            else:
-                raise ValueError(f"Unsupported scheduler: {scheduler_type}")
-        
-        return [optimizer], [scheduler]
-    
-    def setup_knowledge_distillation(self):
-        """Set up knowledge distillation (placeholder)."""
-        logger.warning("setup_knowledge_distillation() called but not fully implemented")
-    
-    def _get_teacher_output_cached(self, batch):
-        """Get teacher output (placeholder)."""
-        raise NotImplementedError("Teacher output caching not implemented")
+# Note: Legacy unified LightningModule has been removed.
+# Use the specialized modules: VAELightningModule, GATLightningModule, 
+# DQNLightningModule, FusionLightningModule instead.

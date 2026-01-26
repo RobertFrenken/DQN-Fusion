@@ -116,7 +116,14 @@ class FusionDataExtractor:
         """
         with torch.no_grad():
             logits = self.classifier(batch)
-            probabilities = torch.sigmoid(logits.squeeze())
+            # Handle both [batch_size] and [batch_size, 2] output shapes
+            if logits.dim() > 1 and logits.shape[1] > 1:
+                # Multi-class output: use softmax to get positive class probability
+                logits = logits.squeeze() if logits.shape[0] == 1 else logits
+                probabilities = torch.softmax(logits, dim=-1)[:, 1]  # Get prob of class 1
+            else:
+                # Single output: apply sigmoid
+                probabilities = torch.sigmoid(logits.squeeze())
             return probabilities  # Keep on GPU!
 
     def extract_fusion_data(self, data_loader: DataLoader, max_samples: int = None) -> Tuple[List, List, List]:
@@ -170,9 +177,17 @@ class FusionDataExtractor:
                     
                     # Update progress less frequently for speed
                     if batch_idx % 50 == 0:
+                        # Get GPU utilization if available (nvidia-ml-py may not be installed)
+                        gpu_util = "N/A"
+                        if self.device.type == 'cuda':
+                            try:
+                                gpu_util = f"{torch.cuda.utilization():.0f}%"
+                            except (ModuleNotFoundError, RuntimeError):
+                                # nvidia-ml-py not available
+                                gpu_util = "N/A"
                         pbar.set_postfix({
                             'samples': f"{samples_processed:,}",
-                            'gpu_util': f"{torch.cuda.utilization():.0f}%" if self.device.type == 'cuda' else "N/A"
+                            'gpu_util': gpu_util
                         })
                     
                     if max_samples and samples_processed >= max_samples:

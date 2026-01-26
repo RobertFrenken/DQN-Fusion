@@ -40,7 +40,7 @@ class MemoryOptimizationConfig:
     use_teacher_cache: bool = True
     clear_cache_every_n_steps: int = 100
     offload_teacher_to_cpu: bool = False
-    gradient_checkpointing: bool = False
+    gradient_checkpointing: bool = True  # Enabled by default for GNN memory efficiency
 
 
 # ============================================================================
@@ -90,25 +90,26 @@ class StudentGATConfig:
 
 @dataclass
 class VGAEConfig:
-    """Teacher VGAE configuration (~1.74M parameters, matching teacher_student.yaml)."""
+    """Teacher VGAE configuration (~1.71M parameters, tuned for 20x compression)."""
     type: str = "vgae"
     input_dim: int = 11           # Same input as student
     node_embedding_dim: int = 256 # Richer embedding (from teacher_student.yaml)
-    # Increase progressive hidden_dims to meet teacher parameter budget (~1.74M)
-    hidden_dims: List[int] = field(default_factory=lambda: [896, 448, 336, 48])  # Multi-layer with proper compression
-    latent_dim: int = 48          # Larger latent space than student (from teacher_student.yaml)
+    # Tuned hidden_dims to meet teacher parameter budget (~1.71M) with reduced MLP
+    hidden_dims: List[int] = field(default_factory=lambda: [1024, 512])  # Two-layer compression
+    latent_dim: int = 96          # Larger latent space for rich representations
     output_dim: int = 11          # Reconstruct input features
     
-    # Architecture settings (from teacher_student.yaml)
-    num_layers: int = 3           # Deep architecture for rich representations  
-    attention_heads: int = 8      # 8 heads per layer (multi-head attention for complex patterns)
-    embedding_dim: int = 64       # Increase embedding dim to match parameter budget
+    # Architecture settings (tuned for ~1.71M params)
+    num_layers: int = 2           # Encoder/decoder depth
+    attention_heads: int = 4      # 4 heads per layer (tuned)
+    embedding_dim: int = 64       # CAN ID embedding dimension
+    mlp_hidden: int = 256         # Neighborhood decoder MLP hidden size (tuned)
     dropout: float = 0.15         # Higher dropout for regularization
     batch_norm: bool = True
     activation: str = "relu"
     
-    # Training parameters (from teacher_student.yaml)
-    target_parameters: int = 1740000  # ~1.74M params
+    # Training parameters
+    target_parameters: int = 1710000  # ~1.71M params (tuned)
     curriculum_stages: List[str] = field(default_factory=lambda: ["pretrain", "distill"])
     
     # Legacy compatibility
@@ -117,29 +118,31 @@ class VGAEConfig:
 
 @dataclass
 class StudentVGAEConfig:
-    """Student VGAE configuration for on-board deployment (~87K parameters)."""
+    """Student VGAE configuration for on-board deployment (~86K parameters, tuned)."""
     type: str = "vgae_student"
     input_dim: int = 11           # CAN features input
-    node_embedding_dim: int = 96 # Rich initial embedding (from teacher_student.yaml)
-    encoder_dims: List[int] = field(default_factory=lambda: [200, 100, 24])  # Proper compression to meet budget
-    decoder_dims: List[int] = field(default_factory=lambda: [24, 100, 200])  # Proper decompression
-    latent_dim: int = 24          # Compact latent space (from teacher_student.yaml)
+    node_embedding_dim: int = 80  # Initial embedding (tuned)
+    # Tuned encoder_dims for ~86K parameters with reduced MLP
+    encoder_dims: List[int] = field(default_factory=lambda: [80, 40])  # Compact two-layer
+    decoder_dims: List[int] = field(default_factory=lambda: [40, 80])  # Mirror of encoder
+    latent_dim: int = 16          # Compact latent space (tuned)
     output_dim: int = 11          # Reconstruct input features
     
-    # Architecture settings
-    attention_heads: int = 2      # Lightweight attention
+    # Architecture settings (tuned for ~86K params)
+    attention_heads: int = 1      # Single head for efficiency
+    mlp_hidden: int = 16          # Compact neighborhood decoder MLP (tuned)
     dropout: float = 0.1          # Lower dropout for student
     batch_norm: bool = True
     activation: str = "relu"
     
-    # Deployment constraints (from teacher_student.yaml)
-    target_parameters: int = 87000    # ~87K params
-    memory_budget_kb: int = 287       # 87KB model + 200KB buffer
+    # Deployment constraints
+    target_parameters: int = 86000    # ~86K params (tuned)
+    memory_budget_kb: int = 287       # 86KB model + 200KB buffer
     inference_time_ms: int = 5        # Must be <20ms CAN message period    
     # Legacy compatibility
-    hidden_channels: int = 64     # For backward compatibility
+    hidden_channels: int = 40     # For backward compatibility (tuned)
     num_layers: int = 2           # Simple encoder/decoder
-    embedding_dim: int = 8        # CAN ID embedding dimension
+    embedding_dim: int = 4        # CAN ID embedding dimension (tuned)
     beta: float = 1.0             # KL divergence weight
 
 @dataclass
@@ -222,7 +225,7 @@ class BaseDatasetConfig:
     modality: str = "automotive"
     data_path: Optional[str] = None
     cache_dir: Optional[str] = None
-    experiment_root: str = "experiment_runs"
+    experiment_root: str = "experimentruns"
     cache_processed_data: bool = True
     preprocessing: Dict[str, Any] = field(default_factory=lambda: {
         "cache_processed_data": True,
@@ -232,8 +235,9 @@ class BaseDatasetConfig:
 
     def __post_init__(self):
         # If a data_path is not supplied, infer it from the standard datasets layout
+        # CORRECT PATH: data/automotive/{name}
         if not self.data_path:
-            self.data_path = f"datasets/can-train-and-test-v1.5/{self.name}"
+            self.data_path = f"data/automotive/{self.name}"
 
         # If no cache directory given, place it under the canonical experiment root
         if not self.cache_dir:
@@ -267,39 +271,58 @@ class BaseTrainingConfig:
     batch_size: int = 64  # Starting point for Lightning Tuner
     learning_rate: float = 0.003
     weight_decay: float = 0.0001
-    
+
     # Optimization
     optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
     scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
-    
+
     # Training behavior
     early_stopping_patience: int = 100  # Increased for more robust training
     gradient_clip_val: float = 1.0
     accumulate_grad_batches: int = 1
-    
+
     # Hardware optimization
     precision: str = "32-true"
     find_unused_parameters: bool = False
-    
+
+    # Memory optimization (now available for ALL training modes)
+    # Gradient checkpointing is critical for preventing OOM on large datasets
+    memory_optimization: MemoryOptimizationConfig = field(default_factory=MemoryOptimizationConfig)
+
     # Lightning Tuner - enabled for optimal batch size
     optimize_batch_size: bool = True
-    batch_size_mode: str = "power"
+    batch_size_mode: str = "binsearch"  # More precise than 'power' mode
     max_batch_size_trials: int = 10
-    
-    # Graph data memory safety factor
+
+    # Graph data memory safety factor - ADAPTIVE LEARNING SYSTEM
     # Graph operations have hidden memory overhead from message passing, attention, etc.
-    # Tuner doesn't account for this, so apply conservative factor to prevent OOM
-    graph_memory_safety_factor: float = 0.5  # Use 50% of tuner's suggestion (adjustable: 0.3-0.7)
-    
+    # Tuner doesn't account for this, so we apply a safety factor to prevent OOM
+    #
+    # ADAPTIVE MODE (use_adaptive_batch_size_factor=True):
+    #   - System learns optimal factor for each dataset×model×mode combination
+    #   - Starts with experience-based initial factors (see adaptive_batch_size.py)
+    #   - Monitors actual memory usage during training
+    #   - Adjusts factor with momentum targeting 90% GPU utilization
+    #   - Handles OOM crashes by reducing factor before job dies
+    #   - Converges to optimal factor over multiple runs
+    #
+    # STATIC MODE (use_adaptive_batch_size_factor=False):
+    #   - Uses fixed graph_memory_safety_factor value
+    #   - Useful for debugging or when you want manual control
+    #
+    # Priority: 1) config/batch_size_factors.json, 2) graph_memory_safety_factor, 3) auto-select
+    use_adaptive_batch_size_factor: bool = True  # Enable adaptive learning (recommended)
+    graph_memory_safety_factor: Optional[float] = None  # None = use JSON file or auto-select
+
     # Evaluation
     run_test: bool = True
     test_every_n_epochs: int = 5
-    
+
     # Checkpointing
     save_top_k: int = 3
     monitor_metric: str = "val_loss"
     monitor_mode: str = "min"
-    
+
     # Logging
     log_every_n_steps: int = 50
     save_hyperparameters: bool = True
@@ -310,6 +333,22 @@ class BaseTrainingConfig:
     cudnn_benchmark: bool = False
     # Automatically validate saved artifacts after training (torch.load weights_only) and write sanitized copies if needed
     validate_artifacts: bool = True
+
+    # ========================================================================
+    # Knowledge Distillation (toggle - orthogonal to training mode)
+    # ========================================================================
+    # KD can be applied to ANY training mode (autoencoder, curriculum, normal)
+    # except fusion (DQN uses already-distilled models)
+    #
+    # When enabled:
+    # - VGAE modes: distills both latent vectors and reconstructed features
+    # - GAT modes: distills soft labels with temperature scaling
+    # - Projection layer automatically added if teacher/student dims differ
+
+    use_knowledge_distillation: bool = False  # Toggle KD on/off
+    teacher_model_path: Optional[str] = None  # Path to teacher .pth or .ckpt file
+    distillation_temperature: float = 4.0     # Temperature for soft labels (higher = softer)
+    distillation_alpha: float = 0.7           # Weight: alpha*KD_loss + (1-alpha)*task_loss
 
 
 @dataclass
@@ -337,23 +376,22 @@ class KnowledgeDistillationConfig(BaseTrainingConfig):
     """Knowledge distillation training configuration."""
     mode: str = "knowledge_distillation"
     description: str = "Knowledge distillation from teacher to student model"
-    
+
     # Distillation specific
     teacher_model_path: Optional[str] = None
     distillation_temperature: float = 4.0
     distillation_alpha: float = 0.7
     student_model_scale: float = 1.0
-    
+
     # Adjusted defaults for distillation
     max_epochs: int = 400
     batch_size: int = 64  # Starting point for Lightning Tuner
     learning_rate: float = 0.002
     precision: str = "16-mixed"
     accumulate_grad_batches: int = 2
-    
-    # Memory optimization
-    memory_optimization: MemoryOptimizationConfig = field(default_factory=MemoryOptimizationConfig)
-    
+
+    # Note: memory_optimization now inherited from BaseTrainingConfig
+
     # Enhanced monitoring for distillation
     log_teacher_student_comparison: bool = True
     compare_with_teacher: bool = True
@@ -531,7 +569,7 @@ class CANGraphConfig:
     experiment_name: str = field(init=False)
 
     # Canonical experiment layout root (will be created by training when needed)
-    experiment_root: str = "experiment_runs"
+    experiment_root: str = "experimentruns"
     modality: str = "automotive"
     model_size: str = field(default=None)  # 'teacher' or 'student' (inferred if None)
     distillation: str = field(default=None)  # 'distilled' or 'no_distillation' (inferred if None)
@@ -544,10 +582,13 @@ class CANGraphConfig:
     # Logging
     logging: Dict[str, Any] = field(default_factory=lambda: {
         "level": "INFO",
-        "enable_tensorboard": False,
+        "use_tensorboard": False,  # Use MLFlow instead
+        "use_mlflow": True,
         "save_top_k": 3,
         "monitor_metric": "val_loss",
-        "monitor_mode": "min"
+        "monitor_mode": "min",
+        "log_interval": 50,
+        "val_check_interval": 1
     })
 
     def __post_init__(self):
@@ -602,10 +643,18 @@ class CANGraphConfig:
         """Return a mapping of artifact name -> required canonical Path for this config.
 
         This makes it explicit which pre-trained models are required for the current
-        `training.mode`. The caller should check for existence and fail if missing.
+        `training.mode`. Uses glob-based discovery to find models flexibly rather
+        than hardcoding exact filenames.
+        
+        Resolution priority for each artifact:
+        1. Glob-based discovery in canonical directory (handles any *.pth matching the pattern)
+        2. Fallback to hardcoded default path (for pre-existence checks before training)
         """
+        from src.paths import PathResolver
+        
         artifacts = {}
         exp_dir = self.canonical_experiment_dir()
+        resolver = PathResolver(self)
 
         if self.training.mode == "knowledge_distillation":
             # Teacher model must exist and be specified
@@ -613,24 +662,103 @@ class CANGraphConfig:
             if teacher_path:
                 artifacts["teacher_model"] = Path(teacher_path)
             else:
-                artifacts["teacher_model"] = exp_dir / "teacher" / f"best_teacher_model_{self.dataset.name}.pth"
+                # Infer teacher location based on student model type
+                raw_type = getattr(self.model, "type", "unknown")
+                model_arch = raw_type.replace('_student', '').replace('_teacher', '')
+                
+                if model_arch == "vgae":
+                    # VGAE teacher is in autoencoder mode - use discovery
+                    teacher_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder"
+                    discovered = resolver.discover_model(teacher_dir, 'vgae', require_exists=False)
+                    artifacts["teacher_model"] = discovered or (teacher_dir / "models" / "vgae_autoencoder.pth")
+                elif model_arch == "gat":
+                    # GAT teacher - try curriculum first, then normal (using discovery)
+                    teacher_dir_curriculum = Path(self.experiment_root) / self.modality / self.dataset.name / "supervised" / "gat" / "teacher" / "no_distillation" / "curriculum"
+                    teacher_dir_normal = Path(self.experiment_root) / self.modality / self.dataset.name / "supervised" / "gat" / "teacher" / "no_distillation" / "normal"
+                    
+                    # Try discovery in each location
+                    discovered = resolver.discover_model(teacher_dir_curriculum, 'gat', require_exists=False)
+                    if not discovered:
+                        discovered = resolver.discover_model(teacher_dir_normal, 'gat', require_exists=False)
+                    
+                    # Fallback to default path if nothing discovered
+                    artifacts["teacher_model"] = discovered or (teacher_dir_curriculum / "models" / "gat_curriculum.pth")
+                else:
+                    # Generic fallback
+                    artifacts["teacher_model"] = exp_dir / "teacher" / f"best_teacher_model_{self.dataset.name}.pth"
 
-        # Use canonical absolute locations (consistent with canonical_experiment_dir grammar)
+        # Use discovery for fusion mode artifacts
         if self.training.mode == "fusion":
-            # VGAE autoencoder (unsupervised teacher)
-            ae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "teacher" / self.distillation / "autoencoder"
-            artifacts["autoencoder"] = ae_dir / "vgae_autoencoder.pth"
-
-            # Classifier (supervised GAT, normal training)
-            clf_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "supervised" / "gat" / "teacher" / self.distillation / "normal"
-            artifacts["classifier"] = clf_dir / f"gat_{self.dataset.name}_normal.pth"
+            # Determine if this is teacher fusion or student fusion
+            is_student_fusion = self.model_size == "student" or self.distillation == "distilled"
+            
+            if is_student_fusion:
+                # Student fusion needs student VGAE and student GAT
+                ae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "student" / self.distillation / "knowledge_distillation"
+                clf_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "supervised" / "gat" / "student" / self.distillation / "knowledge_distillation"
+                
+                discovered_ae = resolver.discover_model(ae_dir, 'vgae', require_exists=False)
+                discovered_clf = resolver.discover_model(clf_dir, 'gat', require_exists=False)
+                
+                artifacts["autoencoder"] = discovered_ae or (ae_dir / "models" / "vgae_student_knowledge_distillation.pth")
+                artifacts["classifier"] = discovered_clf or (clf_dir / "models" / "gat_student_knowledge_distillation.pth")
+            else:
+                # Teacher fusion needs teacher VGAE and teacher GAT
+                ae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder"
+                clf_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "supervised" / "gat" / "teacher" / "no_distillation" / "curriculum"
+                
+                discovered_ae = resolver.discover_model(ae_dir, 'vgae', require_exists=False)
+                discovered_clf = resolver.discover_model(clf_dir, 'gat', require_exists=False)
+                
+                artifacts["autoencoder"] = discovered_ae or (ae_dir / "models" / "vgae_autoencoder.pth")
+                artifacts["classifier"] = discovered_clf or (clf_dir / "models" / "gat_curriculum.pth")
 
         if self.training.mode == "curriculum":
-            # Curriculum requires the VGAE teacher saved under the canonical unsupervised path
-            vgae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "teacher" / self.distillation / "autoencoder"
-            artifacts["vgae"] = vgae_dir / "vgae_autoencoder.pth"
+            # Curriculum requires the VGAE teacher - use discovery
+            vgae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder"
+            discovered = resolver.discover_model(vgae_dir, 'vgae', require_exists=False)
+            artifacts["vgae"] = discovered or (vgae_dir / "models" / "vgae_autoencoder.pth")
 
         return artifacts
+
+    def get_effective_safety_factor(self) -> float:
+        """
+        Get the effective batch size safety factor for this configuration.
+
+        Returns either:
+        1. Adaptive factor from database (learned from previous runs) if enabled
+        2. Static fallback factor from training config
+
+        The adaptive system learns optimal factors for each dataset×model×mode
+        combination by monitoring actual memory usage and adjusting with momentum
+        targeting 90% GPU utilization.
+
+        Returns:
+            Safety factor (0.3 - 0.8 range)
+
+        Example:
+            >>> config = store.create_config('gat', 'hcrl_ch', 'normal')
+            >>> factor = config.get_effective_safety_factor()
+            >>> # Returns adaptive factor like 0.55 (learned) or 0.6 (fallback)
+        """
+        # Check if adaptive mode is enabled
+        use_adaptive = getattr(self.training, 'use_adaptive_batch_size_factor', True)
+
+        if use_adaptive:
+            try:
+                # Import here to avoid circular dependency
+                from src.training.memory_monitor_callback import get_adaptive_safety_factor
+                return get_adaptive_safety_factor(self)
+            except Exception as e:
+                # Fallback to static if adaptive fails
+                import logging
+                logger = logging.getLogger(__name__)
+                logger.warning(f"Failed to get adaptive safety factor: {e}")
+                logger.warning("Falling back to static factor")
+
+        # Use static factor from config
+        static_factor = getattr(self.training, 'graph_memory_safety_factor', 0.6)
+        return static_factor
 
 
 
@@ -685,14 +813,14 @@ class CANGraphConfigStore:
     
     def _register_presets(self):
         """Register common preset configurations."""
-        # Dataset presets
+        # Dataset presets - CORRECT PATHS: data/automotive/{dataset}
         datasets = {
-            "hcrl_sa": CANDatasetConfig(name="hcrl_sa", data_path="datasets/can-train-and-test-v1.5/hcrl-sa"),
-            "hcrl_ch": CANDatasetConfig(name="hcrl_ch", data_path="datasets/can-train-and-test-v1.5/hcrl-ch"),
-            "set_01": CANDatasetConfig(name="set_01", data_path="datasets/can-train-and-test-v1.5/set_01"),
-            "set_02": CANDatasetConfig(name="set_02", data_path="datasets/can-train-and-test-v1.5/set_02"),
-            "set_03": CANDatasetConfig(name="set_03", data_path="datasets/can-train-and-test-v1.5/set_03"),
-            "set_04": CANDatasetConfig(name="set_04", data_path="datasets/can-train-and-test-v1.5/set_04"),
+            "hcrl_sa": CANDatasetConfig(name="hcrl_sa", data_path="data/automotive/hcrl_sa"),
+            "hcrl_ch": CANDatasetConfig(name="hcrl_ch", data_path="data/automotive/hcrl_ch"),
+            "set_01": CANDatasetConfig(name="set_01", data_path="data/automotive/set_01"),
+            "set_02": CANDatasetConfig(name="set_02", data_path="data/automotive/set_02"),
+            "set_03": CANDatasetConfig(name="set_03", data_path="data/automotive/set_03"),
+            "set_04": CANDatasetConfig(name="set_04", data_path="data/automotive/set_04"),
         }
         
         for name, config in datasets.items():
@@ -748,13 +876,14 @@ class CANGraphConfigStore:
     
     def get_dataset_config(self, dataset_name: str) -> CANDatasetConfig:
         """Get dataset configuration by name."""
+        # CORRECT PATHS: data/automotive/{dataset}
         dataset_configs = {
-            "hcrl_sa": CANDatasetConfig(name="hcrl_sa", data_path="datasets/can-train-and-test-v1.5/hcrl-sa"),
-            "hcrl_ch": CANDatasetConfig(name="hcrl_ch", data_path="datasets/can-train-and-test-v1.5/hcrl-ch"),
-            "set_01": CANDatasetConfig(name="set_01", data_path="datasets/can-train-and-test-v1.5/set_01"),
-            "set_02": CANDatasetConfig(name="set_02", data_path="datasets/can-train-and-test-v1.5/set_02"),
-            "set_03": CANDatasetConfig(name="set_03", data_path="datasets/can-train-and-test-v1.5/set_03"),
-            "set_04": CANDatasetConfig(name="set_04", data_path="datasets/can-train-and-test-v1.5/set_04")
+            "hcrl_sa": CANDatasetConfig(name="hcrl_sa", data_path="data/automotive/hcrl_sa"),
+            "hcrl_ch": CANDatasetConfig(name="hcrl_ch", data_path="data/automotive/hcrl_ch"),
+            "set_01": CANDatasetConfig(name="set_01", data_path="data/automotive/set_01"),
+            "set_02": CANDatasetConfig(name="set_02", data_path="data/automotive/set_02"),
+            "set_03": CANDatasetConfig(name="set_03", data_path="data/automotive/set_03"),
+            "set_04": CANDatasetConfig(name="set_04", data_path="data/automotive/set_04")
         }
         
         if dataset_name not in dataset_configs:
@@ -813,17 +942,29 @@ def create_fusion_config(dataset: str, **overrides) -> CANGraphConfig:
 
 
 def create_curriculum_config(dataset: str, vgae_model_path: Optional[str] = None, **overrides) -> CANGraphConfig:
-    """Create curriculum learning config for GAT with VGAE-guided hard mining."""
+    """Create curriculum learning config for GAT with VGAE-guided hard mining.
+    
+    Uses glob-based discovery to find the VGAE model if not explicitly provided.
+    """
+    from src.paths import PathResolver
+    
     store = CANGraphConfigStore()
     cfg = store.create_config(model_type="gat", dataset_name=dataset, training_mode="curriculum", **overrides)
     
-    # Set VGAE path if provided, otherwise use canonical location
+    # Set VGAE path if provided, otherwise use discovery-based resolution
     if vgae_model_path:
         cfg.training.vgae_model_path = vgae_model_path
     else:
-        # Auto-set canonical VGAE path
+        # Try to discover existing VGAE model using glob patterns
         vgae_dir = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder"
-        cfg.training.vgae_model_path = str(vgae_dir / "vgae_autoencoder.pth")
+        resolver = PathResolver(cfg)
+        discovered = resolver.discover_model(vgae_dir, 'vgae', require_exists=False)
+        
+        if discovered:
+            cfg.training.vgae_model_path = str(discovered)
+        else:
+            # Fallback to canonical path (will be validated at runtime)
+            cfg.training.vgae_model_path = str(vgae_dir / "models" / "vgae_autoencoder.pth")
     
     return cfg
 
@@ -857,12 +998,29 @@ def validate_config(config: CANGraphConfig) -> bool:
         logger.debug("Dataset path sanity check skipped due to unexpected config structure")
 
     # Check knowledge distillation requirements strictly
-    if config.training.mode == "knowledge_distillation":
+    # (both legacy mode="knowledge_distillation" and new toggle use_knowledge_distillation)
+    use_kd = getattr(config.training, "use_knowledge_distillation", False)
+    is_legacy_kd_mode = config.training.mode == "knowledge_distillation"
+
+    if use_kd or is_legacy_kd_mode:
+        # Reject fusion + KD (not supported - DQN uses already-distilled models)
+        if config.training.mode == "fusion":
+            raise ValueError(
+                "Knowledge distillation is not supported for fusion mode. "
+                "The DQN agent uses already-distilled VGAE and GAT models."
+            )
+
         teacher_path = getattr(config.training, "teacher_model_path", None)
         if not teacher_path:
-            raise ValueError("Knowledge distillation requires 'teacher_model_path' in the training config.")
+            raise ValueError(
+                "Knowledge distillation requires 'teacher_model_path' in the training config. "
+                "Specify the path to a trained teacher model (.pth or .ckpt file)."
+            )
         if not Path(teacher_path).exists():
-            raise FileNotFoundError(f"Teacher model not found at specified path: {teacher_path}. Please provide the canonical path under experiment_runs and ensure it exists.")
+            raise FileNotFoundError(
+                f"Teacher model not found at specified path: {teacher_path}. "
+                "Please provide the canonical path under experiment_runs and ensure it exists."
+            )
 
     # Fusion requires both autoencoder and classifier artifacts
     if config.training.mode == "fusion":

@@ -6,13 +6,13 @@ from pathlib import Path
 import pytest
 
 # Load config module by file path (avoid importing heavy package tree during collection)
-_cfg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src', 'config', 'hydra_zen_configs.py'))
+_cfg_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'config', 'hydra_zen_configs.py'))
 _spec = importlib.util.spec_from_file_location('hydra_cfg_mod', _cfg_path)
 _cfg_mod = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(_cfg_mod)
 
 # Load dependency manifest util by file path
-_dm_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', 'src', 'utils', 'dependency_manifest.py'))
+_dm_path = os.path.abspath(os.path.join(os.path.dirname(__file__), '..', '..', 'src', 'utils', 'dependency_manifest.py'))
 _spec2 = importlib.util.spec_from_file_location('dependency_manifest', _dm_path)
 _dm_mod = importlib.util.module_from_spec(_spec2)
 _spec2.loader.exec_module(_dm_mod)
@@ -37,9 +37,9 @@ def test_manifest_validation_success(tmp_path):
     cfg = CANGraphConfig(model=store.get_model_config('gat'), dataset=store.get_dataset_config('hcrl_sa'), training=FusionTrainingConfig(), trainer=TrainerConfig())
     cfg.experiment_root = str(tmp_path / 'experiment_runs')
 
-    # canonical artifact locations
-    ae = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / 'unsupervised' / 'vgae' / 'teacher' / cfg.distillation / 'autoencoder' / 'vgae_autoencoder.pth'
-    clf = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / 'supervised' / 'gat' / 'teacher' / cfg.distillation / 'normal' / f'gat_{cfg.dataset.name}_normal.pth'
+    # canonical artifact locations (models saved in models/ subdir)
+    ae = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / 'unsupervised' / 'vgae' / 'teacher' / cfg.distillation / 'autoencoder' / 'models' / 'vgae_autoencoder.pth'
+    clf = Path(cfg.experiment_root) / cfg.modality / cfg.dataset.name / 'supervised' / 'gat' / 'teacher' / cfg.distillation / 'normal' / 'models' / f'gat_{cfg.dataset.name}_normal.pth'
 
     _write_dummy(ae)
     _write_dummy(clf)
