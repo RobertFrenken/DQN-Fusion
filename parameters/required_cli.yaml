@@ -1,0 +1,176 @@
+# ============================================================================
+# CAN-Graph Required CLI Parameters
+#
+# PRINCIPLE 1: If parameter is in folder structure → MUST be in CLI
+#
+# Folder structure:
+#   {modality}/{dataset}/{model_size}/{learning_type}/{model}/{distillation}/{mode}/
+#
+# These parameters MUST be explicitly provided via CLI.
+# No implicit computation allowed.
+# ============================================================================
+
+# Level 0: Job Type (NEW)
+job_type:
+  type: string
+  choices: [single, pipeline]
+  required: true
+  default: single
+  description: "Job execution type - single job or multi-job pipeline"
+  cli_flags: ["--job-type"]
+
+# Level 1: Modality
+modality:
+  type: string
+  choices: [automotive, industrial, robotics]
+  required: true
+  default: automotive
+  description: "Application domain"
+  cli_flags: ["--modality"]
+
+# Level 2: Dataset
+dataset:
+  type: string
+  choices: [hcrl_ch, hcrl_sa, set_01, set_02, set_03, set_04]
+  required: true
+  description: "Dataset name"
+  cli_flags: ["--dataset"]
+
+# Level 3: Model Size
+model_size:
+  type: string
+  choices: [teacher, student]
+  required: true
+  default: teacher
+  description: "Model capacity - teacher (full) or student (compressed)"
+  cli_flags: ["--model-size"]
+
+# Level 4: Learning Type
+learning_type:
+  type: string
+  choices: [supervised, unsupervised, semi_supervised, rl_fusion]
+  required: true
+  description: "ML learning paradigm"
+  cli_flags: ["--learning-type"]
+  notes: |
+    - supervised: Classification with labels (normal vs attacks)
+    - unsupervised: Reconstruction without labels (normal samples only)
+    - semi_supervised: Combination of both (future)
+    - rl_fusion: Reinforcement learning for model fusion
+
+# Level 5: Model Architecture
+model:
+  type: string
+  choices: [vgae, gat, dqn, gcn, gnn, graphsage]
+  required: true
+  description: "Model architecture"
+  cli_flags: ["--model"]
+  constraints:
+    - if: learning_type == "unsupervised"
+      then: model in ["vgae"]
+      reason: "Only VGAE supports unsupervised autoencoder training"
+
+    - if: learning_type == "rl_fusion"
+      then: model in ["dqn"]
+      reason: "Only DQN supports RL-based fusion"
+
+    - if: learning_type == "supervised"
+      then: model in ["gat", "gcn", "gnn", "graphsage"]
+      reason: "Supervised learning supports various GNN architectures"
+
+# Level 6: Distillation
+distillation:
+  type: string
+  choices: [with-kd, no-kd]
+  required: true
+  default: no-kd
+  description: "Knowledge distillation enabled"
+  cli_flags: ["--distillation"]
+  constraints:
+    - if: distillation == "with-kd"
+      then: model_size == "student"
+      reason: "Knowledge distillation requires student model"
+
+    - if: distillation == "with-kd"
+      then: mode == "distillation"
+      reason: "Knowledge distillation requires distillation mode"
+
+# Level 7: Training Mode
+mode:
+  type: string
+  choices: [normal, curriculum, autoencoder, fusion, distillation, evaluation]
+  required: true
+  description: "Training strategy/mode"
+  cli_flags: ["--mode"]
+  details:
+    normal:
+      description: "Standard supervised training"
+      sample_strategy: "all_samples"  # Normal + attacks
+      learning_types: [supervised]
+
+    curriculum:
+      description: "Supervised with class imbalance handling"
+      sample_strategy: "all_samples"  # Progressive difficulty
+      learning_types: [supervised]
+      prerequisites: [vgae_checkpoint]
+
+    autoencoder:
+      description: "Unsupervised reconstruction"
+      sample_strategy: "normal_only"  # Only normal samples
+      learning_types: [unsupervised]
+
+    fusion:
+      description: "RL-based model fusion"
+      sample_strategy: "all_samples"
+      learning_types: [rl_fusion]
+      prerequisites: [vgae_checkpoint, classifier_checkpoint]
+
+    distillation:
+      description: "Knowledge distillation from teacher"
+      sample_strategy: "all_samples"
+      learning_types: [supervised, unsupervised]
+      prerequisites: [teacher_checkpoint]
+      constraints: [model_size == "student"]
+
+    evaluation:
+      description: "Comprehensive evaluation pipeline"
+      learning_types: [supervised, unsupervised, rl_fusion]
+      prerequisites: [trained_models]
+
+# ============================================================================
+# Cross-parameter Validation Rules
+# ============================================================================
+
+validation_rules:
+  # Rule: Learning type must match mode
+  - name: "Learning type and mode consistency"
+    rules:
+      - if: learning_type == "unsupervised"
+        then: mode == "autoencoder"
+
+      - if: learning_type == "rl_fusion"
+        then: mode == "fusion"
+
+      - if: learning_type == "supervised"
+        then: mode in ["normal", "curriculum", "distillation"]
+
+  # Rule: Distillation constraints
+  - name: "Distillation consistency"
+    rules:
+      - if: distillation == "with-kd"
+        then: model_size == "student" AND mode == "distillation"
+
+      - if: mode == "distillation"
+        then: distillation == "with-kd"
+
+  # Rule: Model architecture constraints
+  - name: "Model architecture validity"
+    rules:
+      - if: model == "vgae"
+        then: learning_type == "unsupervised"
+
+      - if: model == "dqn"
+        then: learning_type == "rl_fusion"
+
+      - if: model in ["gat", "gcn", "gnn", "graphsage"]
+        then: learning_type == "supervised"

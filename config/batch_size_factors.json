@@ -1,0 +1,23 @@
+{
+  "_comment": "Per-dataset safety factors for batch size optimization (0.3 - 0.8 range). Lower = more conservative.",
+
+  "hcrl_ch": 0.6,
+  "hcrl_sa": 0.55,
+  "set_01": 0.55,
+  "set_02": 0.35,
+  "set_03": 0.35,
+  "set_04": 0.35,
+
+  "_default": 0.5,
+
+  "_comment_kd": "KD training needs ~25% more memory for teacher model + projection layer",
+
+  "hcrl_ch_kd": 0.45,
+  "hcrl_sa_kd": 0.41,
+  "set_01_kd": 0.41,
+  "set_02_kd": 0.26,
+  "set_03_kd": 0.26,
+  "set_04_kd": 0.26,
+
+  "_default_kd": 0.38
+}
