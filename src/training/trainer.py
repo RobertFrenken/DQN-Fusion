@@ -512,13 +512,8 @@ class HydraZenTrainer:
         if bsc.optimize_batch_size:
             logger.info("🔧 Running batch size optimization...")
             model = self._optimize_batch_size(model, train_dataset, val_dataset)
-            logger.info(f"📊 Tuner found max safe batch size: {model.batch_size}")
-            final_batch_size = int(model.batch_size * bsc.safety_factor)
-            logger.info(
-                f"🎯 Applied safety_factor {bsc.safety_factor}: "
-                f"{model.batch_size} × {bsc.safety_factor} = {final_batch_size}"
-            )
-            model.batch_size = final_batch_size
+            # NOTE: _optimize_batch_size() already applies safety factor internally
+            logger.info(f"📊 Optimized batch size (with safety factor applied): {model.batch_size}")
         else:
             fallback_size = bsc.tuned_batch_size or bsc.default_batch_size
             logger.info(f"📊 Using batch size from config: {fallback_size}")

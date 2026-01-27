@@ -30,6 +30,16 @@ def analyze_gpu_monitoring(csv_file):
     # Parse timestamp
     df['timestamp'] = pd.to_datetime(df['timestamp'])
 
+    # Convert string values with units to numeric (remove ' MiB' and ' %' suffixes)
+    for col in df.columns:
+        if 'MiB' in col or '%' in col:
+            # Check if the column contains string values with units
+            if df[col].dtype == object:
+                # Remove units and convert to numeric
+                df[col] = pd.to_numeric(df[col].str.replace(' MiB', '').str.replace(' %', ''), errors='coerce')
+            elif df[col].dtype == str:
+                df[col] = pd.to_numeric(df[col].str.replace(' MiB', '').str.replace(' %', ''), errors='coerce')
+
     print(f"\n{'='*70}")
     print(f"GPU Monitoring Analysis: {csv_file}")
     print(f"{'='*70}\n")
@@ -104,14 +114,14 @@ def analyze_gpu_monitoring(csv_file):
 
     print("\n" + "="*70 + "\n")
 
-    # Plot
+    # Plot (convert to numpy arrays for matplotlib compatibility)
     fig, axes = plt.subplots(3, 1, figsize=(16, 10))
     fig.suptitle(f'GPU Monitoring Analysis: {Path(csv_file).name}', fontsize=14, fontweight='bold')
 
     # Memory usage
-    axes[0].plot(df['timestamp'], df['memory.used [MiB]']/1024, linewidth=2.5, label='GPU Memory Used', color='#1f77b4')
+    axes[0].plot(df['timestamp'].values, (df['memory.used [MiB]']/1024).values, linewidth=2.5, label='GPU Memory Used', color='#1f77b4')
     axes[0].axhline(total_mem/1024, color='#d62728', linestyle='--', label='GPU Total Capacity', linewidth=2)
-    axes[0].fill_between(df['timestamp'], 0, df['memory.used [MiB]']/1024, alpha=0.15, color='#1f77b4')
+    axes[0].fill_between(df['timestamp'].values, 0, (df['memory.used [MiB]']/1024).values, alpha=0.15, color='#1f77b4')
     axes[0].set_ylabel('GPU Memory (GB)', fontsize=12, fontweight='bold')
     axes[0].set_title('GPU Memory Usage Over Time', fontsize=13, fontweight='bold')
     axes[0].legend(loc='upper left', fontsize=10)
@@ -119,8 +129,8 @@ def analyze_gpu_monitoring(csv_file):
     axes[0].set_ylim(0, total_mem/1024 * 1.05)
 
     # GPU and Memory utilization
-    axes[1].plot(df['timestamp'], df['utilization.gpu [%]'], linewidth=2.5, label='GPU Utilization', color='#2ca02c')
-    axes[1].plot(df['timestamp'], df['utilization.memory [%]'], linewidth=2.5, label='Memory Utilization', color='#ff7f0e')
+    axes[1].plot(df['timestamp'].values, df['utilization.gpu [%]'].values, linewidth=2.5, label='GPU Utilization', color='#2ca02c')
+    axes[1].plot(df['timestamp'].values, df['utilization.memory [%]'].values, linewidth=2.5, label='Memory Utilization', color='#ff7f0e')
     axes[1].set_ylabel('Utilization (%)', fontsize=12, fontweight='bold')
     axes[1].set_title('GPU and Memory Utilization', fontsize=13, fontweight='bold')
     axes[1].set_ylim(0, 100)
@@ -131,7 +141,7 @@ def analyze_gpu_monitoring(csv_file):
 
     # Memory growth rate (derivative) - leak detection
     mem_growth_smoothed = df['mem_diff'].rolling(5).mean()
-    axes[2].plot(df['timestamp'][1:], mem_growth_smoothed[1:], linewidth=2.5, color='#9467bd', label='Memory Growth Rate (5-step MA)')
+    axes[2].plot(df['timestamp'][1:].values, mem_growth_smoothed[1:].values, linewidth=2.5, color='#9467bd', label='Memory Growth Rate (5-step MA)')
     axes[2].axhline(0, color='black', linestyle='-', linewidth=0.5)
     axes[2].axhline(50, color='#d62728', linestyle='--', alpha=0.5, label='Leak Threshold (50 MiB/step)')
     axes[2].set_xlabel('Time', fontsize=12, fontweight='bold')

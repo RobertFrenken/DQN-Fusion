@@ -414,6 +414,34 @@ These tasks improve the project but are not blocking for paper completion.
 
 ### Recently Completed:
 
+- ✅ **Critical Bugfix: Double Safety Factor Application** (2026-01-27 22:45 UTC)
+  - **Root Cause**: Safety factor was applied twice to batch size
+    1. First in `_optimize_batch_size()`: tuned_bs * safety_factor (e.g., 7782 * 0.55 = 4280)
+    2. Then AGAIN in `_train_standard()`: adjusted_bs * safety_factor (e.g., 4280 * 0.55 = 2354)
+  - **Impact**: Final batch size was 0.55² = 0.3025 (~30%) of intended value
+  - **Fix**: Removed redundant safety factor application in `_train_standard()`
+  - **File Modified**: `src/training/trainer.py` lines 509-527
+  - **Status**: Fixed and ready for testing
+
+- ✅ **Test Job 43977817 Analysis** (2026-01-27 22:30 UTC)
+  - **Status**: SUCCESS ✅ (10 epochs completed in 2.1 minutes)
+  - **Run Counter**: Working correctly (Run 002)
+  - **Batch Size Tuning**: Found max 8192, applied double safety factor (bug) → final 2354
+  - **GPU Utilization**:
+    * Peak Memory: 2,282 MiB (13.9% of 16GB) - very underutilized due to double safety factor bug
+    * Peak GPU Util: 59% (avg 3.4%) - DATA LOADING BOUND
+    * Duration: 2.1 minutes for 10 epochs
+  - **Memory Leak Warning**: False positive (227.8 MiB/step growth during batch size tuning)
+  - **Analysis Plot**: Generated `gpu_monitor_43977817_analysis.png`
+
+- ✅ **GPU Monitor Analysis Script Fix** (2026-01-27 22:35 UTC)
+  - **Issue**: Script failed with `TypeError: Could not convert string '0 MiB0 MiB...' to numeric`
+  - **Root Cause**: CSV values had " MiB" and " %" suffixes that pandas couldn't parse
+  - **Fix**: Added string cleaning to convert "123 MiB" → 123 and "45 %" → 45
+  - **Additional Fix**: Matplotlib compatibility - convert pandas Series to numpy arrays before plotting
+  - **File Modified**: `analyze_gpu_monitor.py`
+  - **Status**: Now works correctly, generates analysis plots
+
 - ✅ **15D DQN State Space Implementation** (2026-01-27 19:30 UTC)
   - **Objective**: Enhanced DQN fusion from 2D to 15D state space for richer decision-making
   - **State Components**:
@@ -424,7 +452,7 @@ These tasks improve the project but are not blocking for paper completion.
     * `src/training/prediction_cache.py`: Updated `extract_fusion_data()` to extract 15D features
     * `src/training/lightning_modules.py`: Updated `FusionPredictionCache` dataclass and `FusionLightningModule` for 15D states
     * `src/models/dqn.py`: Updated `normalize_state()`, `select_action()`, `compute_fusion_reward()`, `validate_agent()` for 15D input
-    * `src/evaluation/evaluation.py`: Added `--vgae-path` and `--gat-path` arguments, updated fusion inference for 15D states
+    * `src/evaluation/evaluation.py`: Added `--vgae-path` and `--gat-path` arguments, updated fusion inference for 15D states (VERIFIED ✅)
     * `src/training/modes/fusion.py`: Updated to use new 15D FusionPredictionCache constructor
   - **Key Technical Details**:
     * All statistics are **per-graph aggregations** (mean/std/max/min computed per sample, NOT fixed from all data)
@@ -432,7 +460,7 @@ These tasks improve the project but are not blocking for paper completion.
     * GAT embeddings: Aggregates pre-pooling node embeddings (before global pooling) per graph
     * DQN Q-network now accepts 15-dimensional input instead of 2-dimensional
   - **Impact**: Enables DQN to make more informed fusion decisions with access to intermediate model representations
-  - **Status**: All syntax checks passed, pipeline end-to-end compatible
+  - **Status**: All syntax checks passed, pipeline end-to-end compatible, evaluation.py verified
 
 - ✅ **Test Job 43977477 Failure Analysis** (2026-01-27 18:00 UTC)
   - Root cause: BatchSizeConfig not in frozen config deserialization class_map
