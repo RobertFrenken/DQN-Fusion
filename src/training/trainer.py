@@ -450,7 +450,8 @@ class HydraZenTrainer:
         model, trainer = fusion_trainer.train()
         
         # Post-training tasks (FusionTrainer already saves dqn_fusion.pth, config snapshot is extra)
-        self._save_final_model(model, "dqn_fusion.pth")
+        model_name = self._generate_model_filename("dqn", "fusion")
+        self._save_final_model(model, model_name)
         self._save_config_snapshot(paths)
         
         return model, trainer
@@ -472,7 +473,8 @@ class HydraZenTrainer:
         model, trainer = curriculum_trainer.train(num_ids)
         
         # Post-training tasks
-        self._save_final_model(model, "gat_curriculum.pth")
+        model_name = self._generate_model_filename("gat", "curriculum")
+        self._save_final_model(model, model_name)
         self._save_config_snapshot(paths)
         
         return model, trainer
@@ -525,8 +527,11 @@ class HydraZenTrainer:
             test_results = trainer.test(model, val_loader)
             logger.info(f"Test results: {test_results}")
         
-        # Save final model
-        model_name = f"{self.config.model.type}_{self.config.training.mode}.pth"
+        # Save final model with model_size in filename
+        model_name = self._generate_model_filename(
+            self.config.model.type,
+            self.config.training.mode
+        )
         self._save_final_model(model, model_name)
         
         return model, trainer
@@ -546,6 +551,27 @@ class HydraZenTrainer:
         except Exception as e:
             logger.warning(f"Failed to write config snapshot: {e}")
     
+    def _generate_model_filename(self, model_type: str, mode: str) -> str:
+        """
+        Generate consistent model filename including model_size.
+
+        Format: {model_type}_{model_size}_{mode}.pth
+        Examples:
+            - vgae_teacher_autoencoder.pth
+            - vgae_student_autoencoder.pth
+            - gat_teacher_curriculum.pth
+            - dqn_teacher_fusion.pth
+
+        Args:
+            model_type: Model type (vgae, gat, dqn)
+            mode: Training mode (autoencoder, curriculum, fusion, normal)
+
+        Returns:
+            Filename string with .pth extension
+        """
+        model_size = getattr(self.config, 'model_size', 'teacher')
+        return f"{model_type}_{model_size}_{mode}.pth"
+
     def _save_final_model(self, model: pl.LightningModule, filename: str):
         """Save final model state dict."""
         paths = self.get_hierarchical_paths()

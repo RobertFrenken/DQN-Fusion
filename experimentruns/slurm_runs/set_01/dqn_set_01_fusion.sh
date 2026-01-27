@@ -8,13 +8,13 @@
 #SBATCH --partition=gpu
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=frugoli.1@osu.edu
-#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/dqn_set_01_fusion_20260126_001325.out
-#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/dqn_set_01_fusion_20260126_001325.err
+#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_01/dqn_set_01_fusion_20260126_113400.out
+#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_01/dqn_set_01_fusion_20260126_113400.err
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
-#SBATCH --dependency=afterok:43962016
+#SBATCH --dependency=afterok:43964275
 
 # CAN-Graph Training Job
-# Generated: 2026-01-26 00:13:25
+# Generated: 2026-01-26 11:34:00
 set -euo pipefail
 
 echo "=================================================================="
@@ -60,7 +60,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "Results: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/set_01/rl_fusion/dqn/teacher/no_distillation/fusion"
 else
     echo "❌ JOB FAILED (exit code: $EXIT_CODE)"
-    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/dqn_set_01_fusion_20260126_001325.err"
+    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_01/dqn_set_01_fusion_20260126_113400.err"
 fi
 echo "End time: $(date)"
 echo "=================================================================="

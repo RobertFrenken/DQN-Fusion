@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=vgae_hcrl_sa_autoencode
-#SBATCH --time=01:00:00
+#SBATCH --time=06:00:00
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:v100:1
@@ -8,13 +8,13 @@
 #SBATCH --partition=gpu
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=frugoli.1@osu.edu
-#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/vgae_hcrl_sa_autoencode_20260125_234059.out
-#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/vgae_hcrl_sa_autoencode_20260125_234059.err
+#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/vgae_hcrl_sa_autoencode_20260126_113001.out
+#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/vgae_hcrl_sa_autoencode_20260126_113001.err
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
 
 
 # CAN-Graph Training Job
-# Generated: 2026-01-25 23:40:59
+# Generated: 2026-01-26 11:30:01
 set -euo pipefail
 
 echo "=================================================================="
@@ -60,7 +60,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "Results: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/teacher/no_distillation/autoencoder"
 else
     echo "❌ JOB FAILED (exit code: $EXIT_CODE)"
-    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/vgae_hcrl_sa_autoencode_20260125_234059.err"
+    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/vgae_hcrl_sa_autoencode_20260126_113001.err"
 fi
 echo "End time: $(date)"
 echo "=================================================================="

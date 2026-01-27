@@ -8,13 +8,13 @@
 #SBATCH --partition=gpu
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=frugoli.1@osu.edu
-#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_03/vgae_set_03_autoencode_20260126_101337.out
-#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_03/vgae_set_03_autoencode_20260126_101337.err
+#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_03/vgae_set_03_autoencode_20260126_132801.out
+#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_03/vgae_set_03_autoencode_20260126_132801.err
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
 
 
 # CAN-Graph Training Job
-# Generated: 2026-01-26 10:13:37
+# Generated: 2026-01-26 13:28:01
 set -euo pipefail
 
 echo "=================================================================="
@@ -60,7 +60,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "Results: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/set_03/unsupervised/vgae/teacher/no_distillation/autoencoder"
 else
     echo "❌ JOB FAILED (exit code: $EXIT_CODE)"
-    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_03/vgae_set_03_autoencode_20260126_101337.err"
+    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/set_03/vgae_set_03_autoencode_20260126_132801.err"
 fi
 echo "End time: $(date)"
 echo "=================================================================="

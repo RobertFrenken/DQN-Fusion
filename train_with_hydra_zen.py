@@ -170,30 +170,39 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Frozen config (recommended for SLURM jobs)
+  python train_with_hydra_zen.py --frozen-config /path/to/frozen_config.json
+
   # Normal training
-  python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training normal
-  
+  python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training normal --modality automotive
+
   # Knowledge distillation
   python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training knowledge_distillation \\
-      --teacher_path saved_models/teacher.pth --student_scale 0.5
-  
+      --teacher_path saved_models/teacher.pth --student_scale 0.5 --modality automotive
+
   # Fusion training (uses pre-cached predictions)
-  python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training fusion
-  
+  python train_with_hydra_zen.py --model gat --dataset hcrl_sa --training fusion --modality automotive
+
   # Using preset
   python train_with_hydra_zen.py --preset gat_normal_hcrl_sa
-  
+
   # Fusion preset
   python train_with_hydra_zen.py --preset fusion_hcrl_sa
-  
+
   # List presets
   python train_with_hydra_zen.py --list-presets
-  
+
   # Alternatively, use dedicated fusion training script:
   python train_fusion_lightning.py --dataset hcrl_sa --max-epochs 50
         """
     )
-    
+
+    # =========================================================================
+    # Frozen Config Mode (Preferred for SLURM jobs)
+    # =========================================================================
+    parser.add_argument('--frozen-config', dest='frozen_config', type=str,
+                      help='Path to frozen config JSON file (bypasses all other config options)')
+
     # Preset mode
     parser.add_argument('--preset', type=str,
                       help='Use a preset configuration')
@@ -206,10 +215,22 @@ Examples:
     parser.add_argument('--dataset', type=str, 
                       choices=['hcrl_sa', 'hcrl_ch', 'set_01', 'set_02', 'set_03', 'set_04', 'car_hacking'],
                       default='hcrl_sa', help='Dataset name')
-    parser.add_argument('--training', type=str, 
+    parser.add_argument('--training', type=str,
                       choices=['normal', 'autoencoder', 'knowledge_distillation', 'curriculum', 'fusion'],
                       default='normal', help='Training mode')
-    
+
+    # Model size (independent from distillation - affects architecture, not learning strategy)
+    parser.add_argument('--model-size', dest='model_size', type=str,
+                      choices=['teacher', 'student'],
+                      default='teacher',
+                      help='Model size: teacher (larger arch) or student (smaller arch)')
+
+    # Modality (application domain - affects paths and data loading)
+    parser.add_argument('--modality', type=str,
+                      choices=['automotive', 'industrial', 'robotics'],
+                      default='automotive',
+                      help='Application domain/modality')
+
     # Knowledge distillation (toggle - can be used with any mode except fusion)
     parser.add_argument('--use-kd', action='store_true',
                       help='Enable knowledge distillation (requires --teacher_path)')
@@ -256,6 +277,51 @@ Examples:
         list_presets()
         return
 
+    # =========================================================================
+    # Frozen Config Mode: Load pre-validated config from JSON
+    # =========================================================================
+    if getattr(args, 'frozen_config', None):
+        try:
+            from src.config.frozen_config import load_frozen_config
+
+            print(f"📖 Loading frozen config: {args.frozen_config}")
+            config = load_frozen_config(args.frozen_config)
+
+            # Print configuration summary
+            print(f"📋 Configuration Summary (from frozen config):")
+            print(f"   Model: {config.model.type}")
+            print(f"   Dataset: {config.dataset.name}")
+            print(f"   Training: {config.training.mode}")
+            print(f"   Experiment: {config.experiment_name}")
+
+            if hasattr(config.training, 'teacher_model_path') and config.training.teacher_model_path:
+                print(f"   Teacher: {config.training.teacher_model_path}")
+                print(f"   Student scale: {getattr(config.training, 'student_model_scale', 'N/A')}")
+
+            # Create trainer and run
+            try:
+                trainer = HydraZenTrainer(config)
+                model, lightning_trainer = trainer.train()
+            except KeyboardInterrupt:
+                print("\n🛑 Training interrupted by user")
+            except Exception as e:
+                print(f"❌ Training failed: {e}")
+                raise
+
+            return
+
+        except FileNotFoundError as e:
+            print(f"❌ Frozen config not found: {args.frozen_config}")
+            print(f"   Error: {e}")
+            return
+        except Exception as e:
+            print(f"❌ Failed to load frozen config: {e}")
+            raise
+
+    # =========================================================================
+    # Legacy Mode: Build config from CLI arguments
+    # =========================================================================
+
     # Validate --use-kd flag
     if getattr(args, 'use_kd', False):
         if not args.teacher_path:
@@ -292,7 +358,16 @@ Examples:
         
         # Prepare overrides
         overrides = {}
-        # Knowledge distillation toggle (new orthogonal approach)
+
+        # Model size and modality (explicit, independent dimensions)
+        # model_size: architecture size (teacher=larger, student=smaller)
+        # modality: application domain (automotive, industrial, robotics)
+        if hasattr(args, 'model_size') and args.model_size:
+            overrides['model_size'] = args.model_size
+        if hasattr(args, 'modality') and args.modality:
+            overrides['modality'] = args.modality
+
+        # Knowledge distillation toggle (independent of model_size)
         if getattr(args, 'use_kd', False):
             overrides['use_knowledge_distillation'] = True
         if args.teacher_path:
@@ -311,9 +386,15 @@ Examples:
             overrides['learning_rate'] = args.learning_rate
         if args.early_stopping_patience:
             overrides['early_stopping_patience'] = args.early_stopping_patience
-        
+
         config = store_manager.create_config(args.model, args.dataset, args.training, **overrides)
-    
+
+    # Explicitly set model_size and modality on config (ensure path hierarchy is correct)
+    if hasattr(args, 'model_size') and args.model_size:
+        config.model_size = args.model_size
+    if hasattr(args, 'modality') and args.modality:
+        config.modality = args.modality
+
     # Apply global overrides
     if args.tensorboard:
         config.logging["enable_tensorboard"] = True

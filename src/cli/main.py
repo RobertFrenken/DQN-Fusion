@@ -160,13 +160,14 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
         '--distillation',
         choices=['with-kd', 'no-kd'],
         default='no-kd',
-        help='Knowledge distillation flag (default: no-kd). Use with-kd for student models learning from teacher'
+        help='Knowledge distillation flag (default: no-kd). Independent of --model-size; any model can learn via KD'
     )
 
     core.add_argument(
-        '--mode',
+        '--training-strategy',
+        dest='training_strategy',
         choices=['normal', 'autoencoder', 'curriculum', 'fusion', 'distillation', 'evaluation'],
-        help='Training strategy/mode (required unless --config specified)'
+        help='Training strategy (required unless --config specified). Options: normal, autoencoder, curriculum, fusion'
     )
 
     # ============================================================================
@@ -459,9 +460,10 @@ def _add_pipeline_args(parser: argparse.ArgumentParser) -> None:
     )
 
     multi.add_argument(
-        '--mode',
+        '--training-strategy',
+        dest='training_strategy',
         required=True,
-        help='Training modes (e.g., autoencoder,curriculum,fusion). One per pipeline stage.'
+        help='Training strategies (e.g., autoencoder,curriculum,fusion). One per pipeline stage.'
     )
 
     # ============================================================================
@@ -494,6 +496,12 @@ def _add_pipeline_args(parser: argparse.ArgumentParser) -> None:
         choices=['with-kd', 'no-kd'],
         default='no-kd',
         help='Knowledge distillation flag for all stages (default: no-kd)'
+    )
+
+    single.add_argument(
+        '--teacher_path',
+        type=str,
+        help='Path to teacher model checkpoint (required when --distillation with-kd)'
     )
 
     # ============================================================================
@@ -594,8 +602,8 @@ def _run_training(args):
             missing.append('--model')
         if not args.dataset:
             missing.append('--dataset')
-        if not args.mode:
-            missing.append('--mode')
+        if not args.training_strategy:
+            missing.append('--training-strategy')
         if not args.learning_type:
             missing.append('--learning-type')
 
@@ -603,7 +611,7 @@ def _run_training(args):
             logger.error(
                 f"✗ Missing required arguments: {', '.join(missing)}\n\n"
                 f"Either specify:\n"
-                f"  1. Explicit configuration: --model --dataset --mode --learning-type\n"
+                f"  1. Explicit configuration: --model --dataset --training-strategy --learning-type\n"
                 f"  2. Config file: --config path/to/config.yaml\n"
                 f"  3. [Deprecated] Preset: --preset preset_name\n\n"
                 f"Run 'can-train --help' for more details."
@@ -657,7 +665,7 @@ def _run_training(args):
         validated_config = validate_cli_config(
             model=args.model,
             dataset=args.dataset,
-            mode=args.mode,
+            mode=args.training_strategy,
             model_size=args.model_size or 'teacher',
             modality=getattr(args, 'modality', 'automotive'),
             learning_type=getattr(args, 'learning_type', None),
@@ -786,7 +794,7 @@ def _run_pipeline(args):
     # ========================================================================
     models = [m.strip() for m in args.model.split(',')]
     learning_types = [lt.strip() for lt in args.learning_type.split(',')]
-    modes = [m.strip() for m in args.mode.split(',')]
+    training_strategies = [m.strip() for m in args.training_strategy.split(',')]
 
     num_stages = len(models)
 
@@ -798,12 +806,62 @@ def _run_pipeline(args):
         )
         return 1
 
-    if len(modes) != num_stages:
+    if len(training_strategies) != num_stages:
         logger.error(
-            f"✗ --mode has {len(modes)} values but --model has {num_stages}. "
+            f"✗ --training-strategy has {len(training_strategies)} values but --model has {num_stages}. "
             f"Multi-value parameters must have the same number of values."
         )
         return 1
+
+    # ========================================================================
+    # Validate KD configuration
+    # ========================================================================
+    distillation = args.distillation or 'no-kd'
+
+    if distillation == 'with-kd':
+        # Check for fusion mode (not supported with KD)
+        if 'fusion' in training_strategies:
+            logger.error(
+                "✗ Knowledge distillation is not compatible with fusion mode.\n"
+                "   Fusion uses already-distilled VGAE and GAT models.\n"
+                "   Either:\n"
+                "   1. Remove 'fusion' from --training-strategy\n"
+                "   2. Use '--distillation no-kd' (default)"
+            )
+            return 1
+
+        # Note: model_size and distillation are independent dimensions
+        # Any model size can use KD (though student models are typical)
+        if args.model_size == 'teacher':
+            logger.info(
+                "ℹ️  Note: Using teacher-sized model with KD.\n"
+                "   This is valid but atypical (KD is usually for student models)."
+            )
+
+        # Require teacher_path for KD
+        if not args.teacher_path:
+            logger.error(
+                "✗ --teacher_path is required when using --distillation with-kd\n"
+                "   Example: --teacher_path /path/to/teacher_model.pth"
+            )
+            return 1
+
+        # Validate teacher_path exists
+        from pathlib import Path
+        teacher_path = Path(args.teacher_path)
+        if not teacher_path.exists():
+            logger.error(
+                f"✗ Teacher model not found: {teacher_path}\n"
+                f"   Please verify the path is correct and the file exists"
+            )
+            return 1
+
+        logger.info(
+            "✓ KD configuration validated\n"
+            f"   Distillation: {distillation}\n"
+            f"   Model size: {args.model_size}\n"
+            f"   Teacher path: {args.teacher_path}"
+        )
 
     # ========================================================================
     # Build job specifications
@@ -814,7 +872,7 @@ def _run_pipeline(args):
             'stage': i + 1,
             'model': models[i],
             'learning_type': learning_types[i],
-            'mode': modes[i],
+            'mode': training_strategies[i],  # Internal field still 'mode' for job_manager compatibility
             # Single-value parameters (same for all jobs)
             'dataset': args.dataset,
             'model_size': args.model_size,
@@ -895,9 +953,10 @@ def _run_pipeline(args):
         if i > 0 and len(job_ids) > 0:
             slurm_args['dependency'] = job_ids[-1]
 
-        # Submit job
-        # NOTE: model_args is empty here; could be extended to support per-stage overrides
+        # Build model_args (including teacher_path if KD is enabled)
         model_args = {}
+        if distillation == 'with-kd' and hasattr(args, 'teacher_path') and args.teacher_path:
+            model_args['teacher_path'] = args.teacher_path
 
         try:
             job_id = slurm_manager.submit_single(

@@ -1,6 +1,6 @@
 #!/bin/bash
 #SBATCH --job-name=gat_hcrl_sa_curriculum
-#SBATCH --time=01:00:00
+#SBATCH --time=06:00:00
 #SBATCH --mem=64G
 #SBATCH --cpus-per-task=16
 #SBATCH --gres=gpu:v100:1
@@ -8,13 +8,13 @@
 #SBATCH --partition=gpu
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=frugoli.1@osu.edu
-#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/gat_hcrl_sa_curriculum_20260125_234059.out
-#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/gat_hcrl_sa_curriculum_20260125_234059.err
+#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/gat_hcrl_sa_curriculum_20260126_113003.out
+#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/gat_hcrl_sa_curriculum_20260126_113003.err
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
-#SBATCH --dependency=afterok:43961965
+#SBATCH --dependency=afterok:43964226
 
 # CAN-Graph Training Job
-# Generated: 2026-01-25 23:40:59
+# Generated: 2026-01-26 11:30:03
 set -euo pipefail
 
 echo "=================================================================="
@@ -60,7 +60,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "Results: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/supervised/gat/teacher/no_distillation/curriculum"
 else
     echo "❌ JOB FAILED (exit code: $EXIT_CODE)"
-    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/gat_hcrl_sa_curriculum_20260125_234059.err"
+    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/slurm_runs/hcrl_sa/gat_hcrl_sa_curriculum_20260126_113003.err"
 fi
 echo "End time: $(date)"
 echo "=================================================================="

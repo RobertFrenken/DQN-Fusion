@@ -186,18 +186,15 @@ class CANGraphCLIConfig(BaseModel):
         mode = info.data.get("mode")
         model_size = info.data.get("model_size")
 
-        # P→Q: distillation=with-kd → mode=distillation AND model_size=student
+        # Note: model_size and distillation are INDEPENDENT dimensions
+        # Any model_size can use with-kd (though student is typical)
+        # KD can combine with modes: autoencoder, curriculum, normal, distillation
         if v == "with-kd":
-            if mode != "distillation":
+            # Only validate that fusion mode doesn't use KD
+            if mode == "fusion":
                 raise ValueError(
-                    f"Knowledge distillation (with-kd) requires mode='distillation', got '{mode}'\n"
-                    f"    Reason: Distillation flag must match distillation training mode"
-                )
-
-            if model_size != "student":
-                raise ValueError(
-                    f"Knowledge distillation (with-kd) requires model_size='student', got '{model_size}'\n"
-                    f"    Reason: Only student models learn from teacher via distillation"
+                    f"Knowledge distillation (with-kd) cannot be used with fusion mode.\n"
+                    f"    Reason: Fusion uses already-distilled models"
                 )
 
         # P→Q: mode=distillation → distillation=with-kd

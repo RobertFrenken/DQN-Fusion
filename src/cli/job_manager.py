@@ -3,6 +3,12 @@ SLURM Job Manager for CAN-Graph training.
 
 Generates and submits SLURM batch scripts for training jobs.
 Handles single runs, sweeps, and pipeline mode with dependencies.
+
+Implements the "Frozen Config Pattern":
+- Configs are fully resolved and saved as JSON at job submission time
+- SLURM scripts pass only `--frozen-config /path/to/config.json`
+- Training script loads pre-validated config (no re-resolution)
+- Benefits: reproducibility, simpler SLURM scripts, fewer bugs
 """
 
 from pathlib import Path
@@ -10,14 +16,86 @@ from typing import Dict, List, Optional, Tuple
 from datetime import datetime
 import subprocess
 import logging
+import json
 
 logger = logging.getLogger(__name__)
 
 
 # ============================================================================
-# SLURM Script Template
+# SLURM Script Templates
 # ============================================================================
 
+# New template using Frozen Config Pattern (preferred)
+SLURM_FROZEN_CONFIG_TEMPLATE = """#!/bin/bash
+#SBATCH --job-name={job_name}
+#SBATCH --time={walltime}
+#SBATCH --mem={memory}
+#SBATCH --cpus-per-task={cpus}
+#SBATCH --gres=gpu:{gpu_type}:{gpus}
+#SBATCH --account={account}
+#SBATCH --partition={partition}
+#SBATCH --mail-type={notification_type}
+#SBATCH --mail-user={email}
+#SBATCH --output={log_path}
+#SBATCH --error={error_path}
+#SBATCH --chdir={project_root}
+{dependency_line}
+
+# CAN-Graph Training Job (Frozen Config Pattern)
+# Generated: {timestamp}
+# Config: {frozen_config_path}
+set -euo pipefail
+
+echo "=================================================================="
+echo "CAN-Graph Training Job (Frozen Config)"
+echo "=================================================================="
+echo "Job ID: $SLURM_JOB_ID"
+echo "Node: $(hostname)"
+echo "Start time: $(date)"
+echo "Frozen Config: {frozen_config_path}"
+echo "=================================================================="
+
+# Load environment
+module load miniconda3/24.1.2-py310 || true
+source activate gnn-experiments || true
+module load cuda/12.3.0 || module load cuda/11.8.0 || true
+
+# Environment configuration
+export CUDA_VISIBLE_DEVICES=0
+export CUDA_LAUNCH_BLOCKING=1
+export TORCH_USE_CUDA_DSA=1
+export OMP_NUM_THREADS={cpus}
+export MKL_NUM_THREADS={cpus}
+export NUMEXPR_NUM_THREADS={cpus}
+export OPENBLAS_NUM_THREADS={cpus}
+export PYTORCH_ALLOC_CONF=expandable_segments:True
+export PYTHONFAULTHANDLER=1
+
+echo "Python: $(which python)"
+echo "=================================================================="
+
+# Run training with frozen config (no re-resolution needed)
+echo "Running: python train_with_hydra_zen.py --frozen-config {frozen_config_path}"
+
+python train_with_hydra_zen.py --frozen-config {frozen_config_path}
+
+EXIT_CODE=$?
+
+echo "=================================================================="
+if [ $EXIT_CODE -eq 0 ]; then
+    echo "✅ JOB COMPLETED SUCCESSFULLY"
+    echo "Results: {output_dir}"
+else
+    echo "❌ JOB FAILED (exit code: $EXIT_CODE)"
+    echo "Check error log: {error_path}"
+fi
+echo "End time: $(date)"
+echo "=================================================================="
+
+exit $EXIT_CODE
+"""
+
+# Legacy template using CLI arguments (kept for backward compatibility)
 SLURM_SCRIPT_TEMPLATE = """#!/bin/bash
 #SBATCH --job-name={job_name}
 #SBATCH --time={walltime}
@@ -33,7 +111,7 @@ SLURM_SCRIPT_TEMPLATE = """#!/bin/bash
 #SBATCH --chdir={project_root}
 {dependency_line}
 
-# CAN-Graph Training Job
+# CAN-Graph Training Job (Legacy CLI Mode)
 # Generated: {timestamp}
 set -euo pipefail
 
@@ -139,59 +217,114 @@ class JobManager:
 
         return stdout_path, stderr_path
 
+    def save_frozen_config(self, config: 'CANGraphConfig', experiment_dir: Path) -> Path:
+        """
+        Save a frozen config JSON for this job.
+
+        The frozen config captures the complete configuration at submission time,
+        enabling reproducible training without CLI re-resolution.
+
+        Args:
+            config: CANGraphConfig to freeze
+            experiment_dir: Directory to save the frozen config
+
+        Returns:
+            Path to the saved frozen config file
+        """
+        try:
+            from src.config.frozen_config import save_frozen_config
+
+            # Create configs directory under experiment dir
+            config_dir = experiment_dir / "configs"
+            config_dir.mkdir(parents=True, exist_ok=True)
+
+            # Save with timestamp to allow multiple submissions
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            frozen_path = config_dir / f"frozen_config_{timestamp}.json"
+
+            save_frozen_config(config, frozen_path)
+            logger.info(f"💾 Saved frozen config: {frozen_path}")
+
+            return frozen_path
+
+        except ImportError as e:
+            logger.warning(f"Could not import frozen_config module: {e}")
+            logger.warning("Falling back to legacy CLI argument mode")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to save frozen config: {e}")
+            logger.warning("Falling back to legacy CLI argument mode")
+            return None
+
     def format_training_args(self, run_type: Dict, model_args: Dict,
                             slurm_args: Dict) -> str:
         """
-        Format training arguments for CLI.
+        Format training arguments for CLI (legacy mode).
 
         Args:
-            run_type: Run type bucket (model, model_size, dataset, mode)
+            run_type: Run type bucket (model, model_size, dataset, mode, distillation, modality)
             model_args: Model args bucket
             slurm_args: SLURM args bucket (not used in training command)
 
         Returns:
             Formatted argument string for train_with_hydra_zen.py
-        """
-        # For now, we'll use the preset-based approach until train_with_hydra_zen.py
-        # is updated to accept bucket syntax directly
 
-        # Map to preset-like args
+        Note:
+            This is the legacy method. Prefer using frozen configs via
+            generate_script_with_frozen_config() for new jobs.
+
+            model_size and distillation are INDEPENDENT dimensions:
+            - model_size: architecture size (teacher=larger, student=smaller)
+            - distillation: learning strategy (with-kd, no-kd)
+            Any combination is valid (though teacher+with-kd is rare).
+        """
+        # Extract all run_type parameters
         model = run_type['model']
-        model_size = run_type['model_size']
+        model_size = run_type.get('model_size', 'teacher')
         dataset = run_type['dataset']
         mode = run_type['mode']
-
-        # Build model type
-        if model_size == 'student':
-            model_type = f"{model}_student"
-        else:
-            model_type = model
+        modality = run_type.get('modality', 'automotive')
+        distillation = run_type.get('distillation', 'no-kd')
 
         # Create args list using argparse style
+        # Pass ALL explicit arguments - don't infer from model name
         args = []
-        args.append(f"    --model {model_type}")
+        args.append(f"    --model {model}")
+        args.append(f"    --model-size {model_size}")
         args.append(f"    --dataset {dataset}")
+        args.append(f"    --modality {modality}")
         args.append(f"    --training {mode}")
+
+        # Add distillation flag (explicit, independent of model_size)
+        if distillation == 'with-kd':
+            args.append(f"    --use-kd")
+            # teacher_path is required when using KD
+            if 'teacher_path' in model_args:
+                args.append(f"    --teacher_path {model_args['teacher_path']}")
 
         # Add model arg overrides
         for key, value in model_args.items():
-            # Convert to argparse style
             if key == 'epochs':
                 args.append(f"    --epochs {value}")
             elif key == 'learning_rate':
                 args.append(f"    --learning_rate {value}")
             elif key == 'batch_size':
                 args.append(f"    --batch_size {value}")
-            # train_with_hydra_zen.py doesn't support these overrides directly
-            # but we can add them for future integration
+            elif key == 'teacher_path':
+                # Already handled above
+                pass
 
         return " \\\n".join(args)
 
     def generate_script(self, config: 'CANGraphConfig', run_type: Dict,
                        model_args: Dict, slurm_args: Dict,
-                       dependency_job_id: Optional[str] = None) -> Tuple[str, Path]:
+                       dependency_job_id: Optional[str] = None,
+                       use_frozen_config: bool = True) -> Tuple[str, Path]:
         """
         Generate SLURM batch script for a training job.
+
+        Uses the Frozen Config Pattern by default: saves the complete config
+        as JSON and passes `--frozen-config` to the training script.
 
         Args:
             config: CANGraphConfig object
@@ -199,6 +332,8 @@ class JobManager:
             model_args: Model args bucket
             slurm_args: SLURM args bucket
             dependency_job_id: Optional job ID to depend on
+            use_frozen_config: If True (default), use frozen config pattern.
+                              If False, use legacy CLI arguments.
 
         Returns:
             Tuple of (script_content, script_path)
@@ -206,35 +341,49 @@ class JobManager:
         job_name = self.generate_job_name(config)
         dataset = config.dataset.name
         stdout_log, stderr_log = self.generate_log_paths(job_name, dataset=dataset)
+        experiment_dir = config.canonical_experiment_dir()
 
         # Build dependency line if needed
         dependency_line = ""
         if dependency_job_id:
             dependency_line = f"#SBATCH --dependency=afterok:{dependency_job_id}"
 
-        # Format training arguments
-        training_args = self.format_training_args(run_type, model_args, slurm_args)
+        # Common SLURM parameters
+        slurm_params = {
+            'job_name': job_name,
+            'walltime': slurm_args.get('walltime') or '06:00:00',
+            'memory': slurm_args.get('memory') or '64G',
+            'cpus': slurm_args.get('cpus') or 16,
+            'gpus': slurm_args.get('gpus') or 1,
+            'gpu_type': slurm_args.get('gpu_type') or 'v100',
+            'account': slurm_args.get('account') or 'PAS3209',
+            'partition': slurm_args.get('partition') or 'gpu',
+            'notification_type': slurm_args.get('notification_type') or 'END,FAIL',
+            'email': slurm_args.get('email') or 'frugoli.1@osu.edu',
+            'log_path': stdout_log,
+            'error_path': stderr_log,
+            'project_root': self.project_root,
+            'dependency_line': dependency_line,
+            'timestamp': datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            'output_dir': experiment_dir,
+        }
 
-        # Fill template (use 'or' to handle explicit None values)
-        script_content = SLURM_SCRIPT_TEMPLATE.format(
-            job_name=job_name,
-            walltime=slurm_args.get('walltime') or '06:00:00',
-            memory=slurm_args.get('memory') or '64G',
-            cpus=slurm_args.get('cpus') or 16,
-            gpus=slurm_args.get('gpus') or 1,
-            gpu_type=slurm_args.get('gpu_type') or 'v100',
-            account=slurm_args.get('account') or 'PAS3209',
-            partition=slurm_args.get('partition') or 'gpu',
-            notification_type=slurm_args.get('notification_type') or 'END,FAIL',
-            email=slurm_args.get('email') or 'frugoli.1@osu.edu',
-            log_path=stdout_log,
-            error_path=stderr_log,
-            project_root=self.project_root,
-            dependency_line=dependency_line,
-            timestamp=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            training_args=training_args,
-            output_dir=config.canonical_experiment_dir(),
-        )
+        # Try frozen config pattern first (preferred)
+        frozen_config_path = None
+        if use_frozen_config:
+            frozen_config_path = self.save_frozen_config(config, experiment_dir)
+
+        if frozen_config_path:
+            # Use new frozen config template
+            slurm_params['frozen_config_path'] = frozen_config_path
+            script_content = SLURM_FROZEN_CONFIG_TEMPLATE.format(**slurm_params)
+            logger.info(f"📦 Using Frozen Config Pattern: {frozen_config_path}")
+        else:
+            # Fallback to legacy CLI arguments
+            training_args = self.format_training_args(run_type, model_args, slurm_args)
+            slurm_params['training_args'] = training_args
+            script_content = SLURM_SCRIPT_TEMPLATE.format(**slurm_params)
+            logger.info("📝 Using legacy CLI argument mode")
 
         # Write script to dataset subfolder
         script_dir = self.slurm_runs_dir / dataset
