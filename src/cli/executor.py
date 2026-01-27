@@ -119,8 +119,13 @@ class ExecutionRouter:
             return self._execute_local(config, run_type, model_args)
 
         elif mode == 'dry-run':
-            logger.info("\n👁️  DRY RUN MODE - No execution")
-            logger.info("✅ Configuration is valid")
+            # Generate SLURM script with frozen config to show what would be submitted
+            logger.info("\n👁️  DRY RUN MODE - Generating script without submission")
+            job_manager = JobManager(self.project_root)
+            job_manager.submit_single(
+                config, run_type, model_args, slurm_args, dry_run=True
+            )
+            logger.info("\n✅ Configuration is valid (script generated but NOT submitted)")
             return 0
 
         else:

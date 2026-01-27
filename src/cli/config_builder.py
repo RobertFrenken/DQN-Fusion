@@ -178,6 +178,10 @@ def validate_run_type(run_type: Dict[str, str]) -> None:
     """
     Validate that run_type has all required fields.
 
+    NOTE: This function ONLY checks for required field presence.
+    Choice validation (valid models, modes, etc.) is delegated to
+    pydantic_validators.py to avoid duplicate validation logic.
+
     Args:
         run_type: Parsed run_type bucket (should have no lists at this point)
 
@@ -205,48 +209,9 @@ def validate_run_type(run_type: Dict[str, str]) -> None:
             f"See parameters/required_cli.yaml for parameter bible"
         )
 
-    # Validate choices
-    valid_models = ['gat', 'vgae', 'dqn', 'gcn', 'gnn', 'graphsage']
-    if run_type['model'] not in valid_models:
-        raise ValueError(
-            f"Invalid model: {run_type['model']}\n"
-            f"Valid options: {', '.join(valid_models)}"
-        )
-
-    valid_sizes = ['teacher', 'student']
-    if run_type['model_size'] not in valid_sizes:
-        raise ValueError(
-            f"Invalid model_size: {run_type['model_size']}\n"
-            f"Valid options: {', '.join(valid_sizes)}"
-        )
-
-    valid_modalities = ['automotive', 'industrial', 'robotics']
-    if run_type['modality'] not in valid_modalities:
-        raise ValueError(
-            f"Invalid modality: {run_type['modality']}\n"
-            f"Valid options: {', '.join(valid_modalities)}"
-        )
-
-    valid_learning_types = ['supervised', 'unsupervised', 'semi_supervised', 'rl_fusion']
-    if run_type['learning_type'] not in valid_learning_types:
-        raise ValueError(
-            f"Invalid learning_type: {run_type['learning_type']}\n"
-            f"Valid options: {', '.join(valid_learning_types)}"
-        )
-
-    valid_distillation = ['with-kd', 'no-kd']
-    if run_type['distillation'] not in valid_distillation:
-        raise ValueError(
-            f"Invalid distillation: {run_type['distillation']}\n"
-            f"Valid options: {', '.join(valid_distillation)}"
-        )
-
-    valid_modes = ['normal', 'autoencoder', 'curriculum', 'fusion', 'distillation', 'evaluation']
-    if run_type['mode'] not in valid_modes:
-        raise ValueError(
-            f"Invalid mode: {run_type['mode']}\n"
-            f"Valid options: {', '.join(valid_modes)}"
-        )
+    # Choice validation is now handled by pydantic_validators.py (CANGraphCLIConfig)
+    # This avoids duplicate validation logic and keeps config_builder focused on
+    # bucket parsing and config construction only.
 
 
 def merge_with_defaults(user_args: Dict[str, str], defaults: Dict[str, Any]) -> Dict[str, Any]:
@@ -508,7 +473,10 @@ def create_can_graph_config(
     config._modality = modality
     config._learning_type = learning_type
     config._distillation = distillation
-    config._canonical_path = f"{modality}/{dataset_name}/{model_size}/{learning_type}/{model}/{distillation}/{training_mode}"
+
+    # Map distillation for path (must match canonical_experiment_dir in hydra_zen_configs.py)
+    distillation_path = "distilled" if distillation == "with-kd" else "no_distillation"
+    config._canonical_path = f"{modality}/{dataset_name}/{learning_type}/{model}/{model_size}/{distillation_path}/{training_mode}"
 
     logger.info(
         f"Created CANGraphConfig: {model_type} on {dataset_name} with mode {config_mode}\n"

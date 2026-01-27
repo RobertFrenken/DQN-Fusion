@@ -124,6 +124,9 @@ def _get_config_class(type_name: str):
         KnowledgeDistillationConfig, StudentBaselineTrainingConfig,
         FusionTrainingConfig, CurriculumTrainingConfig, EvaluationTrainingConfig,
         TrainerConfig,
+        # Nested config types
+        OptimizerConfig, SchedulerConfig, MemoryOptimizationConfig,
+        FusionAgentConfig,
     )
 
     class_map = {
@@ -143,6 +146,11 @@ def _get_config_class(type_name: str):
         'CurriculumTrainingConfig': CurriculumTrainingConfig,
         'EvaluationTrainingConfig': EvaluationTrainingConfig,
         'TrainerConfig': TrainerConfig,
+        # Nested config types
+        'OptimizerConfig': OptimizerConfig,
+        'SchedulerConfig': SchedulerConfig,
+        'MemoryOptimizationConfig': MemoryOptimizationConfig,
+        'FusionAgentConfig': FusionAgentConfig,
     }
 
     return class_map.get(type_name)
@@ -196,10 +204,11 @@ def dict_to_config(config_dict: Dict[str, Any]) -> 'CANGraphConfig':
                    if not k.startswith('_')}
 
     # Reconstruct nested dataclasses
+    # Skip fields with init=False (like experiment_name) - they're computed in __post_init__
     kwargs = {}
-    for field in fields(CANGraphConfig):
-        if field.name in config_data:
-            kwargs[field.name] = _deserialize_value(config_data[field.name])
+    for field_info in fields(CANGraphConfig):
+        if field_info.name in config_data and field_info.init:
+            kwargs[field_info.name] = _deserialize_value(config_data[field_info.name])
 
     return CANGraphConfig(**kwargs)
 

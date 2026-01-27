@@ -29,6 +29,8 @@ python train_with_hydra_zen.py --model gat_student --dataset hcrl_sa --training 
 
 **Complete documentation**: [docs/](docs/)
 
+**System Architecture**: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) - Detailed system architecture, training pipeline, and implementation patterns
+
 ---
 
 ## Table of Contents
@@ -59,24 +61,36 @@ The framework addresses CAN bus cybersecurity by:
 
 ## Architecture
 
-### Two-Stage Pipeline
-1. **Anomaly Detection Stage**: 
-   - Uses [`GraphAutoencoderNeighborhood`](models/models.py) to reconstruct:
-     - Node features (continuous CAN data)
-     - CAN ID predictions
-     - Neighborhood structures
-   - Computes composite reconstruction errors with weighted combination
-   - Applies threshold-based filtering
+📐 **Full Documentation**: See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for comprehensive architecture diagrams and implementation details.
 
-2. **Classification Stage**:
-   - Uses [`GATWithJK`](models/models.py) (Jumping Knowledge GAT) for attack type classification
-   - Processes only graphs flagged as anomalous by Stage 1
-   - Provides fine-grained attack classification
+### Three-Stage Pipeline
+
+**Stage 1: Feature Learning (VGAE)**
+- Unsupervised learning of latent CAN message representations
+- Graph autoencoder with variational inference
+- ~1.3M parameters (teacher) / ~300K (student)
+
+**Stage 2: Classification (GAT)**
+- Supervised binary classification (normal vs attack)
+- Curriculum learning: easy → hard samples
+- Multi-head graph attention
+- ~1.1M parameters (teacher) / ~250K (student)
+
+**Stage 3: Fusion (DQN)**
+- Reinforcement learning agent
+- Fuses VGAE + GAT predictions
+- Learns optimal combination strategy
+- ~50K parameters
 
 ### Knowledge Distillation
 - **Teacher Models**: Full-size VGAE + GAT pipeline
 - **Student Models**: Compressed versions for resource-constrained environments
-- **Distillation Process**: Soft label transfer with temperature scaling
+- **Distillation Process**: Soft label transfer with temperature scaling (α=0.7, T=4.0)
+
+**Visual Diagrams**:
+- [Training Pipeline Flow](docs/ARCHITECTURE.md#training-pipeline)
+- [Parameter Flow (CLI → SLURM → Training)](docs/diagrams/parameter_flow.md)
+- [Directory Structure](docs/diagrams/directory_structure.md)
 
 ---
 

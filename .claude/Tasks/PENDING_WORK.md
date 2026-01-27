@@ -141,9 +141,94 @@ grep -r "can-train" . --include="*.py" --include="*.md"
 
 ---
 
-## LOW PRIORITY: Documentation
+## LOW PRIORITY: Future Improvements
 
-### 5. Update README with KD Examples
+### 5. Sweep/Grid Frozen Config Pattern
+
+**Status**: FUTURE - Enhancement for hyperparameter sweeps
+
+**Current Behavior**:
+- Each job gets its own frozen config: `{experiment_dir}/configs/frozen_config_{timestamp}.json`
+- Sweeps generate multiple separate frozen configs
+
+**Potential Enhancement - Sweep Manifest**:
+```json
+// experimentruns/sweeps/sweep_20260126_210000/manifest.json
+{
+  "sweep_id": "hp_search_lr_batch",
+  "created_at": "2026-01-26T21:00:00",
+  "grid_definition": {
+    "learning_rate": [0.001, 0.003, 0.005],
+    "batch_size": [32, 64, 128]
+  },
+  "configs": [
+    {"id": 1, "path": "config_001.json", "params": {"lr": 0.001, "batch": 32}},
+    {"id": 2, "path": "config_002.json", "params": {"lr": 0.001, "batch": 64}},
+    // ...
+  ],
+  "total_combinations": 9
+}
+```
+
+**Benefits**:
+- Track which configs belong to same sweep
+- Easy to compare results across grid
+- Reproduce entire sweep from manifest
+- MLflow experiment grouping
+
+**Alternatives Considered**:
+1. **Individual frozen configs (CURRENT)**: Simple, works for most cases
+2. **Grid manifest (FUTURE)**: Better for large sweeps, hyperparameter search
+3. **Cartesian product expansion**: Generate all combos at submission time
+
+**Decision**: Keep current approach (individual configs), add manifest as future enhancement when sweep functionality matures.
+
+---
+
+### 6. Logging Improvements
+
+**Status**: FUTURE - Enhancement for better debugging and monitoring
+
+**Current Logging**:
+- Basic stdout/stderr via SLURM
+- MLflow for training metrics
+- Job ID, Node, Start/End time in SLURM output
+
+**Proposed Improvements**:
+
+1. **GPU Memory Tracking**
+   ```python
+   # In trainer.py callback
+   peak_memory = torch.cuda.max_memory_allocated() / 1024**3
+   logger.info(f"Peak GPU Memory: {peak_memory:.2f} GB")
+   ```
+   - Track peak memory usage per epoch
+   - Log to MLflow as metric
+   - Help diagnose OOM issues
+
+2. **Training Summary in SLURM Output**
+   - Final metrics (accuracy, F1, loss)
+   - Best checkpoint info
+   - Total training time
+   - Parameter count
+
+3. **Dataset Statistics Logging**
+   - Total samples per split
+   - Class distribution
+   - Graph statistics (nodes, edges)
+
+4. **Structured JSON Logs** (Optional)
+   - Machine-parseable log format
+   - Easier aggregation across runs
+
+**Implementation Location**:
+- `src/training/trainer.py` - Memory tracking callback
+- `src/cli/job_manager.py` - SLURM template additions
+- `src/training/lightning_modules.py` - Dataset stat logging
+
+---
+
+### 7. Update README with KD Examples
 
 **Status**: PENDING
 
@@ -157,6 +242,23 @@ grep -r "can-train" . --include="*.py" --include="*.md"
 
 ## COMPLETED WORK (Reference)
 
+### Session 2026-01-26 (Frozen Config & Cleanup)
+✅ **Validation Simplification** - Separated duties across 4 layers:
+   - `pydantic_validators.py`: CLI input + P→Q rules only
+   - `config_builder.py`: Bucket parsing + config construction (removed choice validation)
+   - `hydra_zen_configs.py`: Config schema definitions only (removed validate_config)
+   - `validator.py`: ALL pre-flight validation consolidated here
+✅ **SLURM Logs Moved** - Logs now go to `{experiment_dir}/slurm_logs/` instead of centralized folder
+✅ **Loose Configs Cleanup**:
+   - Removed unused `jobs/pipeline_vgae_curriculum_fusion.json`
+   - Added `parameters/README.md` explaining documentation-only status
+   - Kept `config/batch_size_factors.json` (actively used)
+✅ **Documentation Updates**:
+   - Added sweep manifest as future improvement to PENDING_WORK.md
+   - Updated PIPELINE_INVESTIGATION.md with new log paths
+   - Added logging improvements plan to PENDING_WORK.md
+
+### Previous Sessions
 ✅ Fixed `format_training_args()` to pass `--use-kd` and `--teacher_path` flags
 ✅ Added pipeline validation to reject fusion+with-kd
 ✅ Added `--teacher_path` parameter to pipeline CLI

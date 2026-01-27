@@ -44,12 +44,33 @@ When making significant code changes, verify:
 
 Track major documentation updates here:
 
-### 2026-01-26
+### 2026-01-26 (Session 3) - Validation & Cleanup
+- **Refactored**: Validation layers separated into distinct duties
+  - `pydantic_validators.py`: CLI input validation + P→Q rules only
+  - `config_builder.py`: Removed duplicate choice validation
+  - `hydra_zen_configs.py`: Removed validate_config (now in validator.py)
+  - `validator.py`: Consolidated ALL pre-flight validation
+- **Moved**: SLURM logs now go to `{experiment_dir}/slurm_logs/` (in job_manager.py)
+- **Removed**: `jobs/pipeline_vgae_curriculum_fusion.json` (unused)
+- **Created**: `parameters/README.md` explaining documentation-only status
+- **Updated**: `.claude/PIPELINE_INVESTIGATION.md` with new log paths
+- **Updated**: `.claude/Tasks/PENDING_WORK.md`:
+  - Added Section 5: Sweep/Grid Frozen Config Pattern (future)
+  - Added Section 6: Logging Improvements (future)
+  - Updated COMPLETED WORK section with Session 3 work
+- **Status**: Validation simplified, loose configs cleaned up
+
+### 2026-01-26 (Session 2)
+- **Created**: `.claude/FROZEN_CONFIG_ROADMAP.md` - Complete implementation roadmap
+- **Created**: `.claude/MAINTENANCE.md` - This file (doc update strategy)
+- **Fixed**: `.claude/INDEX.md` - Fixed typos, added frozen config info
+- **Fixed**: `src/config/frozen_config.py` - Linter issues (unused imports, params)
+- **Status**: Infrastructure complete, ready for Phase 1 testing
+
+### 2026-01-26 (Session 1)
 - **Added**: `src/config/frozen_config.py` - Frozen Config Pattern for config serialization
 - **Added**: `--frozen-config` argument to train_with_hydra_zen.py
 - **Added**: SLURM template support for frozen configs in job_manager.py
-- **TODO**: Update PROJECT_OVERVIEW.md with Frozen Config Pattern
-- **TODO**: Update CLI_BEST_PRACTICES.md with frozen config usage
 
 ### 2026-01-25 (Previous Session)
 - Initial .claude/ documentation structure created
@@ -102,9 +123,11 @@ When starting a new session:
 - [x] `INDEX.md` typos fixed: `--training-strategyl` → `--model`, `--training-strategyl-size` → `--model-size`
 - [x] `INDEX.md` updated with Frozen Config Pattern in Recent Changes
 - [x] `INDEX.md` added frozen_config.py to Related Codebase Locations
-- [ ] `frozen_config.py` not mentioned in PROJECT_OVERVIEW.md (can defer)
-- [ ] Frozen Config Pattern not in CLI_BEST_PRACTICES.md (can defer)
+- [x] `.claude/FROZEN_CONFIG_ROADMAP.md` created with next steps
+- [ ] `frozen_config.py` not mentioned in PROJECT_OVERVIEW.md (can defer - Phase 2)
+- [ ] Frozen Config Pattern not in CLI_BEST_PRACTICES.md (defer to Phase 2)
 - [ ] `QUICK_REFERENCE.md` needs review for accuracy
+- [ ] PENDING_WORK.md needs "Test frozen config" tasks added (Phase 1)
 
 ---
 

@@ -191,22 +191,40 @@ class JobManager:
         mode = config.training.mode[:10]  # Truncate if too long
         return f"{model_type}_{dataset}_{mode}"
 
-    def generate_log_paths(self, job_name: str, dataset: str = None) -> Tuple[Path, Path]:
+    def generate_log_paths(self, job_name: str, dataset: str = None,
+                           experiment_dir: Path = None) -> Tuple[Path, Path]:
         """
         Generate log file paths for SLURM job.
 
+        Logs are placed inside the experiment directory for better organization
+        and easier debugging (logs live with the experiment outputs).
+
         Args:
             job_name: SLURM job name
-            dataset: Dataset name for subfolder organization (e.g., 'hcrl_ch', 'set_01')
+            dataset: Dataset name (fallback for legacy behavior if no experiment_dir)
+            experiment_dir: Canonical experiment directory (preferred - logs go here)
 
         Returns:
             Tuple of (stdout_path, stderr_path)
+
+        Log Location:
+            When experiment_dir is provided (new behavior):
+                {experiment_dir}/slurm_logs/{job_name}_{timestamp}.out
+                {experiment_dir}/slurm_logs/{job_name}_{timestamp}.err
+
+            When experiment_dir is None (legacy fallback):
+                experimentruns/slurm_runs/{dataset}/{job_name}_{timestamp}.out
+                experimentruns/slurm_runs/{dataset}/{job_name}_{timestamp}.err
         """
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         log_name = f"{job_name}_{timestamp}"
 
-        # Organize logs by dataset subfolder
-        if dataset:
+        # New behavior: logs inside experiment directory
+        if experiment_dir:
+            log_dir = experiment_dir / "slurm_logs"
+            log_dir.mkdir(parents=True, exist_ok=True)
+        # Legacy fallback: logs in centralized slurm_runs folder
+        elif dataset:
             log_dir = self.slurm_runs_dir / dataset
             log_dir.mkdir(parents=True, exist_ok=True)
         else:
@@ -279,11 +297,13 @@ class JobManager:
             Any combination is valid (though teacher+with-kd is rare).
         """
         # Extract all run_type parameters
+        # Extract all run_type parameters
+        # DESIGN PRINCIPLE 1: All folder structure params are required (no defaults)
         model = run_type['model']
-        model_size = run_type.get('model_size', 'teacher')
+        model_size = run_type['model_size']  # Required - no default (DESIGN PRINCIPLE 1)
         dataset = run_type['dataset']
         mode = run_type['mode']
-        modality = run_type.get('modality', 'automotive')
+        modality = run_type['modality']  # Required - no default (DESIGN PRINCIPLE 1)
         distillation = run_type.get('distillation', 'no-kd')
 
         # Create args list using argparse style
@@ -340,8 +360,11 @@ class JobManager:
         """
         job_name = self.generate_job_name(config)
         dataset = config.dataset.name
-        stdout_log, stderr_log = self.generate_log_paths(job_name, dataset=dataset)
         experiment_dir = config.canonical_experiment_dir()
+        # Put logs inside experiment directory for better organization
+        stdout_log, stderr_log = self.generate_log_paths(
+            job_name, dataset=dataset, experiment_dir=experiment_dir
+        )
 
         # Build dependency line if needed
         dependency_line = ""
@@ -385,8 +408,8 @@ class JobManager:
             script_content = SLURM_SCRIPT_TEMPLATE.format(**slurm_params)
             logger.info("📝 Using legacy CLI argument mode")
 
-        # Write script to dataset subfolder
-        script_dir = self.slurm_runs_dir / dataset
+        # Write script to experiment directory (alongside logs and frozen config)
+        script_dir = experiment_dir / "slurm_logs"
         script_dir.mkdir(parents=True, exist_ok=True)
         script_path = script_dir / f"{job_name}.sh"
         script_path.write_text(script_content)

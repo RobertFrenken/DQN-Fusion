@@ -41,8 +41,8 @@ class CANGraphCLIConfig(BaseModel):
 
     # Level 1: Modality
     modality: Literal["automotive", "industrial", "robotics"] = Field(
-        default="automotive",
-        description="Application domain"
+        ...,
+        description="Application domain (REQUIRED - DESIGN PRINCIPLE 1)"
     )
 
     # Level 2: Dataset
@@ -53,8 +53,8 @@ class CANGraphCLIConfig(BaseModel):
 
     # Level 3: Model Size
     model_size: Literal["teacher", "student"] = Field(
-        default="teacher",
-        description="Model capacity - teacher (full) or student (compressed)"
+        ...,
+        description="Model capacity - teacher (full) or student (compressed) (REQUIRED - DESIGN PRINCIPLE 1)"
     )
 
     # Level 4: Learning Type
@@ -380,17 +380,24 @@ class CANGraphCLIConfig(BaseModel):
         """
         Compute canonical save path based on folder structure.
 
-        Target folder structure:
-            {modality}/{dataset}/{model_size}/{learning_type}/{model}/{distillation}/{mode}/
+        Target folder structure (must match canonical_experiment_dir in hydra_zen_configs.py):
+            {modality}/{dataset}/{learning_type}/{model}/{model_size}/{distillation}/{mode}/
+
+        Note: distillation values are mapped for path consistency:
+            - "no-kd" -> "no_distillation"
+            - "with-kd" -> "distilled"
         """
+        # Map CLI distillation values to path-friendly format
+        distillation_path = "distilled" if self.distillation == "with-kd" else "no_distillation"
+
         return (
             self.experiment_root /
             self.modality /
             self.dataset /
-            self.model_size /
             self.learning_type /
             self.model /
-            self.distillation /
+            self.model_size /
+            distillation_path /
             self.mode
         )
 
@@ -470,8 +477,8 @@ def validate_cli_config(
     model: str,
     dataset: str,
     mode: str,
-    model_size: str = "teacher",
-    modality: str = "automotive",
+    model_size: str,
+    modality: str,
     learning_type: Optional[str] = None,
     distillation: Optional[str] = None,
     job_type: str = "single",

@@ -110,6 +110,7 @@ def test_invalid_configs():
             "mode": "normal",
             "learning_type": "supervised",  # ❌ VGAE requires unsupervised
             "distillation": "no-kd",
+            "model_size": "teacher",
             "expected_error": "VGAE model requires learning_type='unsupervised'"
         },
         {
@@ -119,6 +120,7 @@ def test_invalid_configs():
             "mode": "normal",
             "learning_type": "supervised",  # ❌ DQN requires rl_fusion
             "distillation": "no-kd",
+            "model_size": "teacher",
             "expected_error": "DQN model requires learning_type='rl_fusion'"
         },
         {
@@ -128,6 +130,7 @@ def test_invalid_configs():
             "mode": "autoencoder",
             "learning_type": "unsupervised",  # ❌ GAT requires supervised
             "distillation": "no-kd",
+            "model_size": "teacher",
             "expected_error": "GAT model requires learning_type='supervised'"
         },
         {
@@ -137,6 +140,7 @@ def test_invalid_configs():
             "mode": "normal",  # ❌ Unsupervised requires autoencoder mode
             "learning_type": "unsupervised",
             "distillation": "no-kd",
+            "model_size": "teacher",
             "expected_error": "Unsupervised learning requires mode='autoencoder'"
         },
         {
@@ -146,6 +150,7 @@ def test_invalid_configs():
             "mode": "distillation",
             "learning_type": "supervised",
             "distillation": "no-kd",  # ❌ Distillation mode requires with-kd
+            "model_size": "student",
             "expected_error": "Distillation mode requires distillation='with-kd'"
         },
         {
@@ -208,6 +213,7 @@ def test_backward_compatibility():
             "mode": "autoencoder",
             # learning_type NOT provided - should auto-compute to "unsupervised"
             "distillation": "no-kd",
+            "model_size": "teacher",
         },
         {
             "name": "Auto-compute learning_type from fusion mode",
@@ -216,6 +222,7 @@ def test_backward_compatibility():
             "mode": "fusion",
             # learning_type NOT provided - should auto-compute to "rl_fusion"
             "distillation": "no-kd",
+            "model_size": "teacher",
         },
         {
             "name": "Auto-compute distillation from distillation mode",

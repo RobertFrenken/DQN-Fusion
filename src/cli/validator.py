@@ -230,15 +230,37 @@ def validate_slurm_resources(slurm_args: Dict, result: ValidationResult):
 
 
 def validate_mode_specific(config: 'CANGraphConfig', result: ValidationResult):
-    """Mode-specific validation checks."""
+    """Mode-specific validation checks.
+
+    NOTE: This is now the SINGLE source of truth for mode-specific validation.
+    Validation logic was consolidated here from hydra_zen_configs.py to avoid
+    duplicate validation across modules.
+    """
     mode = config.training.mode
 
-    if mode == "knowledge_distillation":
+    # Check knowledge distillation requirements
+    # (both legacy mode="knowledge_distillation" and new toggle use_knowledge_distillation)
+    use_kd = getattr(config.training, "use_knowledge_distillation", False)
+    is_legacy_kd_mode = mode == "knowledge_distillation"
+
+    if use_kd or is_legacy_kd_mode:
+        # Reject fusion + KD (not supported - DQN uses already-distilled models)
+        if mode == "fusion":
+            result.add_error(
+                "Knowledge distillation is not supported for fusion mode.\n"
+                "    Reason: The DQN agent uses already-distilled VGAE and GAT models"
+            )
+
         teacher_path = getattr(config.training, 'teacher_model_path', None)
         if not teacher_path:
             result.add_error(
                 "Knowledge distillation requires 'teacher_model_path'\n"
-                "    Set it in model-args or config"
+                "    Specify the path to a trained teacher model (.pth or .ckpt file)"
+            )
+        elif not Path(teacher_path).exists():
+            result.add_error(
+                f"Teacher model not found at: {teacher_path}\n"
+                "    Please ensure the teacher model exists under experiment_runs"
             )
 
     if mode == "fusion":
@@ -264,6 +286,27 @@ def validate_mode_specific(config: 'CANGraphConfig', result: ValidationResult):
                 )
 
 
+def validate_config_consistency(config: 'CANGraphConfig', result: ValidationResult):
+    """Validate config consistency (precision, modality, etc.).
+
+    NOTE: This validation was moved from hydra_zen_configs.py to consolidate
+    all validation in one place.
+    """
+    # Check modality is set
+    if getattr(config, 'modality', None) is None:
+        result.add_error("Modality must be set (e.g., 'automotive')")
+
+    # Check precision compatibility
+    training_precision = getattr(config.training, 'precision', '32-true')
+    trainer_precision = getattr(config.trainer, 'precision', '32-true')
+
+    if training_precision == "16-mixed" and trainer_precision != "16-mixed":
+        result.add_error(
+            "Precision mismatch: training.precision='16-mixed' but trainer.precision='{trainer_precision}'\n"
+            "    Both should be '16-mixed' when using mixed precision training"
+        )
+
+
 # ============================================================================
 # Main Validation Function
 # ============================================================================
@@ -272,6 +315,17 @@ def validate_config(config: 'CANGraphConfig', slurm_args: Optional[Dict] = None,
                    skip_artifact_check: bool = False) -> ValidationResult:
     """
     Run all validation checks on a configuration.
+
+    This is the SINGLE source of truth for pre-flight validation.
+    All validation logic is consolidated here to avoid duplication across modules.
+
+    Validation responsibilities:
+        - Dataset path existence and accessibility
+        - Required artifacts for modes (fusion, curriculum, distillation)
+        - Output directory creation
+        - SLURM resource reasonableness
+        - Mode-specific checks (KD requirements, fusion artifacts)
+        - Config consistency (precision, modality)
 
     Args:
         config: CANGraphConfig to validate
@@ -308,6 +362,9 @@ def validate_config(config: 'CANGraphConfig', slurm_args: Optional[Dict] = None,
 
     # 5. Mode-specific validation
     validate_mode_specific(config, result)
+
+    # 6. Config consistency validation (precision, modality)
+    validate_config_consistency(config, result)
 
     # Log summary
     if result.is_valid():

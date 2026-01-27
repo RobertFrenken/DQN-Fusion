@@ -972,92 +972,22 @@ def create_curriculum_config(dataset: str, vgae_model_path: Optional[str] = None
 # ============================================================================
 # Configuration Validation
 # ============================================================================
-
-def validate_config(config: CANGraphConfig) -> bool:
-    """Validate configuration for common issues.
-
-    This validator is strict (no fallbacks). If a training mode requires pre-existing
-    artifacts the validator raises a descriptive error (rather than silently falling back).
-
-    Additionally, performs a lightweight *sanity check* on dataset paths and prints
-    helpful warnings (does not raise) so developers can see canonical expected paths.
-    """
-    issues = []
-
-    # Lightweight sanity check: dataset path existence (warn only, don't raise)
-    try:
-        ds_path = getattr(config.dataset, 'data_path', None)
-        if ds_path and not Path(ds_path).exists():
-            logger.warning(
-                f"Dataset path does not exist: {ds_path}\n"
-                f"  → Canonical experiment dir (where outputs will be written): {config.canonical_experiment_dir()}\n"
-                f"  Suggestion: set config.dataset.data_path to the correct local path or provide --data-path when running the smoke script."
-            )
-    except Exception:
-        # Be permissive for unexpected config shapes; the strict validations follow below
-        logger.debug("Dataset path sanity check skipped due to unexpected config structure")
-
-    # Check knowledge distillation requirements strictly
-    # (both legacy mode="knowledge_distillation" and new toggle use_knowledge_distillation)
-    use_kd = getattr(config.training, "use_knowledge_distillation", False)
-    is_legacy_kd_mode = config.training.mode == "knowledge_distillation"
-
-    if use_kd or is_legacy_kd_mode:
-        # Reject fusion + KD (not supported - DQN uses already-distilled models)
-        if config.training.mode == "fusion":
-            raise ValueError(
-                "Knowledge distillation is not supported for fusion mode. "
-                "The DQN agent uses already-distilled VGAE and GAT models."
-            )
-
-        teacher_path = getattr(config.training, "teacher_model_path", None)
-        if not teacher_path:
-            raise ValueError(
-                "Knowledge distillation requires 'teacher_model_path' in the training config. "
-                "Specify the path to a trained teacher model (.pth or .ckpt file)."
-            )
-        if not Path(teacher_path).exists():
-            raise FileNotFoundError(
-                f"Teacher model not found at specified path: {teacher_path}. "
-                "Please provide the canonical path under experiment_runs and ensure it exists."
-            )
-
-    # Fusion requires both autoencoder and classifier artifacts
-    if config.training.mode == "fusion":
-        artifacts = config.required_artifacts()
-        missing = []
-        for name, p in artifacts.items():
-            if not p.exists():
-                missing.append(f"{name} missing at {p}")
-        if missing:
-            raise FileNotFoundError("Fusion training requires pre-trained artifacts:\n" + "\n".join(missing) + "\nPlease train and save the required models under the canonical experiment directory.")
-
-    # Curriculum also requires the VGAE to exist
-    if config.training.mode == "curriculum":
-        artifacts = config.required_artifacts()
-        vgae = artifacts.get("vgae")
-        if vgae and not vgae.exists():
-            raise FileNotFoundError(f"Curriculum training requires VGAE model at {vgae}. Please ensure it's available under experiment_runs.")
-
-    # Additional lightweight checks
-    if getattr(config, 'modality', None) is None:
-        issues.append("Modality should be set (e.g., 'automotive')")
-
-    if issues:
-        for i in issues:
-            logger.error(i)
-        return False
-
-    # Check dataset path - warn only (allow iterative development without immediate data present)
-    if config.dataset.data_path and not Path(config.dataset.data_path).exists():
-        logger.warning(f"Dataset path not found (warning only): {config.dataset.data_path} - training may fail if the dataset is not provided.")
-
-    # Check precision compatibility strictly
-    if config.training.precision == "16-mixed" and config.trainer.precision != "16-mixed":
-        raise ValueError("Training precision and trainer.precision should both be '16-mixed' when using mixed precision training.")
-
-    logger.info("✅ Configuration validation passed")
-    return True
+#
+# NOTE: Deep validation logic has been consolidated into src/cli/validator.py
+# to avoid duplication across multiple modules. This module focuses on config
+# schema definitions only.
+#
+# Validation responsibilities are now separated:
+#   - pydantic_validators.py: CLI input validation, P→Q rules
+#   - config_builder.py: Bucket parsing, config construction
+#   - validator.py: ALL pre-flight validation (filesystem, artifacts, SLURM)
+#   - hydra_zen_configs.py: Config schema/dataclass definitions (THIS FILE)
+#
+# To validate a config, use:
+#   from src.cli.validator import validate_config
+#   result = validate_config(config, slurm_args)
+#   if not result.is_valid():
+#       raise ValidationError(result.format_report())
 
 
 # Initialize the global store

@@ -33,3 +33,20 @@ Total needed experiments: 36 main + 8 ablations + unique DQN evaluation = 46 exp
 | Validation        | Multiple places          | Consolidate to single Pydantic v2 layer     |
 | Path Resolution   | PathResolver ✓           | Extend with manifest pattern                |
 | SLURM Integration | Argument passing         | Refactor to frozen config file              |
+
+
+
+I think with the frozen configs, I should be able to cycle through all possible permutations and make sure that the pathing is correct. I think the training logic seems okay right now. But the paths need to be good, the logging needs to be in its correct spot, and then I need to drive down the combinations to make sure all the validation handlers are not screwing up.
+
+1.26.26: If this new CLI interface can work, then I should be able to run the teacher and student-no-kd pipelines, only leaving the student-with-kd for tomorrow to get at least 1 full run complete.
+
+modality, dataset, model_size, learning_type, model_architecture,  use_distillation, training_strategy
+automotive, hcrl_sa, teacher, unsupervvised, vgae, no-kd, autoencoder
+automotive, hcrl_sa, teacher, supervvised, gat, no-kd, cirriculum
+automotive, hcrl_sa, teacher, rl_fusion, dqn, no-kd, fusion
+automotive, hcrl_sa, student, unsupervvised, vgae, no-kd, autoencoder
+automotive, hcrl_sa, student, supervvised, gat, no-kd, cirriculum
+automotive, hcrl_sa, student, rl_fusion, dqn, no-kd, fusion
+automotive, hcrl_sa, teacher, unsupervvised, vgae, with-kd, autoencoder
+automotive, hcrl_sa, teacher, supervvised, gat, with-kd, cirriculum
+automotive, hcrl_sa, teacher, rl_fusion, dqn, no-kd, fusion

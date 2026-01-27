@@ -104,9 +104,6 @@ For more examples and patterns, see: docs/CLI_REFERENCE.md
     validate_parser = subparsers.add_parser('validate', help='Validate configuration')
     validate_parser.add_argument('--config', type=Path, help='Config file to validate')
 
-    # If no subcommand, treat as 'train' (convenience)
-    _add_training_args(parser)
-
     return parser
 
 
@@ -128,8 +125,8 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
     core.add_argument(
         '--modality',
         choices=['automotive', 'industrial', 'robotics'],
-        default='automotive',
-        help='Application domain (default: automotive)'
+        required=True,
+        help='Application domain (REQUIRED - DESIGN PRINCIPLE 1: explicit folder structure params)'
     )
 
     core.add_argument(
@@ -141,8 +138,8 @@ def _add_training_args(parser: argparse.ArgumentParser) -> None:
     core.add_argument(
         '--model-size',
         choices=['teacher', 'student'],
-        default='teacher',
-        help='Model size variant - teacher (full) or student (compressed) (default: teacher)'
+        required=True,
+        help='Model size variant - teacher (full) or student (compressed) (REQUIRED - DESIGN PRINCIPLE 1: explicit folder structure params)'
     )
 
     core.add_argument(
@@ -480,15 +477,15 @@ def _add_pipeline_args(parser: argparse.ArgumentParser) -> None:
     single.add_argument(
         '--model-size',
         choices=['teacher', 'student'],
-        default='teacher',
-        help='Model size for all stages (default: teacher)'
+        required=True,
+        help='Model size for all stages (REQUIRED - DESIGN PRINCIPLE 1: explicit folder structure params)'
     )
 
     single.add_argument(
         '--modality',
         choices=['automotive', 'industrial', 'robotics'],
-        default='automotive',
-        help='Application domain for all stages (default: automotive)'
+        required=True,
+        help='Application domain for all stages (REQUIRED - DESIGN PRINCIPLE 1)'
     )
 
     single.add_argument(
@@ -502,6 +499,12 @@ def _add_pipeline_args(parser: argparse.ArgumentParser) -> None:
         '--teacher_path',
         type=str,
         help='Path to teacher model checkpoint (required when --distillation with-kd)'
+    )
+
+    single.add_argument(
+        '--epochs',
+        type=int,
+        help='Number of training epochs for all stages (overrides defaults)'
     )
 
     # ============================================================================
@@ -666,8 +669,8 @@ def _run_training(args):
             model=args.model,
             dataset=args.dataset,
             mode=args.training_strategy,
-            model_size=args.model_size or 'teacher',
-            modality=getattr(args, 'modality', 'automotive'),
+            model_size=args.model_size,
+            modality=args.modality,
             learning_type=getattr(args, 'learning_type', None),
             distillation=getattr(args, 'distillation', None),
             job_type=getattr(args, 'job_type', 'single'),
@@ -847,7 +850,7 @@ def _run_pipeline(args):
             return 1
 
         # Validate teacher_path exists
-        from pathlib import Path
+        # NOTE: Path is already imported at module level (line 15)
         teacher_path = Path(args.teacher_path)
         if not teacher_path.exists():
             logger.error(
@@ -901,8 +904,70 @@ def _run_pipeline(args):
 
     logger.info("=" * 60)
 
+    # ========================================================================
+    # Dry Run Mode: Generate scripts without submission
+    # ========================================================================
     if args.dry_run:
+        logger.info("\n[DRY RUN] Generating SLURM scripts (without submission)...")
+
+        # Import required modules
+        try:
+            import importlib.util
+            from pathlib import Path as PathLib
+            job_manager_path = PathLib(__file__).parent / 'job_manager.py'
+            spec = importlib.util.spec_from_file_location("job_manager", job_manager_path)
+            job_manager = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(job_manager)
+            JobManager = job_manager.JobManager
+
+            config_builder_path = PathLib(__file__).parent / 'config_builder.py'
+            spec = importlib.util.spec_from_file_location("config_builder", config_builder_path)
+            config_builder = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(config_builder)
+            create_can_graph_config = config_builder.create_can_graph_config
+        except Exception as e:
+            logger.error(f"✗ Failed to load modules for dry run: {e}")
+            return 1
+
+        slurm_manager = JobManager()
+
+        for i, job in enumerate(jobs):
+            run_type = {
+                'model': job['model'],
+                'model_size': job['model_size'],
+                'dataset': job['dataset'],
+                'mode': job['mode'],
+                'modality': job['modality'],
+                'learning_type': job['learning_type'],
+                'distillation': job['distillation'],
+            }
+
+            slurm_args = {
+                'account': args.account,
+                'partition': getattr(args, 'partition', None),
+                'walltime': args.walltime or '06:00:00',
+                'memory': getattr(args, 'memory', None) or '64G',
+                'gpus': getattr(args, 'gpus', 1),
+            }
+
+            model_args = {}
+            if distillation == 'with-kd' and hasattr(args, 'teacher_path') and args.teacher_path:
+                model_args['teacher_path'] = args.teacher_path
+            if hasattr(args, 'epochs') and args.epochs:
+                model_args['epochs'] = args.epochs
+
+            logger.info(f"\n--- Stage {i+1}: {job['model']} / {job['mode']} ---")
+            slurm_manager.submit_single(
+                config=None,
+                run_type=run_type,
+                model_args=model_args,
+                slurm_args=slurm_args,
+                dry_run=True
+            )
+
+        logger.info("\n" + "=" * 60)
         logger.info("[DRY RUN] Pipeline preview complete - no jobs submitted")
+        logger.info("Use --submit to actually submit jobs to SLURM")
         return 0
 
     # ========================================================================
@@ -957,6 +1022,8 @@ def _run_pipeline(args):
         model_args = {}
         if distillation == 'with-kd' and hasattr(args, 'teacher_path') and args.teacher_path:
             model_args['teacher_path'] = args.teacher_path
+        if hasattr(args, 'epochs') and args.epochs:
+            model_args['epochs'] = args.epochs
 
         try:
             job_id = slurm_manager.submit_single(

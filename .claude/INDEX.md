@@ -35,6 +35,8 @@
 ```
 .claude/
 ├── INDEX.md (THIS FILE)
+├── MAINTENANCE.md                   ← Docs update strategy
+├── FROZEN_CONFIG_ROADMAP.md         ← Frozen config next steps
 ├── system/
 │   ├── PROJECT_OVERVIEW.md          ← Architecture & structure
 │   └── TECH_STACK.md                (Future: language versions, deps)
@@ -86,7 +88,9 @@ Every. Single. Time.
   - `src/config/frozen_config.py` - Serialization/deserialization utilities
   - `--frozen-config` argument in train_with_hydra_zen.py
 - **Usage**: `python train_with_hydra_zen.py --frozen-config /path/to/config.json`
-- **See**: [MAINTENANCE.md](MAINTENANCE.md) for update tracking
+- **Status**: Infrastructure complete, ready for testing
+- **Next Steps**: See [FROZEN_CONFIG_ROADMAP.md](FROZEN_CONFIG_ROADMAP.md)
+- **Maintenance**: See [MAINTENANCE.md](MAINTENANCE.md) for doc update tracking
 
 ### Investigation Completed ✅
 - **Root Cause Found**: `format_training_args()` in job_manager.py was ignoring distillation flag
