@@ -126,7 +126,7 @@ def _get_config_class(type_name: str):
         TrainerConfig,
         # Nested config types
         OptimizerConfig, SchedulerConfig, MemoryOptimizationConfig,
-        FusionAgentConfig,
+        FusionAgentConfig, BatchSizeConfig,
     )
 
     class_map = {
@@ -151,6 +151,7 @@ def _get_config_class(type_name: str):
         'SchedulerConfig': SchedulerConfig,
         'MemoryOptimizationConfig': MemoryOptimizationConfig,
         'FusionAgentConfig': FusionAgentConfig,
+        'BatchSizeConfig': BatchSizeConfig,
     }
 
     return class_map.get(type_name)
