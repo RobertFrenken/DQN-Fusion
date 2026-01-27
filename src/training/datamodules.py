@@ -174,11 +174,10 @@ class AdaptiveGraphDataset(Dataset):
             Array of difficulty scores (higher = harder)
         """
         if self.vgae_model is None:
-            raise RuntimeError(
-                "VGAE model required for hard-mining difficulty scoring. "
-                "Provide a trained VGAE model or disable VGAE-based mining."
-            )
-        
+            # No VGAE model - use random sampling instead of hard mining
+            logger.warning("No VGAE model provided, using random difficulty scores for curriculum")
+            return np.random.rand(len(graphs))
+
         scores = []
         self.vgae_model.eval()
         
@@ -463,22 +462,39 @@ class EnhancedCANGraphDataModule(pl.LightningDataModule):
         pass
     
     def train_dataloader(self):
-        return DataLoader(
+        logger.info(f"🔍 Creating train dataloader:")
+        logger.info(f"   Dataset length: {len(self.train_dataset)}")
+        logger.info(f"   Batch size: {self.batch_size}")
+        logger.info(f"   Expected batches: {len(self.train_dataset) // self.batch_size + (1 if len(self.train_dataset) % self.batch_size else 0)}")
+        logger.info(f"   Num workers: {self.num_workers}")
+
+        dataloader = DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
             num_workers=self.num_workers,
             collate_fn=self._collate_graphs
         )
+
+        logger.info(f"   Actual batches (len(dataloader)): {len(dataloader)}")
+        return dataloader
     
     def val_dataloader(self):
-        return DataLoader(
+        logger.info(f"🔍 Creating val dataloader:")
+        logger.info(f"   Dataset length: {len(self.val_dataset)}")
+        logger.info(f"   Batch size: {self.batch_size}")
+        logger.info(f"   Expected batches: {len(self.val_dataset) // self.batch_size + (1 if len(self.val_dataset) % self.batch_size else 0)}")
+
+        dataloader = DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
             num_workers=self.num_workers,
             collate_fn=self._collate_graphs
         )
+
+        logger.info(f"   Actual batches (len(dataloader)): {len(dataloader)}")
+        return dataloader
     
     def _collate_graphs(self, batch):
         """Collate function to batch graph data."""

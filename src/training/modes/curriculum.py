@@ -52,15 +52,19 @@ class CurriculumTrainer:
             Tuple of (trained_model, trainer)
         """
         logger.info("🎓 Starting GAT training with curriculum learning + hard mining")
-        
+
         # Load and separate dataset
         datamodule, vgae_model = self._setup_curriculum_datamodule(num_ids)
-        
+        logger.info(f"📊 Datamodule created with batch_size={datamodule.batch_size}")
+
         # Create GAT model
         gat_model = self._create_gat_model(num_ids)
-        
+        logger.info(f"🧠 GAT model created")
+
         # Optimize batch size
+        logger.info(f"🔧 About to optimize batch size (current: {datamodule.batch_size})")
         gat_model = self._optimize_batch_size_for_curriculum(gat_model, datamodule)
+        logger.info(f"✅ Batch size optimization complete (final: {datamodule.batch_size})")
         
         # Setup trainer
         trainer = self._create_curriculum_trainer()
@@ -93,13 +97,15 @@ class CurriculumTrainer:
         )
         
         # Separate normal and attack graphs
-        train_normal = [g for g in full_dataset if g.y.item() == 0]  
+        logger.info("📊 Separating normal and attack graphs...")
+        train_normal = [g for g in full_dataset if g.y.item() == 0]
         train_attack = [g for g in full_dataset if g.y.item() == 1]
         val_normal = [g for g in val_dataset if g.y.item() == 0]
         val_attack = [g for g in val_dataset if g.y.item() == 1]
-        
+
         logger.info(f"📊 Separated dataset: {len(train_normal)} normal + {len(train_attack)} attack training")
         logger.info(f"📊 Validation: {len(val_normal)} normal + {len(val_attack)} attack")
+        logger.info(f"📊 Total graphs: {len(train_normal) + len(train_attack) + len(val_normal) + len(val_attack)}")
         
         # Load trained VGAE for hard mining
         vgae_path = self._resolve_vgae_path()
@@ -109,16 +115,26 @@ class CurriculumTrainer:
         vgae_model = self._load_vgae_model(vgae_path, num_ids)
         vgae_model.eval()
         
-        # Create enhanced datamodule
-        initial_batch_size = getattr(self.config.training, 'batch_size', 64)
-        
+        # Create enhanced datamodule with memory-aware batch sizing
+        base_batch_size = getattr(self.config.training, 'batch_size', 64)
+
+        # Apply curriculum memory multiplier for high-memory datasets
+        # Curriculum mode has 2x memory overhead (double dataset load + VGAE model)
+        memory_multiplier = getattr(self.config.training, 'curriculum_memory_multiplier', 1.0)
+        curriculum_batch_size = int(base_batch_size * memory_multiplier)
+
+        logger.info(
+            f"📊 Curriculum batch size: {curriculum_batch_size} "
+            f"(base: {base_batch_size}, multiplier: {memory_multiplier})"
+        )
+
         datamodule = EnhancedCANGraphDataModule(
             train_normal=train_normal,
-            train_attack=train_attack, 
+            train_attack=train_attack,
             val_normal=val_normal,
             val_attack=val_attack,
             vgae_model=vgae_model,
-            batch_size=initial_batch_size,
+            batch_size=curriculum_batch_size,
             num_workers=min(8, os.cpu_count() or 1),
             total_epochs=self.config.training.max_epochs
         )
@@ -283,11 +299,17 @@ class CurriculumTrainer:
         datamodule: EnhancedCANGraphDataModule
     ) -> GATLightningModule:
         """Optimize batch size for curriculum learning."""
-        
+
+        logger.info("📊 _optimize_batch_size_for_curriculum() called")
+        logger.info(f"   Current datamodule.batch_size: {datamodule.batch_size}")
+        logger.info(f"   Current dataset size: {len(datamodule.train_dataset)}")
+
         optimize_batch = getattr(self.config.training, 'optimize_batch_size', True)
-        
+        logger.info(f"   optimize_batch_size setting: {optimize_batch}")
+
         if not optimize_batch:
             # Use conservative batch size if optimization disabled
+            logger.info("   Optimization disabled, using conservative batch size...")
             conservative_batch_size = datamodule.get_conservative_batch_size(
                 datamodule.batch_size
             )
@@ -297,52 +319,67 @@ class CurriculumTrainer:
                 "(optimization disabled)"
             )
             return model
-        
+
         logger.info("🔧 Optimizing batch size using maximum curriculum dataset size...")
-        
+
         # Temporarily set dataset to maximum size for accurate optimization
+        logger.info("   Creating max-size dataset for tuning...")
         original_state = datamodule.create_max_size_dataset_for_tuning()
+        logger.info(f"   Max dataset size: {len(datamodule.train_dataset)}")
         
         try:
+            logger.info("   Creating BatchSizeOptimizer...")
+            safety_factor = getattr(self.config.training, 'graph_memory_safety_factor', 0.5)
+            max_trials = getattr(self.config.training, 'max_batch_size_trials', 10)
+            mode = getattr(self.config.training, 'batch_size_mode', 'power')
+
+            logger.info(f"   Optimizer config: safety_factor={safety_factor}, max_trials={max_trials}, mode={mode}")
+
             optimizer = BatchSizeOptimizer(
                 accelerator=self.config.trainer.accelerator,
                 devices=self.config.trainer.devices,
-                graph_memory_safety_factor=getattr(
-                    self.config.training,
-                    'graph_memory_safety_factor',
-                    0.5
-                ),
-                max_batch_size_trials=getattr(
-                    self.config.training,
-                    'max_batch_size_trials',
-                    10
-                ),
-                batch_size_mode=getattr(
-                    self.config.training,
-                    'batch_size_mode',
-                    'power'
-                )
+                graph_memory_safety_factor=safety_factor,
+                max_batch_size_trials=max_trials,
+                batch_size_mode=mode
             )
-            
+
+            logger.info(f"   Calling optimizer.optimize_with_datamodule()...")
+            logger.info(f"   Pre-optimization: datamodule.batch_size={datamodule.batch_size}")
+
             safe_batch_size = optimizer.optimize_with_datamodule(model, datamodule)
+
+            logger.info(f"   Returned safe_batch_size: {safe_batch_size}")
+            logger.info(f"   Assigning to datamodule.batch_size...")
+            datamodule.batch_size = safe_batch_size
+            logger.info(f"   Post-assignment: datamodule.batch_size={datamodule.batch_size}")
             logger.info(f"✅ Batch size optimized for curriculum learning: {safe_batch_size}")
-            
+
         except Exception as e:
             logger.warning(
-                f"Batch size optimization failed: {e}. "
+                f"❌ Batch size optimization failed: {e}. "
                 "Using default batch size."
             )
+            import traceback
+            logger.warning(f"Exception traceback:\n{traceback.format_exc()}")
+
             # Use conservative fallback
             safe_batch_size = datamodule.get_conservative_batch_size(
                 getattr(self.config.training, 'batch_size', 64)
             )
+            logger.info(f"   Conservative fallback batch size: {safe_batch_size}")
             datamodule.batch_size = safe_batch_size
-        
+
         finally:
             # Restore dataset to original state
+            logger.info("   Restoring dataset to original state...")
             if original_state:
                 datamodule.restore_dataset_after_tuning(original_state)
-        
+                logger.info(f"   Restored dataset size: {len(datamodule.train_dataset)}")
+
+        logger.info(f"📊 Final state after optimization:")
+        logger.info(f"   datamodule.batch_size: {datamodule.batch_size}")
+        logger.info(f"   dataset size: {len(datamodule.train_dataset)}")
+
         return model
     
     def _create_curriculum_trainer(self) -> pl.Trainer:

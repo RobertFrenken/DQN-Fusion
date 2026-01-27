@@ -469,6 +469,7 @@ class CurriculumTrainingConfig(BaseTrainingConfig):
     # Training adjustments for curriculum
     max_epochs: int = 400
     batch_size: int = 32           # Starting batch size for optimization
+    curriculum_memory_multiplier: float = 1.0  # Batch size multiplier for curriculum mode (use 0.5 for dense datasets)
     learning_rate: float = 0.001
     early_stopping_patience: int = 150  # Longer patience for curriculum
 
@@ -695,15 +696,16 @@ class CANGraphConfig:
             is_student_fusion = self.model_size == "student" or self.distillation == "distilled"
             
             if is_student_fusion:
-                # Student fusion needs student VGAE and student GAT
-                ae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "student" / self.distillation / "knowledge_distillation"
-                clf_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "supervised" / "gat" / "student" / self.distillation / "knowledge_distillation"
-                
+                # Student fusion needs student VGAE (autoencoder mode) and student GAT (curriculum mode)
+                # Student models are trained with their base modes (autoencoder/curriculum), not knowledge_distillation mode
+                ae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "student" / self.distillation / "autoencoder"
+                clf_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "supervised" / "gat" / "student" / self.distillation / "curriculum"
+
                 discovered_ae = resolver.discover_model(ae_dir, 'vgae', require_exists=False)
                 discovered_clf = resolver.discover_model(clf_dir, 'gat', require_exists=False)
-                
-                artifacts["autoencoder"] = discovered_ae or (ae_dir / "models" / "vgae_student_knowledge_distillation.pth")
-                artifacts["classifier"] = discovered_clf or (clf_dir / "models" / "gat_student_knowledge_distillation.pth")
+
+                artifacts["autoencoder"] = discovered_ae or (ae_dir / "models" / "vgae_student_autoencoder.pth")
+                artifacts["classifier"] = discovered_clf or (clf_dir / "models" / "gat_student_curriculum.pth")
             else:
                 # Teacher fusion needs teacher VGAE and teacher GAT
                 ae_dir = Path(self.experiment_root) / self.modality / self.dataset.name / "unsupervised" / "vgae" / "teacher" / "no_distillation" / "autoencoder"

@@ -8,14 +8,14 @@
 #SBATCH --partition=gpu
 #SBATCH --mail-type=END,FAIL
 #SBATCH --mail-user=frugoli.1@osu.edu
-#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/slurm_logs/vgae_s_hcrl_sa_autoencode_20260126_235357.out
-#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/slurm_logs/vgae_s_hcrl_sa_autoencode_20260126_235357.err
+#SBATCH --output=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/slurm_logs/vgae_s_hcrl_sa_autoencode_20260127_122437.out
+#SBATCH --error=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/slurm_logs/vgae_s_hcrl_sa_autoencode_20260127_122437.err
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
 
 
 # CAN-Graph Training Job (Frozen Config Pattern)
-# Generated: 2026-01-26 23:53:57
-# Config: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/configs/frozen_config_20260126_235359.json
+# Generated: 2026-01-27 12:24:37
+# Config: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/configs/frozen_config_20260127_122440.json
 set -euo pipefail
 
 echo "=================================================================="
@@ -24,7 +24,7 @@ echo "=================================================================="
 echo "Job ID: $SLURM_JOB_ID"
 echo "Node: $(hostname)"
 echo "Start time: $(date)"
-echo "Frozen Config: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/configs/frozen_config_20260126_235359.json"
+echo "Frozen Config: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/configs/frozen_config_20260127_122440.json"
 echo "=================================================================="
 
 # Load environment
@@ -47,9 +47,9 @@ echo "Python: $(which python)"
 echo "=================================================================="
 
 # Run training with frozen config (no re-resolution needed)
-echo "Running: python train_with_hydra_zen.py --frozen-config /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/configs/frozen_config_20260126_235359.json"
+echo "Running: python train_with_hydra_zen.py --frozen-config /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/configs/frozen_config_20260127_122440.json"
 
-python train_with_hydra_zen.py --frozen-config /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/configs/frozen_config_20260126_235359.json
+python train_with_hydra_zen.py --frozen-config /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/configs/frozen_config_20260127_122440.json
 
 EXIT_CODE=$?
 
@@ -59,7 +59,7 @@ if [ $EXIT_CODE -eq 0 ]; then
     echo "Results: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder"
 else
     echo "❌ JOB FAILED (exit code: $EXIT_CODE)"
-    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/slurm_logs/vgae_s_hcrl_sa_autoencode_20260126_235357.err"
+    echo "Check error log: /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/experimentruns/automotive/hcrl_sa/unsupervised/vgae/student/no_distillation/autoencoder/slurm_logs/vgae_s_hcrl_sa_autoencode_20260127_122437.err"
 fi
 echo "End time: $(date)"
 echo "=================================================================="
