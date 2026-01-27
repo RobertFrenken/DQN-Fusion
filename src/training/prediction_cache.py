@@ -13,7 +13,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from pathlib import Path
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Dict
 import logging
 from tqdm import tqdm
 import pickle
