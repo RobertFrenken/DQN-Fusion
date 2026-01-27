@@ -95,7 +95,8 @@ class VGAEConfig:
     input_dim: int = 11           # Same input as student
     node_embedding_dim: int = 256 # Richer embedding (from teacher_student.yaml)
     # Tuned hidden_dims to meet teacher parameter budget (~1.71M) with reduced MLP
-    hidden_dims: List[int] = field(default_factory=lambda: [1024, 512])  # Two-layer compression
+    # NOTE: Must include latent_dim at end ([1024, 512, 96]) for proper decoder mirroring
+    hidden_dims: List[int] = field(default_factory=lambda: [1024, 512, 96])  # Two-layer compression + latent
     latent_dim: int = 96          # Larger latent space for rich representations
     output_dim: int = 11          # Reconstruct input features
     
@@ -123,7 +124,8 @@ class StudentVGAEConfig:
     input_dim: int = 11           # CAN features input
     node_embedding_dim: int = 80  # Initial embedding (tuned)
     # Tuned encoder_dims for ~86K parameters with reduced MLP
-    encoder_dims: List[int] = field(default_factory=lambda: [80, 40])  # Compact two-layer
+    # NOTE: For compatibility with decoder, include latent_dim at end
+    encoder_dims: List[int] = field(default_factory=lambda: [80, 40, 16])  # Compact two-layer + latent
     decoder_dims: List[int] = field(default_factory=lambda: [40, 80])  # Mirror of encoder
     latent_dim: int = 16          # Compact latent space (tuned)
     output_dim: int = 11          # Reconstruct input features

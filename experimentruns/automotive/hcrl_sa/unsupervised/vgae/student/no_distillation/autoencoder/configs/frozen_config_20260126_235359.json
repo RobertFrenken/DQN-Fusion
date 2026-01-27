@@ -1,31 +1,34 @@
 {
   "_frozen_config_version": "1.0",
-  "_frozen_at": "2026-01-26T23:16:03.192130",
+  "_frozen_at": "2026-01-26T23:53:59.611849",
   "_type": "CANGraphConfig",
   "model": {
-    "_type": "VGAEConfig",
-    "type": "vgae",
+    "_type": "StudentVGAEConfig",
+    "type": "vgae_student",
     "input_dim": 11,
-    "node_embedding_dim": 256,
-    "hidden_dims": [
-      1024,
-      512
+    "node_embedding_dim": 80,
+    "encoder_dims": [
+      80,
+      40,
+      16
     ],
-    "latent_dim": 96,
+    "decoder_dims": [
+      40,
+      80
+    ],
+    "latent_dim": 16,
     "output_dim": 11,
-    "num_layers": 2,
-    "attention_heads": 4,
-    "embedding_dim": 64,
-    "mlp_hidden": 256,
-    "dropout": 0.15,
+    "attention_heads": 1,
+    "mlp_hidden": 16,
+    "dropout": 0.1,
     "batch_norm": true,
     "activation": "relu",
-    "target_parameters": 1710000,
-    "curriculum_stages": [
-      "pretrain",
-      "distill"
-    ],
-    "hidden_channels": 128,
+    "target_parameters": 86000,
+    "memory_budget_kb": 287,
+    "inference_time_ms": 5,
+    "hidden_channels": 40,
+    "num_layers": 2,
+    "embedding_dim": 4,
     "beta": 1.0
   },
   "dataset": {
@@ -53,7 +56,7 @@
   "training": {
     "_type": "AutoencoderTrainingConfig",
     "mode": "autoencoder",
-    "max_epochs": 5,
+    "max_epochs": 400,
     "batch_size": 64,
     "learning_rate": 0.002,
     "weight_decay": 0.0001,
@@ -122,10 +125,10 @@
   },
   "seed": 42,
   "project_name": "can_graph_lightning",
-  "experiment_name": "vgae_hcrl_sa_autoencoder",
+  "experiment_name": "vgae_student_hcrl_sa_autoencoder",
   "experiment_root": "experimentruns",
   "modality": "automotive",
-  "model_size": "teacher",
+  "model_size": "student",
   "distillation": "no_distillation",
   "output_dir": "outputs",
   "model_save_dir": "saved_models",
