@@ -15,7 +15,7 @@ This module provides:
 import json
 import logging
 from pathlib import Path
-from typing import Dict
+from typing import Dict, Optional
 from dataclasses import asdict
 
 import torch
@@ -443,46 +443,53 @@ class HydraZenTrainer:
     
     def _train_fusion(self):
         """Train fusion agent using FusionTrainer."""
+        run_num = self.path_resolver.get_run_counter()
+        logger.info(f"🔢 Run number: {run_num:03d}")
         logger.info("🔀 Dispatching to FusionTrainer")
-        
+
         paths = self.get_hierarchical_paths()
         fusion_trainer = FusionTrainer(self.config, paths)
         model, trainer = fusion_trainer.train()
-        
+
         # Post-training tasks (FusionTrainer already saves dqn_fusion.pth, config snapshot is extra)
-        model_name = self._generate_model_filename("dqn", "fusion")
+        model_name = self._generate_model_filename("dqn", "fusion", run_num=run_num)
         self._save_final_model(model, model_name)
         self._save_config_snapshot(paths)
-        
+
         return model, trainer
     
     def _train_curriculum(self):
         """Train with curriculum learning using CurriculumTrainer."""
+        run_num = self.path_resolver.get_run_counter()
+        logger.info(f"🔢 Run number: {run_num:03d}")
         logger.info("🎓 Dispatching to CurriculumTrainer")
-        
+
         # Load dataset and setup model first
         force_rebuild = getattr(self.config, 'force_rebuild_cache', False)
         _, _, num_ids = load_dataset(
-            self.config.dataset.name, 
-            self.config, 
+            self.config.dataset.name,
+            self.config,
             force_rebuild_cache=force_rebuild
         )
-        
+
         paths = self.get_hierarchical_paths()
         curriculum_trainer = CurriculumTrainer(self.config, paths)
         model, trainer = curriculum_trainer.train(num_ids)
-        
+
         # Post-training tasks
-        model_name = self._generate_model_filename("gat", "curriculum")
+        model_name = self._generate_model_filename("gat", "curriculum", run_num=run_num)
         self._save_final_model(model, model_name)
         self._save_config_snapshot(paths)
-        
+
         return model, trainer
     
     def _train_standard(self):
         """Standard training (normal, KD, autoencoder)."""
+        # Get run number for model filename versioning
+        run_num = self.path_resolver.get_run_counter()
+        logger.info(f"🔢 Run number: {run_num:03d}")
         logger.info(f"📚 Standard training mode: {self.config.training.mode}")
-        
+
         # Load dataset
         force_rebuild = getattr(self.config, 'force_rebuild_cache', False)
         train_dataset, val_dataset, num_ids = load_dataset(
@@ -490,21 +497,34 @@ class HydraZenTrainer:
             self.config,
             force_rebuild_cache=force_rebuild
         )
-        
+
         logger.info(
             f"📊 Dataset loaded: {len(train_dataset)} training + "
             f"{len(val_dataset)} validation = {len(train_dataset) + len(val_dataset)} total"
         )
-        
+
         # Setup model
         model = self.setup_model(num_ids)
-        
-        # Optimize batch size if requested
-        if getattr(self.config.training, 'optimize_batch_size', False):
-            logger.info("Running batch size optimization...")
+
+        # ===== BATCH SIZE TUNING SECTION =====
+        bsc = self.config.batch_size_config
+
+        if bsc.optimize_batch_size:
+            logger.info("🔧 Running batch size optimization...")
             model = self._optimize_batch_size(model, train_dataset, val_dataset)
+            logger.info(f"📊 Tuner found max safe batch size: {model.batch_size}")
+            final_batch_size = int(model.batch_size * bsc.safety_factor)
+            logger.info(
+                f"🎯 Applied safety_factor {bsc.safety_factor}: "
+                f"{model.batch_size} × {bsc.safety_factor} = {final_batch_size}"
+            )
+            model.batch_size = final_batch_size
         else:
-            logger.info(f"Using fixed batch size: {model.batch_size}")
+            fallback_size = bsc.tuned_batch_size or bsc.default_batch_size
+            logger.info(f"📊 Using batch size from config: {fallback_size}")
+            model.batch_size = fallback_size
+
+        logger.info(f"✅ Training batch size: {model.batch_size}")
         
         # Create dataloaders
         train_loader, val_loader = create_dataloaders(
@@ -526,14 +546,20 @@ class HydraZenTrainer:
         if self.config.training.run_test:
             test_results = trainer.test(model, val_loader)
             logger.info(f"Test results: {test_results}")
-        
-        # Save final model with model_size in filename
+
+        # Update frozen config with tuned batch size after successful training
+        if model.batch_size and bsc.optimize_batch_size:
+            self.config.batch_size_config.tuned_batch_size = model.batch_size
+            logger.info(f"🔄 Updated batch_size_config: tuned_batch_size = {model.batch_size}")
+
+        # Save final model with model_size and run counter in filename
         model_name = self._generate_model_filename(
             self.config.model.type,
-            self.config.training.mode
+            self.config.training.mode,
+            run_num=run_num
         )
         self._save_final_model(model, model_name)
-        
+
         return model, trainer
     
     # ========================================================================
@@ -551,26 +577,31 @@ class HydraZenTrainer:
         except Exception as e:
             logger.warning(f"Failed to write config snapshot: {e}")
     
-    def _generate_model_filename(self, model_type: str, mode: str) -> str:
+    def _generate_model_filename(self, model_type: str, mode: str, run_num: Optional[int] = None) -> str:
         """
-        Generate consistent model filename including model_size.
+        Generate consistent model filename including model_size and run counter.
 
-        Format: {model_type}_{model_size}_{mode}.pth
+        Format: {model_type}_{model_size}_{mode}_run_{run_num:03d}.pth
         Examples:
-            - vgae_teacher_autoencoder.pth
-            - vgae_student_autoencoder.pth
-            - gat_teacher_curriculum.pth
-            - dqn_teacher_fusion.pth
+            - vgae_teacher_autoencoder_run_001.pth
+            - vgae_student_autoencoder_run_002.pth
+            - gat_teacher_curriculum_run_001.pth
+            - dqn_teacher_fusion_run_003.pth
 
         Args:
             model_type: Model type (vgae, gat, dqn)
             mode: Training mode (autoencoder, curriculum, fusion, normal)
+            run_num: Run counter (1, 2, 3, ...). If None, omitted from filename.
 
         Returns:
             Filename string with .pth extension
         """
         model_size = getattr(self.config, 'model_size', 'teacher')
-        return f"{model_type}_{model_size}_{mode}.pth"
+        base_name = f"{model_type}_{model_size}_{mode}"
+        if run_num is not None:
+            return f"{base_name}_run_{run_num:03d}.pth"
+        else:
+            return f"{base_name}.pth"
 
     def _save_final_model(self, model: pl.LightningModule, filename: str):
         """Save final model state dict."""

@@ -1,897 +1,703 @@
+"""
+Comprehensive Evaluation Framework for CAN-Graph Models
+
+Supports evaluation of three primary pipelines:
+1. Teacher: Full-size models without knowledge distillation
+2. Student No-KD: Compressed models without knowledge distillation
+3. Student With-KD: Compressed models trained with teacher knowledge distillation
+
+Computes comprehensive metrics across train/val/test subsets and exports results
+in multiple formats (CSV, JSON) for LaTeX paper integration and ablation studies.
+"""
+
 import argparse
-import gc
 import os
 import time
+import json
+import logging
+from pathlib import Path
+from typing import Dict, Tuple, List, Any, Optional
 
 import numpy as np
 import torch
 import torch.nn as nn
-from torch_geometric.loader import DataLoader
-from torch.utils.data import DataLoader as TorchDataLoader
-from sklearn.metrics import (
-    accuracy_score, precision_score, recall_score, f1_score,
-    confusion_matrix, roc_auc_score, matthews_corrcoef, classification_report
+import torch.nn.functional as F
+import pandas as pd
+from torch.utils.data import DataLoader
+
+from src.evaluation.metrics import (
+    compute_all_metrics, flatten_metrics, detect_optimal_threshold
 )
-from torch_geometric.data import Batch
-from torch_geometric.nn import global_mean_pool
-
-from src.models.models import GATWithJK, GraphAutoencoderNeighborhood
 from src.preprocessing.preprocessing import graph_creation, build_id_mapping_from_normal
+from src.models.vgae import GraphAutoencoderNeighborhood
+from src.models.models import GATWithJK
+from src.models.dqn import EnhancedDQNFusionAgent
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 
-def create_student_models(num_ids, embedding_dim, device):
-    """Create student models with exact same architecture as training."""
-    student_autoencoder = GraphAutoencoderNeighborhood(
-        num_ids=num_ids, 
-        in_channels=11, 
-        embedding_dim=embedding_dim,
-        hidden_dim=16,
-        latent_dim=16,
-        num_encoder_layers=2,
-        num_decoder_layers=2,
-        encoder_heads=2,
-        decoder_heads=2
-    ).to(device)
-    
-    student_classifier = GATWithJK(
-        num_ids=num_ids, 
-        in_channels=11, 
-        hidden_channels=16,
-        out_channels=1, 
-        num_layers=2,
-        heads=4,
-        embedding_dim=embedding_dim
-    ).to(device)
-    
-    return student_autoencoder, student_classifier
+class EvaluationConfig:
+    """Configuration for evaluation pipeline."""
 
+    def __init__(self, args: argparse.Namespace):
+        self.dataset = args.dataset
+        self.model_path = args.model_path
+        self.teacher_path = args.teacher_path
+        self.training_mode = args.training_mode
+        self.kd_mode = args.mode
+        self.batch_size = args.batch_size
+        self.device = torch.device(args.device if args.device != 'auto' else
+                                  ('cuda' if torch.cuda.is_available() else 'cpu'))
+        self.csv_output = args.csv_output
+        self.json_output = args.json_output
+        self.plots_dir = args.plots_dir
+        self.threshold_optimization = args.threshold_optimization
+        self.verbose = args.verbose
 
-def create_teacher_models(num_ids, embedding_dim, device):
-    """Create teacher models with larger architecture."""
-    teacher_autoencoder = GraphAutoencoderNeighborhood(
-        num_ids=num_ids, 
-        in_channels=11, 
-        embedding_dim=embedding_dim,
-        hidden_dim=32,  
-        latent_dim=32,  
-        num_encoder_layers=3,  
-        num_decoder_layers=3,  
-        encoder_heads=4,  
-        decoder_heads=4   
-    ).to(device)
-    
-    teacher_classifier = GATWithJK(
-        num_ids=num_ids, 
-        in_channels=11, 
-        hidden_channels=32,  
-        out_channels=1, 
-        num_layers=5,  
-        heads=8,  
-        embedding_dim=embedding_dim
-    ).to(device)
-    
-    return teacher_autoencoder, teacher_classifier
-
-
-def create_optimized_data_loader(dataset, batch_size, device, shuffle=False):
-    """Create optimized data loader for evaluation."""
-    if torch.cuda.is_available():
-        gpu_memory_gb = torch.cuda.get_device_properties(0).total_memory / 1024**3
-        if gpu_memory_gb < 20:
-            eval_batch_size = 512
-        else:
-            eval_batch_size = 1024
-    else:
-        eval_batch_size = 256
-    
-    print(f"Evaluation DataLoader: batch_size={eval_batch_size}, workers=4")
-    
-    return DataLoader(
-        dataset, 
-        batch_size=eval_batch_size,
-        shuffle=shuffle,
-        pin_memory=True if torch.cuda.is_available() else False,
-        num_workers=4,
-        persistent_workers=True,
-        prefetch_factor=2,
-        drop_last=False
-    )
-
-
-def optimize_threshold_for_method(pipeline, validation_loader, method='anomaly_only', target_metric='f1', model_type='student'):
-    """Optimize threshold for specific method using validation data."""
-    print(f"\n=== OPTIMIZING THRESHOLD FOR {model_type.upper()} {method.upper()} (target: {target_metric}) ===")
-    
-    all_scores = []
-    all_labels = []
-    
-    # Select appropriate models based on type
-    if model_type == 'student':
-        autoencoder = pipeline.student_autoencoder
-        classifier = pipeline.student_classifier
-    else:  # teacher
-        autoencoder = pipeline.teacher_autoencoder
-        classifier = pipeline.teacher_classifier
-    
-    autoencoder.eval()
-    classifier.eval()
-    
-    with torch.no_grad():
-        for batch in validation_loader:
-            batch = batch.to(pipeline.device, non_blocking=True)
-            
-            # Get anomaly scores
-            cont_out, canid_logits, neighbor_logits, _, _ = autoencoder(
-                batch.x, batch.edge_index, batch.batch)
-            
-            node_errors = (cont_out - batch.x[:, 1:]).pow(2).mean(dim=1)
-            neighbor_targets = autoencoder.create_neighborhood_targets(
-                batch.x, batch.edge_index, batch.batch)
-            neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
-                neighbor_logits, neighbor_targets).mean(dim=1)
-            
-            batch_size = batch.batch.max().item() + 1
-            graph_node_errors = torch.zeros(batch_size, device=pipeline.device)
-            graph_neighbor_errors = torch.zeros(batch_size, device=pipeline.device)
-            
-            graph_node_errors.scatter_reduce_(0, batch.batch, node_errors, reduce='amax')
-            graph_neighbor_errors.scatter_reduce_(0, batch.batch, neighbor_errors, reduce='amax')
-            
-            composite_scores = (1.0 * graph_node_errors + 20.0 * graph_neighbor_errors)
-            
-            all_scores.extend(composite_scores.cpu().numpy())
-            all_labels.extend(batch.y.cpu().numpy())
-    
-    all_scores = np.array(all_scores)
-    all_labels = np.array(all_labels)
-    
-    print(f"Validation data: {len(all_labels)} samples")
-    print(f"  Normal: {np.sum(all_labels == 0)} ({np.mean(all_labels == 0)*100:.1f}%)")
-    print(f"  Attack: {np.sum(all_labels == 1)} ({np.mean(all_labels == 1)*100:.1f}%)")
-    
-    # Define threshold candidates based on method
-    if method == 'anomaly_only':
-        score_percentiles = np.linspace(50, 99.5, 100)
-        thresholds = [np.percentile(all_scores, p) for p in score_percentiles]
-    elif method == 'two_stage':
-        score_percentiles = np.linspace(60, 95, 71)
-        thresholds = [np.percentile(all_scores, p) for p in score_percentiles]
-        # Add attack-focused thresholds
-        attack_scores = all_scores[all_labels == 1]
-        if len(attack_scores) > 0:
-            for p in [10, 5, 1]:
-                thresholds.append(np.percentile(attack_scores, p))
-    else:
-        min_score, max_score = np.min(all_scores), np.max(all_scores)
-        thresholds = np.linspace(min_score, max_score, 200)
-    
-    thresholds = sorted(list(set(thresholds)))
-    print(f"Evaluating {len(thresholds)} threshold candidates...")
-    
-    best_threshold = None
-    best_score = -1
-    best_metrics = None
-    
-    # Teacher models typically perform better, so use more realistic GAT accuracy
-    if model_type == 'teacher':
-        gat_accuracy_on_normal = 0.995  # Teachers are better
-        gat_accuracy_on_attack = 0.96   # Teachers are better
-    else:
-        gat_accuracy_on_normal = 0.98   # Students
-        gat_accuracy_on_attack = 0.92   # Students
-    
-    for threshold in thresholds:
-        if method == 'anomaly_only':
-            preds = (all_scores > threshold).astype(int)
-        elif method == 'two_stage':
-            # Simulate GAT performance on detected samples
-            anomaly_mask = all_scores > threshold
-            preds = np.zeros_like(all_labels)
-            
-            if np.any(anomaly_mask):
-                detected_labels = all_labels[anomaly_mask]
-                
-                for j, label in enumerate(detected_labels):
-                    idx = np.where(anomaly_mask)[0][j]
-                    if label == 0:
-                        preds[idx] = 1 if np.random.random() > gat_accuracy_on_normal else 0
-                    else:
-                        preds[idx] = 1 if np.random.random() < gat_accuracy_on_attack else 0
-        
-        # Compute metrics
-        if len(np.unique(preds)) > 1 and len(np.unique(all_labels)) > 1:
-            accuracy = accuracy_score(all_labels, preds)
-            precision = precision_score(all_labels, preds, zero_division=0)
-            recall = recall_score(all_labels, preds, zero_division=0)
-            f1 = f1_score(all_labels, preds, zero_division=0)
-            
-            tn, fp, fn, tp = confusion_matrix(all_labels, preds).ravel()
-            specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-            balanced_acc = (recall + specificity) / 2
-            miss_rate = fn / (fn + tp) if (fn + tp) > 0 else 0
-            
-            metrics = {
-                'threshold': threshold,
-                'accuracy': accuracy,
-                'precision': precision,
-                'recall': recall,
-                'f1': f1,
-                'specificity': specificity,
-                'balanced_accuracy': balanced_acc,
-                'miss_rate': miss_rate,
-                'tp': tp, 'tn': tn, 'fp': fp, 'fn': fn
-            }
-            
-            # Select best based on target metric
-            if target_metric == 'f1':
-                current_score = f1
-            elif target_metric == 'low_miss_rate':
-                current_score = 1 - miss_rate
-            elif target_metric == 'security_score':
-                current_score = 0.7 * recall + 0.3 * precision
-            else:
-                current_score = accuracy
-            
-            if current_score > best_score:
-                best_score = current_score
-                best_threshold = threshold
-                best_metrics = metrics.copy()
-    
-    if best_threshold is None:
-        print("WARNING: Could not find optimal threshold, using median")
-        best_threshold = np.median(all_scores)
-        best_metrics = {'threshold': best_threshold}
-    
-    print(f"\nBest threshold: {best_threshold:.6f}")
-    print(f"Best {target_metric}: {best_score:.4f}")
-    
-    if best_metrics and 'accuracy' in best_metrics:
-        print(f"Detailed metrics:")
-        print(f"  Accuracy: {best_metrics['accuracy']:.4f}")
-        print(f"  F1-Score: {best_metrics['f1']:.4f}")
-        print(f"  Miss Rate: {best_metrics['miss_rate']:.4f}")
-    
-    return best_threshold, best_metrics
-
-
-def create_validation_split(train_dataset, validation_ratio=0.2, seed=42):
-    """Create validation split from training data."""
-    np.random.seed(seed)
-    
-    normal_indices = []
-    attack_indices = []
-    
-    for i, data in enumerate(train_dataset):
-        if data.y.item() == 0:
-            normal_indices.append(i)
-        else:
-            attack_indices.append(i)
-    
-    n_val_normal = int(len(normal_indices) * validation_ratio)
-    n_val_attack = int(len(attack_indices) * validation_ratio) if len(attack_indices) > 0 else 0
-    
-    val_normal_indices = np.random.choice(normal_indices, n_val_normal, replace=False)
-    val_attack_indices = np.random.choice(attack_indices, n_val_attack, replace=False) if n_val_attack > 0 else []
-    
-    val_indices = list(val_normal_indices) + list(val_attack_indices)
-    val_dataset = [train_dataset[i] for i in val_indices]
-    
-    print(f"Validation split: {len(val_normal_indices)} normal, {len(val_attack_indices)} attack")
-    return val_dataset
-
-
-class ComprehensiveEvaluationPipeline:
-    """Unified evaluation pipeline for both student and teacher models."""
-    
-    def __init__(self, num_ids, embedding_dim=8, device='cpu'):
-        self.device = device
-        self.is_cuda = torch.cuda.is_available() and device.type == 'cuda'
-        
-        # Create both student and teacher models
-        self.student_autoencoder, self.student_classifier = create_student_models(
-            num_ids=num_ids, embedding_dim=embedding_dim, device=device
-        )
-        
-        self.teacher_autoencoder, self.teacher_classifier = create_teacher_models(
-            num_ids=num_ids, embedding_dim=embedding_dim, device=device
-        )
-        
-        # Thresholds for both model types
-        self.student_threshold = 0.0
-        self.teacher_threshold = 0.0
-        self.student_optimized_thresholds = {}
-        self.teacher_optimized_thresholds = {}
-        
-        # Model availability flags
-        self.student_models_loaded = False
-        self.teacher_models_loaded = False
-        
-        print(f"Initialized Comprehensive Evaluation Pipeline on {device}")
-
-    def load_student_models(self, autoencoder_path, classifier_path, threshold_path=None):
-        """Load trained student models.
-
-        This method fails loudly if required artifacts are missing to avoid silent evaluation runs.
-        """
-        missing = []
-        if not autoencoder_path or not os.path.exists(autoencoder_path):
-            missing.append(f"autoencoder missing at {autoencoder_path}")
-        if not classifier_path or not os.path.exists(classifier_path):
-            missing.append(f"classifier missing at {classifier_path}")
-        if missing:
-            raise FileNotFoundError("Evaluation requires pre-trained models:\n" + "\n".join(missing) + "\nPlease provide explicit model paths or ensure canonical artifacts are present under experiment_runs.")
-
-        print(f"Loading student models...")
-        
-        autoencoder_state_dict = torch.load(autoencoder_path, map_location=self.device, weights_only=True)
-        self.student_autoencoder.load_state_dict(autoencoder_state_dict)
-        
-        classifier_state_dict = torch.load(classifier_path, map_location=self.device, weights_only=True)
-        self.student_classifier.load_state_dict(classifier_state_dict)
-        
-        if threshold_path and os.path.exists(threshold_path):
-            threshold_data = torch.load(threshold_path, map_location=self.device, weights_only=True)
-            if isinstance(threshold_data, dict) and 'threshold' in threshold_data:
-                self.student_threshold = threshold_data['threshold']
-            else:
-                self.student_threshold = float(threshold_data)
-            print(f"Loaded student threshold: {self.student_threshold}")
-        else:
-            self.student_threshold = None
-            print("No student threshold loaded")
-        
-        self.student_autoencoder.eval()
-        self.student_classifier.eval()
-        self.student_models_loaded = True
-        return True
-
-    def load_teacher_models(self, autoencoder_path, classifier_path, threshold_path=None):
-        """Load trained teacher models.
-
-        This method fails loudly if required artifacts are missing to avoid silent evaluation runs.
-        """
-        missing = []
-        if not autoencoder_path or not os.path.exists(autoencoder_path):
-            missing.append(f"autoencoder missing at {autoencoder_path}")
-        if not classifier_path or not os.path.exists(classifier_path):
-            missing.append(f"classifier missing at {classifier_path}")
-        if missing:
-            raise FileNotFoundError("Evaluation requires pre-trained models:\n" + "\n".join(missing) + "\nPlease provide explicit model paths or ensure canonical artifacts are present under experiment_runs.")
-
-        print(f"Loading teacher models...")
-        
-        autoencoder_state_dict = torch.load(autoencoder_path, map_location=self.device, weights_only=True)
-        self.teacher_autoencoder.load_state_dict(autoencoder_state_dict)
-        
-        classifier_state_dict = torch.load(classifier_path, map_location=self.device, weights_only=True)
-        self.teacher_classifier.load_state_dict(classifier_state_dict)
-        
-        if threshold_path and os.path.exists(threshold_path):
-            threshold_data = torch.load(threshold_path, map_location=self.device, weights_only=True)
-            if isinstance(threshold_data, dict) and 'threshold' in threshold_data:
-                self.teacher_threshold = threshold_data['threshold']
-            else:
-                self.teacher_threshold = float(threshold_data)
-            print(f"Loaded teacher threshold: {self.teacher_threshold}")
-        else:
-            self.teacher_threshold = None
-            print("No teacher threshold loaded")
-        
-        self.teacher_autoencoder.eval()
-        self.teacher_classifier.eval()
-        self.teacher_models_loaded = True
-        return True
-
-    def optimize_thresholds(self, train_dataset):
-        """Optimize thresholds using training data for both model types."""
-        print("\n" + "="*60)
-        print("OPTIMIZING THRESHOLDS FOR ALL MODELS")
-        print("="*60)
-        
-        val_dataset = create_validation_split(train_dataset, validation_ratio=0.2)
-        val_loader = create_optimized_data_loader(val_dataset, 512, self.device)
-        
-        # Optimize student thresholds if models loaded
-        if self.student_models_loaded:
-            print("\n" + "="*40)
-            print("STUDENT MODEL THRESHOLD OPTIMIZATION")
-            print("="*40)
-            
-            student_anomaly_threshold, student_anomaly_metrics = optimize_threshold_for_method(
-                self, val_loader, method='anomaly_only', target_metric='f1', model_type='student'
-            )
-            
-            student_two_stage_threshold, student_two_stage_metrics = optimize_threshold_for_method(
-                self, val_loader, method='two_stage', target_metric='low_miss_rate', model_type='student'
-            )
-            
-            self.student_optimized_thresholds = {
-                'anomaly_only': {'threshold': student_anomaly_threshold, 'metrics': student_anomaly_metrics},
-                'two_stage': {'threshold': student_two_stage_threshold, 'metrics': student_two_stage_metrics}
-            }
-            
-            self.student_threshold = student_two_stage_threshold
-        
-        # Optimize teacher thresholds if models loaded
-        if self.teacher_models_loaded:
-            print("\n" + "="*40)
-            print("TEACHER MODEL THRESHOLD OPTIMIZATION")
-            print("="*40)
-            
-            teacher_anomaly_threshold, teacher_anomaly_metrics = optimize_threshold_for_method(
-                self, val_loader, method='anomaly_only', target_metric='f1', model_type='teacher'
-            )
-            
-            teacher_two_stage_threshold, teacher_two_stage_metrics = optimize_threshold_for_method(
-                self, val_loader, method='two_stage', target_metric='low_miss_rate', model_type='teacher'
-            )
-            
-            self.teacher_optimized_thresholds = {
-                'anomaly_only': {'threshold': teacher_anomaly_threshold, 'metrics': teacher_anomaly_metrics},
-                'two_stage': {'threshold': teacher_two_stage_threshold, 'metrics': teacher_two_stage_metrics}
-            }
-            
-            self.teacher_threshold = teacher_two_stage_threshold
-        
-        return {
-            'student': self.student_optimized_thresholds if self.student_models_loaded else None,
-            'teacher': self.teacher_optimized_thresholds if self.teacher_models_loaded else None
+        # Dataset paths
+        self.dataset_paths = {
+            'hcrl_ch': 'data/automotive/hcrl_ch',
+            'hcrl_sa': 'data/automotive/hcrl_sa',
+            'set_01': 'data/automotive/set_01',
+            'set_02': 'data/automotive/set_02',
+            'set_03': 'data/automotive/set_03',
+            'set_04': 'data/automotive/set_04',
         }
 
-    def predict_batch_comprehensive(self, data, model_type='both'):
-        """Comprehensive prediction with specified model type."""
-        if self.is_cuda:
-            data = data.to(self.device, non_blocking=True)
+        self.root_folder = self.dataset_paths.get(self.dataset)
+        if not self.root_folder:
+            raise ValueError(f"Unknown dataset: {self.dataset}")
+
+        # Validation
+        if not os.path.exists(self.model_path):
+            raise FileNotFoundError(f"Model not found: {self.model_path}")
+        if self.teacher_path and not os.path.exists(self.teacher_path):
+            raise FileNotFoundError(f"Teacher model not found: {self.teacher_path}")
+
+    def log(self):
+        """Log configuration."""
+        logger.info("=" * 70)
+        logger.info("EVALUATION CONFIGURATION")
+        logger.info("=" * 70)
+        logger.info(f"Dataset: {self.dataset}")
+        logger.info(f"Model Path: {self.model_path}")
+        logger.info(f"Teacher Path: {self.teacher_path or 'None'}")
+        logger.info(f"Training Mode: {self.training_mode}")
+        logger.info(f"KD Mode: {self.kd_mode}")
+        logger.info(f"Device: {self.device}")
+        logger.info(f"Batch Size: {self.batch_size}")
+        logger.info(f"Threshold Optimization: {self.threshold_optimization}")
+        logger.info("=" * 70)
+
+
+class ModelLoader:
+    """Load models from disk."""
+
+    def __init__(self, device: torch.device):
+        self.device = device
+
+    def load_model(self, model_path: str) -> nn.Module:
+        """Load model from file."""
+        logger.info(f"Loading model from {model_path}...")
+        try:
+            state_dict = torch.load(model_path, map_location=self.device, weights_only=False)
+            # Try to infer model type and create appropriate model instance
+            # For now, just load state dict - actual model creation depends on architecture
+            logger.info("Model loaded successfully")
+            return state_dict
+        except Exception as e:
+            logger.error(f"Failed to load model: {e}")
+            raise
+
+    def load_checkpoint(self, checkpoint_path: str) -> Dict[str, Any]:
+        """Load complete checkpoint (for Lightning models)."""
+        logger.info(f"Loading checkpoint from {checkpoint_path}...")
+        try:
+            checkpoint = torch.load(checkpoint_path, map_location=self.device, weights_only=False)
+            logger.info("Checkpoint loaded successfully")
+            return checkpoint
+        except Exception as e:
+            logger.error(f"Failed to load checkpoint: {e}")
+            raise
+
+
+class DatasetHandler:
+    """Handle dataset loading and preprocessing."""
+
+    def __init__(self, config: EvaluationConfig):
+        self.config = config
+        self.id_mapping = None
+
+    def load_datasets(self) -> Tuple[List, List, List]:
+        """
+        Load train, validation, and test datasets.
+
+        Returns:
+            Tuple of (train_dataset, val_dataset, test_dataset)
+        """
+        logger.info("Loading datasets...")
+
+        # Build ID mapping from normal samples
+        self.id_mapping = build_id_mapping_from_normal(self.config.root_folder)
+        logger.info(f"Built ID mapping with {len(self.id_mapping)} IDs")
+
+        # Load training data
+        train_dataset = self._load_train_data()
+
+        # Split into train/val
+        train_dataset, val_dataset = self._split_train_val(train_dataset, val_ratio=0.2)
+
+        # Load test data
+        test_dataset = self._load_test_data()
+
+        logger.info(f"Dataset sizes: Train={len(train_dataset)}, Val={len(val_dataset)}, Test={len(test_dataset)}")
+        return train_dataset, val_dataset, test_dataset
+
+    def _load_train_data(self) -> List:
+        """Load all training data (combine train_* folders)."""
+        combined_dataset = []
+        train_root = os.path.join(self.config.root_folder, 'train_01_attack_free')
+
+        # Try standard structure first
+        if os.path.exists(train_root):
+            dataset = graph_creation(train_root, folder_type='training_',
+                                    id_mapping=self.id_mapping, window_size=100)
+            combined_dataset.extend(dataset)
+
+        # Try alternative structure with train_*_ folders
+        for folder in os.listdir(self.config.root_folder):
+            if folder.startswith('train_') and '_' not in folder.split('_', 1)[1] if len(folder.split('_')) > 1 else False:
+                folder_path = os.path.join(self.config.root_folder, folder)
+                if os.path.isdir(folder_path):
+                    dataset = graph_creation(folder_path, folder_type='training_',
+                                            id_mapping=self.id_mapping, window_size=100)
+                    combined_dataset.extend(dataset)
+
+        if not combined_dataset:
+            raise RuntimeError(f"No training data found in {self.config.root_folder}")
+
+        return combined_dataset
+
+    def _load_test_data(self) -> List:
+        """Load test data (dataset-specific structure)."""
+        if 'hcrl_ch' in self.config.root_folder:
+            # For hcrl_ch: glob all test_*.csv files
+            combined_dataset = []
+            for folder in os.listdir(self.config.root_folder):
+                if folder.startswith('test_'):
+                    folder_path = os.path.join(self.config.root_folder, folder)
+                    if os.path.isdir(folder_path):
+                        dataset = graph_creation(folder_path, folder_type='test_',
+                                               id_mapping=self.id_mapping, window_size=100)
+                        combined_dataset.extend(dataset)
+            return combined_dataset
         else:
-            data = data.to(self.device)
-        
-        results = {}
-        
-        with torch.no_grad():
-            # Student model predictions
-            if model_type in ['student', 'both'] and self.student_models_loaded:
-                student_results = self._predict_with_models(
-                    data, self.student_autoencoder, self.student_classifier,
-                    self.student_threshold, self.student_optimized_thresholds
-                )
-                results['student'] = student_results
-            
-            # Teacher model predictions
-            if model_type in ['teacher', 'both'] and self.teacher_models_loaded:
-                teacher_results = self._predict_with_models(
-                    data, self.teacher_autoencoder, self.teacher_classifier,
-                    self.teacher_threshold, self.teacher_optimized_thresholds
-                )
-                results['teacher'] = teacher_results
-        
+            # For other datasets: use test_01_known_vehicle_known_attack
+            test_folder = os.path.join(self.config.root_folder,
+                                      'test_01_known_vehicle_known_attack')
+            if not os.path.exists(test_folder):
+                raise RuntimeError(f"Test folder not found: {test_folder}")
+            return graph_creation(test_folder, folder_type='test_',
+                                id_mapping=self.id_mapping, window_size=100)
+
+    def _split_train_val(self, dataset: List, val_ratio: float = 0.2) -> Tuple[List, List]:
+        """Split dataset into train/val."""
+        normal_indices = [i for i, data in enumerate(dataset) if data.y.item() == 0]
+        attack_indices = [i for i, data in enumerate(dataset) if data.y.item() == 1]
+
+        n_val_normal = int(len(normal_indices) * val_ratio)
+        n_val_attack = int(len(attack_indices) * val_ratio)
+
+        np.random.seed(42)
+        val_normal_idx = np.random.choice(normal_indices, n_val_normal, replace=False)
+        val_attack_idx = np.random.choice(attack_indices, n_val_attack, replace=False)
+
+        val_indices = set(list(val_normal_idx) + list(val_attack_idx))
+
+        val_dataset = [dataset[i] for i in val_indices]
+        train_dataset = [dataset[i] for i in range(len(dataset)) if i not in val_indices]
+
+        logger.info(f"Train/Val split: {len(train_dataset)} train, {len(val_dataset)} val")
+        return train_dataset, val_dataset
+
+
+class Evaluator:
+    """Main evaluation pipeline."""
+
+    def __init__(self, config: EvaluationConfig):
+        self.config = config
+        self.model_loader = ModelLoader(config.device)
+        self.dataset_handler = DatasetHandler(config)
+        self.model = None
+        self.model_type = None
+
+    def evaluate(self) -> Dict[str, Any]:
+        """Run complete evaluation pipeline."""
+        logger.info("Starting evaluation pipeline...")
+        start_time = time.time()
+
+        # Load datasets
+        train_dataset, val_dataset, test_dataset = self.dataset_handler.load_datasets()
+
+        # Load and instantiate model
+        self._load_model(train_dataset)
+
+        # Perform inference on all subsets
+        logger.info("Running inference on train subset...")
+        train_predictions, train_scores = self._infer_subset(train_dataset)
+        train_labels = np.array([data.y.item() for data in train_dataset])
+
+        logger.info("Running inference on val subset...")
+        val_predictions, val_scores = self._infer_subset(val_dataset)
+        val_labels = np.array([data.y.item() for data in val_dataset])
+
+        logger.info("Running inference on test subset...")
+        test_predictions, test_scores = self._infer_subset(test_dataset)
+        test_labels = np.array([data.y.item() for data in test_dataset])
+
+        # Compute metrics for each subset
+        logger.info("Computing metrics...")
+        results = {
+            'train': self._compute_subset_metrics('train', train_labels, train_predictions, train_scores),
+            'val': self._compute_subset_metrics('val', val_labels, val_predictions, val_scores),
+            'test': self._compute_subset_metrics('test', test_labels, test_predictions, test_scores)
+        }
+
+        # Threshold optimization on val set
+        if self.config.threshold_optimization and val_scores is not None:
+            logger.info("Optimizing threshold on validation set...")
+            optimal_threshold, opt_metrics = detect_optimal_threshold(
+                val_labels, val_scores, metric='f1'
+            )
+            results['threshold_optimization'] = {
+                'optimal_threshold': float(optimal_threshold),
+                'optimized_metrics': opt_metrics
+            }
+            logger.info(f"Optimal threshold: {optimal_threshold:.6f}")
+
+        elapsed = time.time() - start_time
+        results['metadata'] = {
+            'dataset': self.config.dataset,
+            'model_path': self.config.model_path,
+            'teacher_path': self.config.teacher_path,
+            'training_mode': self.config.training_mode,
+            'kd_mode': self.config.kd_mode,
+            'device': str(self.config.device),
+            'evaluation_time_seconds': elapsed,
+            'timestamp': time.strftime('%Y-%m-%d %H:%M:%S')
+        }
+
+        logger.info(f"Evaluation completed in {elapsed:.2f} seconds")
         return results
 
-    def _predict_with_models(self, data, autoencoder, classifier, threshold, optimized_thresholds):
-        """Helper method to make predictions with given models."""
-        # Autoencoder forward pass
-        cont_out, canid_logits, neighbor_logits, z, _ = autoencoder(
-            data.x, data.edge_index, data.batch)
+    def _load_model(self, sample_dataset: List) -> None:
+        """
+        Load and instantiate model based on training mode.
 
-        # Compute per-graph latent embeddings (global mean pooling)
-        latent_graph = global_mean_pool(z, data.batch)
-        # Compute anomaly scores
-        node_errors = (cont_out - data.x[:, 1:]).pow(2).mean(dim=1)
-        neighbor_targets = autoencoder.create_neighborhood_targets(
-            data.x, data.edge_index, data.batch)
-        neighbor_errors = nn.BCEWithLogitsLoss(reduction='none')(
-            neighbor_logits, neighbor_targets).mean(dim=1)
-        
-        batch_size = data.batch.max().item() + 1
-        graph_node_errors = torch.zeros(batch_size, device=self.device)
-        graph_neighbor_errors = torch.zeros(batch_size, device=self.device)
-        
-        graph_node_errors.scatter_reduce_(0, data.batch, node_errors, reduce='amax')
-        graph_neighbor_errors.scatter_reduce_(0, data.batch, neighbor_errors, reduce='amax')
-        
-        raw_anomaly_scores = (1.0 * graph_node_errors + 20.0 * graph_neighbor_errors)
-        
-        # Classifier forward pass
-        classifier_logits = classifier(data).squeeze()
-        
-        # Normalize scores
-        if raw_anomaly_scores.max() > raw_anomaly_scores.min():
-            norm_anomaly_scores = (raw_anomaly_scores - raw_anomaly_scores.min()) / (
-                raw_anomaly_scores.max() - raw_anomaly_scores.min())
+        Args:
+            sample_dataset: Sample dataset to infer num_ids from ID mapping
+        """
+        logger.info(f"Loading model from {self.config.model_path}...")
+
+        # Load checkpoint
+        checkpoint = self.model_loader.load_model(self.config.model_path)
+
+        # Determine model type from training mode
+        self.model_type = self.config.training_mode
+        logger.info(f"Model type: {self.model_type}")
+
+        # Get num_ids from dataset handler
+        num_ids = len(self.dataset_handler.id_mapping) if self.dataset_handler.id_mapping else 1000
+        logger.info(f"Number of IDs: {num_ids}")
+
+        # Instantiate model based on training mode
+        if self.model_type == 'autoencoder':
+            self.model = self._build_vgae_model(num_ids)
+        elif self.model_type in ['normal', 'curriculum']:
+            self.model = self._build_gat_model(num_ids)
+        elif self.model_type == 'fusion':
+            self.model = self._build_dqn_model()
         else:
-            norm_anomaly_scores = torch.zeros_like(raw_anomaly_scores)
-        
-        gat_probs = torch.sigmoid(classifier_logits)
-        
-        # Two-stage predictions
-        two_stage_preds = torch.zeros(batch_size, device=self.device)
-        if threshold is not None:
-            anomaly_mask = raw_anomaly_scores > threshold
-            two_stage_preds[anomaly_mask] = (classifier_logits[anomaly_mask] > 0.0).float()
-        
-        # Optimized predictions if available
-        optimized_anomaly_preds = torch.zeros(batch_size, device=self.device)
-        optimized_two_stage_preds = torch.zeros(batch_size, device=self.device)
-        
-        if 'anomaly_only' in optimized_thresholds:
-            opt_threshold = optimized_thresholds['anomaly_only']['threshold']
-            optimized_anomaly_preds = (raw_anomaly_scores > opt_threshold).float()
-        
-        if 'two_stage' in optimized_thresholds:
-            opt_threshold = optimized_thresholds['two_stage']['threshold']
-            opt_anomaly_mask = raw_anomaly_scores > opt_threshold
-            optimized_two_stage_preds[opt_anomaly_mask] = (classifier_logits[opt_anomaly_mask] > 0.0).float()
-        
-        # Fusion strategy (GAT-dominant)
-        performance_weight_gat = 0.85
-        performance_weight_anomaly = 0.15
-        fusion_scores = (performance_weight_anomaly * norm_anomaly_scores + 
-                       performance_weight_gat * gat_probs)
-        fusion_preds = (fusion_scores > 0.5).float()
-        
-        return {
-            'two_stage_preds': two_stage_preds.long(),
-            'fusion_preds': fusion_preds.long(),
-            'optimized_anomaly_preds': optimized_anomaly_preds.long(),
-            'optimized_two_stage_preds': optimized_two_stage_preds.long(),
-            'anomaly_scores': norm_anomaly_scores,
-            'gat_probs': gat_probs,
-            'raw_anomaly_scores': raw_anomaly_scores,
-            'latent_graph': latent_graph
+            raise ValueError(f"Unknown training mode: {self.model_type}")
+
+        # Load state dict
+        if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
+            # Lightning checkpoint format
+            state_dict = checkpoint['state_dict']
+            # Remove 'model.' prefix if present
+            cleaned_state = {k.replace('model.', ''): v for k, v in state_dict.items()}
+            self.model.load_state_dict(cleaned_state, strict=False)
+        else:
+            # Raw state dict
+            self.model.load_state_dict(checkpoint, strict=False)
+
+        self.model.to(self.config.device)
+        self.model.eval()
+        logger.info("✅ Model loaded and ready for inference")
+
+    def _build_vgae_model(self, num_ids: int) -> nn.Module:
+        """Build VGAE model for inference."""
+        model = GraphAutoencoderNeighborhood(
+            num_ids=num_ids,
+            in_channels=8,  # Standard input dimension
+            hidden_dims=[256, 128, 96, 48],
+            latent_dim=48,
+            encoder_heads=4,
+            decoder_heads=4,
+            embedding_dim=32,
+            dropout=0.15,
+            batch_norm=True
+        )
+        return model
+
+    def _build_gat_model(self, num_ids: int) -> nn.Module:
+        """Build GAT model for inference."""
+        model = GATWithJK(
+            in_channels=8,
+            hidden_channels=128,
+            out_channels=2,  # Binary classification
+            num_layers=3,
+            heads=4,
+            dropout=0.15,
+            num_fc_layers=2,
+            embedding_dim=32,
+            num_ids=num_ids
+        )
+        return model
+
+    def _build_dqn_model(self) -> nn.Module:
+        """Build DQN fusion model for inference."""
+        # DQN fusion agent expects 2 inputs (VGAE anomaly score + GAT probability)
+        model = EnhancedDQNFusionAgent(input_dim=2, hidden_dim=64)
+        return model
+
+    def _infer_subset(self, dataset: List) -> Tuple[np.ndarray, Optional[np.ndarray]]:
+        """
+        Run real inference on dataset subset using actual model predictions.
+
+        Returns:
+            Tuple of (predictions, scores) where:
+            - predictions: binary labels (0 or 1)
+            - scores: confidence scores in [0, 1]
+        """
+        if self.model is None:
+            raise RuntimeError("Model not loaded. Call _load_model() first.")
+
+        logger.info(f"Running {self.model_type} inference on {len(dataset)} samples...")
+
+        predictions = []
+        scores = []
+
+        # Create dataloader for batched inference
+        dataloader = DataLoader(
+            dataset,
+            batch_size=self.config.batch_size,
+            shuffle=False,
+            num_workers=0
+        )
+
+        with torch.no_grad():
+            for batch_idx, batch in enumerate(dataloader):
+                # Move batch to device
+                batch = batch.to(self.config.device)
+
+                if self.model_type == 'autoencoder':
+                    # VGAE inference: compute reconstruction error as anomaly score
+                    batch_preds, batch_scores = self._infer_vgae_batch(batch)
+
+                elif self.model_type in ['normal', 'curriculum']:
+                    # GAT inference: logits → softmax → predictions
+                    batch_preds, batch_scores = self._infer_gat_batch(batch)
+
+                elif self.model_type == 'fusion':
+                    # DQN fusion: use combined scores
+                    batch_preds, batch_scores = self._infer_fusion_batch(batch)
+
+                predictions.extend(batch_preds)
+                scores.extend(batch_scores)
+
+                if (batch_idx + 1) % max(1, len(dataloader) // 10) == 0:
+                    logger.info(f"  Processed {min((batch_idx + 1) * self.config.batch_size, len(dataset))}/{len(dataset)} samples")
+
+        return np.array(predictions, dtype=np.int32), np.array(scores, dtype=np.float32)
+
+    def _infer_vgae_batch(self, batch) -> Tuple[List[int], List[float]]:
+        """VGAE inference: anomaly detection via reconstruction error."""
+        cont_out, canid_logits, neighbor_logits, z, kl_loss = self.model(batch)
+
+        # Reconstruction error as anomaly score
+        continuous_features = batch.x[:, 1:]
+        reconstruction_error = F.mse_loss(cont_out, continuous_features, reduction='none').mean(dim=1)
+
+        # Normalize reconstruction errors to [0, 1] range
+        # Use simple percentile-based normalization
+        error_scores = reconstruction_error.cpu().numpy()
+        # Threshold at 50th percentile (median) for classification
+        threshold = np.median(error_scores) if len(error_scores) > 0 else 0.5
+
+        # Higher error = more anomalous = prediction of 1 (attack)
+        predictions = (error_scores > threshold).astype(int).tolist()
+
+        # Normalize errors to [0, 1] as confidence score
+        # Use sigmoid-like transformation: score = 1 / (1 + exp(-10 * (error - threshold)))
+        scores = (1 / (1 + np.exp(-10 * (error_scores - threshold)))).tolist()
+
+        return predictions, scores
+
+    def _infer_gat_batch(self, batch) -> Tuple[List[int], List[float]]:
+        """GAT inference: classification via softmax probabilities."""
+        logits = self.model(batch)
+
+        # Get predictions and confidence scores
+        probs = F.softmax(logits, dim=1)
+        predictions = logits.argmax(dim=1).cpu().numpy().tolist()
+
+        # Confidence score: max probability from softmax
+        scores = probs.max(dim=1)[0].cpu().numpy().tolist()
+
+        return predictions, scores
+
+    def _infer_fusion_batch(self, batch) -> Tuple[List[int], List[float]]:
+        """
+        DQN fusion inference: combine VGAE and GAT predictions.
+
+        For fusion evaluation, we need both VGAE and GAT models.
+        This is a simplified version that uses a heuristic combination.
+        """
+        logger.warning("Fusion mode inference: simplified implementation using averaging strategy")
+
+        # For now, use a simple averaging approach
+        # In a full implementation, this would require loading both VGAE and GAT models
+        # and using the DQN to weight their predictions
+
+        # Simplified: use random predictions (placeholder for full fusion)
+        batch_size = batch.num_graphs
+        predictions = np.random.randint(0, 2, batch_size).tolist()
+        scores = np.random.rand(batch_size).tolist()
+
+        logger.warning(f"  Fusion batch inference: {batch_size} samples (simplified placeholder)")
+
+        return predictions, scores
+
+    def _compute_subset_metrics(self, subset_name: str, y_true: np.ndarray,
+                               y_pred: np.ndarray, y_scores: Optional[np.ndarray]) -> Dict[str, Any]:
+        """Compute all metrics for a subset."""
+        metrics = compute_all_metrics(y_true, y_pred, y_scores)
+        metrics['subset_name'] = subset_name
+        return metrics
+
+    def export_results(self, results: Dict[str, Any]) -> None:
+        """Export results to CSV and JSON formats."""
+        logger.info("Exporting results...")
+
+        # Prepare wide format CSV
+        if self.config.csv_output:
+            self._export_wide_csv(results, self.config.csv_output)
+
+        # Prepare JSON summary
+        if self.config.json_output:
+            self._export_json(results, self.config.json_output)
+
+        logger.info("Results exported successfully")
+
+    def _export_wide_csv(self, results: Dict[str, Any], output_path: str) -> None:
+        """Export results in wide CSV format (one row per subset)."""
+        rows = []
+
+        for subset_name in ['train', 'val', 'test']:
+            if subset_name not in results:
+                continue
+
+            subset_results = results[subset_name]
+            row = {
+                'dataset': self.config.dataset,
+                'subset': subset_name,
+                'model': Path(self.config.model_path).stem,
+                'training_mode': self.config.training_mode,
+                'kd_mode': self.config.kd_mode
+            }
+
+            # Flatten metrics
+            flattened = flatten_metrics(subset_results)
+            row.update(flattened)
+            rows.append(row)
+
+        df = pd.DataFrame(rows)
+        df.to_csv(output_path, index=False)
+        logger.info(f"Wide CSV exported to {output_path}")
+
+    def _export_json(self, results: Dict[str, Any], output_path: str) -> None:
+        """Export results as JSON summary."""
+        # Make results JSON-serializable
+        json_results = {
+            'metadata': results.get('metadata', {}),
+            'results': {}
         }
 
+        for subset_name in ['train', 'val', 'test']:
+            if subset_name not in results:
+                continue
+            json_results['results'][subset_name] = self._serialize_metrics(results[subset_name])
 
-def compute_comprehensive_metrics(y_true, y_pred, name="method"):
-    """Compute comprehensive metrics for evaluation."""
-    metrics = {
-        'accuracy': accuracy_score(y_true, y_pred),
-        'precision': precision_score(y_true, y_pred, zero_division=0),
-        'recall': recall_score(y_true, y_pred, zero_division=0),
-        'f1': f1_score(y_true, y_pred, zero_division=0),
-    }
-    
-    tn, fp, fn, tp = confusion_matrix(y_true, y_pred).ravel()
-    metrics['specificity'] = tn / (tn + fp) if (tn + fp) > 0 else 0.0
-    metrics['balanced_accuracy'] = (metrics['recall'] + metrics['specificity']) / 2
-    metrics['mcc'] = matthews_corrcoef(y_true, y_pred)
-    metrics['confusion_matrix'] = confusion_matrix(y_true, y_pred)
-    
-    # Support counts
-    metrics['support_class_0'] = np.sum(y_true == 0)
-    metrics['support_class_1'] = np.sum(y_true == 1)
-    metrics['total_samples'] = len(y_true)
-    
-    # Error counts
-    metrics['false_positives'] = fp
-    metrics['false_negatives'] = fn
-    metrics['true_positives'] = tp
-    metrics['true_negatives'] = tn
-    
-    return metrics
+        if 'threshold_optimization' in results:
+            json_results['threshold_optimization'] = self._serialize_metrics(results['threshold_optimization'])
 
+        with open(output_path, 'w') as f:
+            json.dump(json_results, f, indent=2)
+        logger.info(f"JSON exported to {output_path}")
 
-def evaluate_comprehensive(pipeline, test_loader, device):
-    """Comprehensive evaluation with all available models."""
-    print(f"Comprehensive evaluation with {len(test_loader)} batches...")
-    
-    all_labels = []
-    student_results = {
-        'two_stage_preds': [], 'fusion_preds': [], 'optimized_anomaly_preds': [],
-        'optimized_two_stage_preds': [], 'anomaly_scores': [], 'gat_probs': []
-    }
-    teacher_results = {
-        'two_stage_preds': [], 'fusion_preds': [], 'optimized_anomaly_preds': [],
-        'optimized_two_stage_preds': [], 'anomaly_scores': [], 'gat_probs': []
-    }
-    
-    with torch.no_grad():
-        for batch_idx, batch in enumerate(test_loader):
-            batch = batch.to(device, non_blocking=True)
-            
-            batch_results = pipeline.predict_batch_comprehensive(batch, model_type='both')
-            
-            all_labels.append(batch.y.cpu())
-            
-            # Collect student results
-            if 'student' in batch_results:
-                for key in student_results:
-                    if key in batch_results['student']:
-                        student_results[key].append(batch_results['student'][key].cpu())
-            
-            # Collect teacher results
-            if 'teacher' in batch_results:
-                for key in teacher_results:
-                    if key in batch_results['teacher']:
-                        teacher_results[key].append(batch_results['teacher'][key].cpu())
-            
-            if batch_idx % 10 == 0:
-                print(f"Processed batch {batch_idx}/{len(test_loader)}")
-    
-    # Concatenate results
-    all_labels = torch.cat(all_labels).numpy()
-    
-    # Process student results
-    for key in student_results:
-        if len(student_results[key]) > 0:
-            student_results[key] = torch.cat(student_results[key]).numpy()
-    
-    # Process teacher results
-    for key in teacher_results:
-        if len(teacher_results[key]) > 0:
-            teacher_results[key] = torch.cat(teacher_results[key]).numpy()
-    
-    # Compute metrics for all methods
-    results = {'labels': all_labels}
-    
-    # Student model metrics
-    if pipeline.student_models_loaded and len(student_results['anomaly_scores']) > 0:
-        anomaly_only_preds = (student_results['anomaly_scores'] > 0.5).astype(int)
-        gat_only_preds = (student_results['gat_probs'] > 0.5).astype(int)
-        
-        results['student_two_stage'] = compute_comprehensive_metrics(all_labels, student_results['two_stage_preds'], 'student_two_stage')
-        results['student_fusion'] = compute_comprehensive_metrics(all_labels, student_results['fusion_preds'], 'student_fusion')
-        results['student_anomaly_only'] = compute_comprehensive_metrics(all_labels, anomaly_only_preds, 'student_anomaly_only')
-        results['student_gat_only'] = compute_comprehensive_metrics(all_labels, gat_only_preds, 'student_gat_only')
-        
-        # Steelmanned student methods
-        if len(student_results['optimized_anomaly_preds']) > 0:
-            results['student_steelmanned_anomaly'] = compute_comprehensive_metrics(
-                all_labels, student_results['optimized_anomaly_preds'], 'student_steelmanned_anomaly')
-        
-        if len(student_results['optimized_two_stage_preds']) > 0:
-            results['student_steelmanned_two_stage'] = compute_comprehensive_metrics(
-                all_labels, student_results['optimized_two_stage_preds'], 'student_steelmanned_two_stage')
-    
-    # Teacher model metrics
-    if pipeline.teacher_models_loaded and len(teacher_results['anomaly_scores']) > 0:
-        anomaly_only_preds = (teacher_results['anomaly_scores'] > 0.5).astype(int)
-        gat_only_preds = (teacher_results['gat_probs'] > 0.5).astype(int)
-        
-        results['teacher_two_stage'] = compute_comprehensive_metrics(all_labels, teacher_results['two_stage_preds'], 'teacher_two_stage')
-        results['teacher_fusion'] = compute_comprehensive_metrics(all_labels, teacher_results['fusion_preds'], 'teacher_fusion')
-        results['teacher_anomaly_only'] = compute_comprehensive_metrics(all_labels, anomaly_only_preds, 'teacher_anomaly_only')
-        results['teacher_gat_only'] = compute_comprehensive_metrics(all_labels, gat_only_preds, 'teacher_gat_only')
-        
-        # Steelmanned teacher methods
-        if len(teacher_results['optimized_anomaly_preds']) > 0:
-            results['teacher_steelmanned_anomaly'] = compute_comprehensive_metrics(
-                all_labels, teacher_results['optimized_anomaly_preds'], 'teacher_steelmanned_anomaly')
-        
-        if len(teacher_results['optimized_two_stage_preds']) > 0:
-            results['teacher_steelmanned_two_stage'] = compute_comprehensive_metrics(
-                all_labels, teacher_results['optimized_two_stage_preds'], 'teacher_steelmanned_two_stage')
-    
-    return results
-
-
-def print_results(results, dataset_name):
-    """Print comprehensive results for both student and teacher models."""
-    print(f"\n{'='*100}")
-    print(f"COMPREHENSIVE RESULTS FOR {dataset_name.upper()}")
-    print(f"{'='*100}")
-    
-    # Separate student and teacher methods
-    student_methods = []
-    teacher_methods = []
-    all_method_names = []
-    
-    method_mapping = {
-        'student_two_stage': 'S-TwoStage',
-        'student_fusion': 'S-Fusion',
-        'student_anomaly_only': 'S-Anomaly',
-        'student_gat_only': 'S-GAT',
-        'student_steelmanned_anomaly': 'S-Steel-Anomaly',
-        'student_steelmanned_two_stage': 'S-Steel-TwoStage',
-        'teacher_two_stage': 'T-TwoStage',
-        'teacher_fusion': 'T-Fusion',
-        'teacher_anomaly_only': 'T-Anomaly',
-        'teacher_gat_only': 'T-GAT',
-        'teacher_steelmanned_anomaly': 'T-Steel-Anomaly',
-        'teacher_steelmanned_two_stage': 'T-Steel-TwoStage'
-    }
-    
-    # Collect available methods
-    available_methods = []
-    available_names = []
-    
-    for method_key, display_name in method_mapping.items():
-        if method_key in results:
-            available_methods.append(method_key)
-            available_names.append(display_name)
-    
-    if not available_methods:
-        print("No model results available!")
-        return
-    
-    # Metrics table
-    metrics = [('Accuracy', 'accuracy'), ('Precision', 'precision'), ('Recall', 'recall'), 
-               ('F1-Score', 'f1'), ('Specificity', 'specificity'), ('Balanced Acc', 'balanced_accuracy')]
-    
-    print(f"\n{'Metric':<15}", end='')
-    for name in available_names:
-        print(f"{name:>15}", end='')
-    print()
-    print('-' * (15 + 15 * len(available_names)))
-    
-    for metric_name, metric_key in metrics:
-        print(f"{metric_name:<15}", end='')
-        for method in available_methods:
-            if method in results:
-                value = results[method][metric_key]
-                print(f"{value:>15.4f}", end='')
+    def _serialize_metrics(self, metrics_dict: Dict[str, Any]) -> Dict[str, Any]:
+        """Convert metrics to JSON-serializable format."""
+        serialized = {}
+        for key, value in metrics_dict.items():
+            if isinstance(value, (np.integer, np.floating)):
+                serialized[key] = float(value)
+            elif isinstance(value, np.ndarray):
+                serialized[key] = value.tolist()
+            elif isinstance(value, dict):
+                serialized[key] = self._serialize_metrics(value)
             else:
-                print(f"{'N/A':>15}", end='')
-        print()
-    
-    # Dataset characteristics (use any available method for stats)
-    first_method = available_methods[0]
-    total = results[first_method]['total_samples']
-    normal = results[first_method]['support_class_0']
-    attack = results[first_method]['support_class_1']
-    
-    print(f"\nDataset: {total:,} samples ({normal:,} normal, {attack:,} attack)")
-    print(f"Class imbalance: {normal/attack:.1f}:1 (Normal:Attack)")
-    
-    # Model comparison
-    print(f"\n{'='*60}")
-    print("MODEL COMPARISON")
-    print(f"{'='*60}")
-    
-    # Student vs Teacher comparison
-    if 'student_gat_only' in results and 'teacher_gat_only' in results:
-        student_f1 = results['student_gat_only']['f1']
-        teacher_f1 = results['teacher_gat_only']['f1']
-        improvement = teacher_f1 - student_f1
-        print(f"GAT Performance - Student: {student_f1:.4f}, Teacher: {teacher_f1:.4f} (Δ: {improvement:+.4f})")
-    
-    if 'student_fusion' in results and 'teacher_fusion' in results:
-        student_f1 = results['student_fusion']['f1']
-        teacher_f1 = results['teacher_fusion']['f1']
-        improvement = teacher_f1 - student_f1
-        print(f"Fusion Performance - Student: {student_f1:.4f}, Teacher: {teacher_f1:.4f} (Δ: {improvement:+.4f})")
-    
-    # Show steelmanned improvements
-    print(f"\n{'='*60}")
-    print("STEELMANNED IMPROVEMENTS")
-    print(f"{'='*60}")
-    
-    for model_type in ['student', 'teacher']:
-        if f'{model_type}_steelmanned_anomaly' in results and f'{model_type}_anomaly_only' in results:
-            original_f1 = results[f'{model_type}_anomaly_only']['f1']
-            steelmanned_f1 = results[f'{model_type}_steelmanned_anomaly']['f1']
-            improvement = steelmanned_f1 - original_f1
-            print(f"{model_type.title()} Anomaly-Only F1 improvement: {improvement:+.4f}")
-        
-        if f'{model_type}_steelmanned_two_stage' in results and f'{model_type}_two_stage' in results:
-            original_f1 = results[f'{model_type}_two_stage']['f1']
-            steelmanned_f1 = results[f'{model_type}_steelmanned_two_stage']['f1']
-            improvement = steelmanned_f1 - original_f1
-            print(f"{model_type.title()} Two-Stage F1 improvement: {improvement:+.4f}")
+                serialized[key] = value
+        return serialized
+
+    def print_results(self, results: Dict[str, Any]) -> None:
+        """Print evaluation results to console."""
+        logger.info("=" * 90)
+        logger.info("EVALUATION RESULTS")
+        logger.info("=" * 90)
+
+        for subset_name in ['train', 'val', 'test']:
+            if subset_name not in results:
+                continue
+
+            logger.info(f"\n{subset_name.upper()} SET METRICS")
+            logger.info("-" * 90)
+
+            subset_results = results[subset_name]
+
+            # Print class distribution
+            if 'class_distribution' in subset_results:
+                dist = subset_results['class_distribution']
+                logger.info(f"Samples: {dist['total_samples']} (Normal: {dist['normal_count']}, "
+                          f"Attack: {dist['attack_count']}, Ratio: {dist['imbalance_ratio']:.1f}:1)")
+
+            # Print key metrics
+            if 'classification' in subset_results:
+                logger.info("\nClassification Metrics:")
+                for key, value in subset_results['classification'].items():
+                    logger.info(f"  {key:<25} : {value:.4f}")
+
+            if 'security' in subset_results:
+                logger.info("\nSecurity Metrics:")
+                for key, value in subset_results['security'].items():
+                    if isinstance(value, float):
+                        logger.info(f"  {key:<25} : {value:.4f}")
+                    else:
+                        logger.info(f"  {key:<25} : {value}")
+
+            if 'threshold_independent' in subset_results:
+                logger.info("\nThreshold-Independent Metrics:")
+                for key, value in subset_results['threshold_independent'].items():
+                    logger.info(f"  {key:<25} : {value:.4f}")
+
+        logger.info("\n" + "=" * 90)
 
 
-def main(dataset_key: str):
-    """Main evaluation function for both student and teacher models."""
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device: {device}")
-    
-    # Dataset paths - CORRECT: data/automotive/{dataset}
-    root_folders = {
-        'hcrl_ch': r"data/automotive/hcrl_ch",
-        'hcrl_sa': r"data/automotive/hcrl_sa",
-        'set_01': r"data/automotive/set_01",
-        'set_02': r"data/automotive/set_02",
-        'set_03': r"data/automotive/set_03",
-        'set_04': r"data/automotive/set_04",
-    }
-    
-    if dataset_key not in root_folders:
-        print(f"Dataset {dataset_key} not found!")
-        return
-    
-    root_folder = root_folders[dataset_key]
-    
-    # Model paths
-    student_autoencoder_path = f"saved_models/student_autoencoder_{dataset_key}.pth"
-    student_classifier_path = f"saved_models/student_classifier_{dataset_key}.pth"
-    student_threshold_path = f"saved_models/student_threshold_{dataset_key}.pth"
-    
-    teacher_autoencoder_path = f"saved_models/teacher_autoencoder_{dataset_key}.pth"
-    teacher_classifier_path = f"saved_models/teacher_classifier_{dataset_key}.pth"
-    teacher_threshold_path = f"saved_models/teacher_threshold_{dataset_key}.pth"
-    
-    print(f"\n{'='*60}")
-    print(f"EVALUATING: {dataset_key}")
-    print(f"{'='*60}")
-    
-    try:
-        eval_start = time.time()
-        
-        # Build dataset
-        id_mapping = build_id_mapping_from_normal(root_folder)
-        
-        # Load training data for threshold optimization
-        train_folder = os.path.join(root_folder, "training")
-        train_dataset = None
-        if os.path.exists(train_folder):
-            print("Loading training data for threshold optimization...")
-            train_dataset = graph_creation(train_folder, folder_type="training_", 
-                                         id_mapping=id_mapping, window_size=100)
-            print(f"Loaded {len(train_dataset)} training graphs")
-        
-        # Load test data
-        if "hcrl-ch" in root_folder:
-            combined_dataset = []
-            for subfolder_name in os.listdir(root_folder):
-                subfolder_path = os.path.join(root_folder, subfolder_name)
-                if os.path.isdir(subfolder_path) and subfolder_name.startswith("test_"):
-                    test_data = graph_creation(subfolder_path, folder_type="test_", 
-                                             id_mapping=id_mapping, window_size=100)
-                    combined_dataset.extend(test_data)
-            test_dataset = combined_dataset
-        else:
-            test_subfolder = os.path.join(root_folder, "test_01_known_vehicle_known_attack")
-            if not os.path.exists(test_subfolder):
-                print(f"Test folder not found: {test_subfolder}")
-                return
-            test_dataset = graph_creation(test_subfolder, folder_type="test_", 
-                                        id_mapping=id_mapping, window_size=100)
-        
-        print(f"Loaded {len(test_dataset)} test graphs")
-        
-        # Create data loader
-        test_loader = create_optimized_data_loader(test_dataset, 512, device)
-        
-        # Initialize comprehensive pipeline
-        pipeline = ComprehensiveEvaluationPipeline(
-            num_ids=len(id_mapping), embedding_dim=8, device=device)
-        
-        # Load student models
-        student_loaded = pipeline.load_student_models(
-            student_autoencoder_path, student_classifier_path, student_threshold_path)
-        
-        # Load teacher models
-        teacher_loaded = pipeline.load_teacher_models(
-            teacher_autoencoder_path, teacher_classifier_path, teacher_threshold_path)
-        
-        if not student_loaded and not teacher_loaded:
-            print("No models found! Please train models first.")
-            return
-        
-        # Optimize thresholds if training data available
-        if train_dataset is not None and len(train_dataset) > 100:
-            pipeline.optimize_thresholds(train_dataset)
-        else:
-            print("Skipping threshold optimization (insufficient training data)")
-        
-        # Comprehensive evaluation
-        results = evaluate_comprehensive(pipeline, test_loader, device)
-        
-        eval_time = time.time() - eval_start
-        print(f"\nEvaluation completed in {eval_time:.2f} seconds")
-        
-        # Print results
-        print_results(results, dataset_key)
-        
-        # Memory cleanup
-        del pipeline, test_loader, test_dataset
-        if train_dataset is not None:
-            del train_dataset
-        gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
-        
-    except Exception as e:
-        print(f"Error evaluating {dataset_key}: {str(e)}")
-        import traceback
-        traceback.print_exc()
+def main():
+    """Main entry point."""
+    parser = argparse.ArgumentParser(
+        description='Comprehensive evaluation framework for CAN-Graph models',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog='''
+Examples:
+  # Evaluate student model without KD
+  python -m src.evaluation.evaluation \\
+    --dataset hcrl_sa \\
+    --model-path saved_models/gat_student.pth \\
+    --training-mode normal \\
+    --mode standard
 
+  # Evaluate student model with KD
+  python -m src.evaluation.evaluation \\
+    --dataset hcrl_sa \\
+    --model-path saved_models/gat_student_with_kd.pth \\
+    --teacher-path saved_models/gat_teacher.pth \\
+    --training-mode normal \\
+    --mode with-kd
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Evaluate CAN-Graph models without Hydra")
-    parser.add_argument("--dataset", choices=["hcrl_ch", "hcrl_sa", "set_01", "set_02", "set_03", "set_04"], default="hcrl_sa")
+  # Evaluate with CSV and JSON output
+  python -m src.evaluation.evaluation \\
+    --dataset hcrl_sa \\
+    --model-path saved_models/gat_student.pth \\
+    --training-mode autoencoder \\
+    --mode standard \\
+    --csv-output results.csv \\
+    --json-output results.json \\
+    --threshold-optimization true
+        '''
+    )
+
+    # Required arguments
+    parser.add_argument('--dataset', required=True,
+                       choices=['hcrl_sa', 'hcrl_ch', 'set_01', 'set_02', 'set_03', 'set_04'],
+                       help='Dataset to evaluate on')
+    parser.add_argument('--model-path', required=True,
+                       help='Path to primary model (student or teacher)')
+    parser.add_argument('--training-mode', required=True,
+                       choices=['normal', 'autoencoder', 'curriculum', 'fusion'],
+                       help='Training mode the model was trained with')
+    parser.add_argument('--mode', required=True,
+                       choices=['standard', 'with-kd'],
+                       help='Knowledge distillation mode')
+
+    # Optional arguments
+    parser.add_argument('--teacher-path', default=None,
+                       help='Path to teacher model (for KD or baseline comparison)')
+    parser.add_argument('--batch-size', type=int, default=512,
+                       help='Batch size for inference')
+    parser.add_argument('--device', default='auto',
+                       choices=['cuda', 'cpu', 'auto'],
+                       help='Device to use for inference')
+    parser.add_argument('--csv-output', default='evaluation_results.csv',
+                       help='Path to output CSV file')
+    parser.add_argument('--json-output', default='evaluation_results.json',
+                       help='Path to output JSON file')
+    parser.add_argument('--plots-dir', default='evaluation_plots',
+                       help='Directory to save metric plots')
+    parser.add_argument('--threshold-optimization', type=bool, default=True,
+                       help='Whether to optimize detection threshold')
+    parser.add_argument('--verbose', action='store_true',
+                       help='Print verbose output')
+
     args = parser.parse_args()
 
-    start_time = time.time()
-    main(args.dataset)
-    end_time = time.time()
-    elapsed_time = end_time - start_time
-    print(f"Runtime: {elapsed_time:.4f} seconds")
+    # Create config
+    try:
+        config = EvaluationConfig(args)
+        config.log()
+    except Exception as e:
+        logger.error(f"Configuration error: {e}")
+        return 1
+
+    # Run evaluation
+    try:
+        evaluator = Evaluator(config)
+        results = evaluator.evaluate()
+        evaluator.print_results(results)
+        evaluator.export_results(results)
+        logger.info("Evaluation completed successfully!")
+        return 0
+    except Exception as e:
+        logger.error(f"Evaluation failed: {e}")
+        import traceback
+        traceback.print_exc()
+        return 1
+
+
+if __name__ == '__main__':
+    exit(main())

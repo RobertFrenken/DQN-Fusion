@@ -27,5 +27,6 @@
       "terminal.integrated.cursorBlinking": true,
   "terminal.integrated.cursorStyle": "line",
   "terminal.integrated.enableMultiLinePasteWarning": false,
-  "terminal.integrated.scrollback": 10000
+"terminal.integrated.scrollback": 10000,
+"makefile.configureOnOpen": false
 }

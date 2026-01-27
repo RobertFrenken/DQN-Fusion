@@ -290,7 +290,47 @@ class PathResolver:
         if create:
             mlruns_dir.mkdir(parents=True, exist_ok=True)
         return mlruns_dir
-    
+
+    def get_run_counter(self) -> int:
+        """Get next run number and increment counter.
+
+        Returns the current run number (1-indexed) and increments the counter
+        for the next run. Stores state in experiment_dir/run_counter.txt.
+
+        First call returns 1, creates file with "2"
+        Second call returns 2, updates file to "3"
+        etc.
+
+        Returns:
+            int: Current run number (1-indexed)
+
+        Example:
+            Run 1: get_run_counter() → 1 (file now contains "2")
+            Run 2: get_run_counter() → 2 (file now contains "3")
+        """
+        exp_dir = self.get_experiment_dir(create=True)
+        counter_file = exp_dir / 'run_counter.txt'
+
+        # Read current value or default to 1
+        if counter_file.exists():
+            try:
+                with open(counter_file, 'r') as f:
+                    next_run = int(f.read().strip())
+            except (ValueError, IOError):
+                logger.warning(f"Could not read run_counter.txt, resetting to 1")
+                next_run = 1
+        else:
+            next_run = 1
+
+        # Write incremented value for future runs
+        try:
+            with open(counter_file, 'w') as f:
+                f.write(str(next_run + 1))
+        except IOError as e:
+            logger.error(f"Could not write run_counter.txt: {e}")
+
+        return next_run
+
     def get_all_experiment_dirs(self, create: bool = False) -> Dict[str, Path]:
         """
         Get all experiment-related directories.

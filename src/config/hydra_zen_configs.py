@@ -43,6 +43,50 @@ class MemoryOptimizationConfig:
     gradient_checkpointing: bool = True  # Enabled by default for GNN memory efficiency
 
 
+@dataclass
+class BatchSizeConfig:
+    """Batch size tuning and optimization settings.
+
+    Policy:
+    - On first run: tuned_batch_size=None, uses default_batch_size
+    - During tuning: if optimize_batch_size=true:
+        run_batch_size = floor(tuner_output * safety_factor)
+    - After success: update tuned_batch_size = run_batch_size in frozen config
+    - On next run: uses tuned_batch_size from previous successful run
+
+    Each frozen config is independent with pre-set safety_factor:
+    - Standard/Normal: 0.55
+    - Curriculum: 0.90 (VGAE scoring needs headroom)
+    - Knowledge Distillation: 0.75 (teacher model overhead)
+    """
+
+    default_batch_size: int = 64
+    """Initial batch size if tuned_batch_size is None."""
+
+    tuned_batch_size: Optional[int] = None
+    """Batch size confirmed working from previous successful run.
+
+    Updated by trainer after successful training.
+    Used by next run as starting point.
+    """
+
+    safety_factor: float = 0.5
+    """Multiply tuner output by this factor.
+
+    run_batch_size = floor(tuner_output * safety_factor)
+    Pre-set when creating frozen config based on run type.
+    """
+
+    optimize_batch_size: bool = False
+    """Run batch size tuner before training."""
+
+    batch_size_mode: str = "binsearch"
+    """Tuning strategy: 'power' or 'binsearch'."""
+
+    max_batch_size_trials: int = 10
+    """Maximum batch size tuning trials."""
+
+
 # ============================================================================
 # Model Configurations
 # ============================================================================
@@ -561,11 +605,12 @@ class CANGraphConfig:
     # Core components
     model: Union[GATConfig, StudentGATConfig, VGAEConfig, StudentVGAEConfig, DQNConfig, StudentDQNConfig]
     dataset: CANDatasetConfig
-    training: Union[NormalTrainingConfig, AutoencoderTrainingConfig, 
+    training: Union[NormalTrainingConfig, AutoencoderTrainingConfig,
                    KnowledgeDistillationConfig, StudentBaselineTrainingConfig,
                    FusionTrainingConfig, CurriculumTrainingConfig, EvaluationTrainingConfig]
     trainer: TrainerConfig = field(default_factory=TrainerConfig)
-    
+    batch_size_config: BatchSizeConfig = field(default_factory=BatchSizeConfig)
+
     # Global settings
     seed: int = 42
     project_name: str = "can_graph_lightning"
