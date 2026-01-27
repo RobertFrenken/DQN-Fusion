@@ -309,10 +309,9 @@ class FusionTrainer:
         
         logger.info("✓ Models loaded")
         
-        # Build prediction caches
-        logger.info("🔄 Building prediction caches")
-        train_anomaly, train_gat, train_labels, val_anomaly, val_gat, val_labels = \
-            create_fusion_prediction_cache(
+        # Build prediction caches (returns dicts with 15D features)
+        logger.info("🔄 Building prediction caches with 15D state space")
+        train_features, val_features = create_fusion_prediction_cache(
                 autoencoder=ae_model,
                 classifier=classifier_model,
                 train_loader=train_loader,
@@ -321,20 +320,28 @@ class FusionTrainer:
                 device='cuda' if torch.cuda.is_available() else 'cpu',
                 cache_dir='cache/fusion'
             )
-        
-        logger.info(f"✓ Caches built: {len(train_anomaly)} train, {len(val_anomaly)} val samples")
-        
-        # Create fusion datasets
+
+        logger.info(f"✓ 15D Caches built: {len(train_features['labels'])} train, {len(val_features['labels'])} val samples")
+
+        # Create fusion datasets with 15D features
         train_fusion_dataset = FusionPredictionCache(
-            anomaly_scores=train_anomaly,
-            gat_probs=train_gat,
-            labels=train_labels
+            vgae_errors=train_features['vgae_errors'],
+            vgae_latent=train_features['vgae_latent'],
+            vgae_confidence=train_features['vgae_confidence'],
+            gat_logits=train_features['gat_logits'],
+            gat_embeddings=train_features['gat_embeddings'],
+            gat_confidence=train_features['gat_confidence'],
+            labels=train_features['labels']
         )
-        
+
         val_fusion_dataset = FusionPredictionCache(
-            anomaly_scores=val_anomaly,
-            gat_probs=val_gat,
-            labels=val_labels
+            vgae_errors=val_features['vgae_errors'],
+            vgae_latent=val_features['vgae_latent'],
+            vgae_confidence=val_features['vgae_confidence'],
+            gat_logits=val_features['gat_logits'],
+            gat_embeddings=val_features['gat_embeddings'],
+            gat_confidence=val_features['gat_confidence'],
+            labels=val_features['labels']
         )
         
         return train_fusion_dataset, val_fusion_dataset

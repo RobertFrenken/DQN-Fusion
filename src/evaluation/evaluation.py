@@ -48,6 +48,8 @@ class EvaluationConfig:
         self.dataset = args.dataset
         self.model_path = args.model_path
         self.teacher_path = args.teacher_path
+        self.vgae_path = getattr(args, 'vgae_path', None)
+        self.gat_path = getattr(args, 'gat_path', None)
         self.training_mode = args.training_mode
         self.kd_mode = args.mode
         self.batch_size = args.batch_size
@@ -79,6 +81,17 @@ class EvaluationConfig:
         if self.teacher_path and not os.path.exists(self.teacher_path):
             raise FileNotFoundError(f"Teacher model not found: {self.teacher_path}")
 
+        # Fusion mode requires VGAE and GAT models
+        if self.training_mode == 'fusion':
+            if not self.vgae_path:
+                raise ValueError("Fusion mode requires --vgae-path argument")
+            if not self.gat_path:
+                raise ValueError("Fusion mode requires --gat-path argument")
+            if not os.path.exists(self.vgae_path):
+                raise FileNotFoundError(f"VGAE model not found: {self.vgae_path}")
+            if not os.path.exists(self.gat_path):
+                raise FileNotFoundError(f"GAT model not found: {self.gat_path}")
+
     def log(self):
         """Log configuration."""
         logger.info("=" * 70)
@@ -87,6 +100,9 @@ class EvaluationConfig:
         logger.info(f"Dataset: {self.dataset}")
         logger.info(f"Model Path: {self.model_path}")
         logger.info(f"Teacher Path: {self.teacher_path or 'None'}")
+        if self.training_mode == 'fusion':
+            logger.info(f"VGAE Path: {self.vgae_path}")
+            logger.info(f"GAT Path: {self.gat_path}")
         logger.info(f"Training Mode: {self.training_mode}")
         logger.info(f"KD Mode: {self.kd_mode}")
         logger.info(f"Device: {self.device}")
@@ -299,6 +315,8 @@ class Evaluator:
         """
         Load and instantiate model based on training mode.
 
+        For fusion mode, also loads VGAE and GAT models.
+
         Args:
             sample_dataset: Sample dataset to infer num_ids from ID mapping
         """
@@ -321,24 +339,54 @@ class Evaluator:
         elif self.model_type in ['normal', 'curriculum']:
             self.model = self._build_gat_model(num_ids)
         elif self.model_type == 'fusion':
+            # For fusion, load DQN agent + VGAE + GAT models
             self.model = self._build_dqn_model()
+
+            # Load VGAE model
+            logger.info(f"Loading VGAE model from {self.config.vgae_path}...")
+            vgae_checkpoint = self.model_loader.load_model(self.config.vgae_path)
+            self.vgae_model = self._build_vgae_model(num_ids)
+            self._load_state_dict(self.vgae_model, vgae_checkpoint)
+            self.vgae_model.to(self.config.device)
+            self.vgae_model.eval()
+            logger.info("✅ VGAE model loaded")
+
+            # Load GAT model
+            logger.info(f"Loading GAT model from {self.config.gat_path}...")
+            gat_checkpoint = self.model_loader.load_model(self.config.gat_path)
+            self.gat_model = self._build_gat_model(num_ids)
+            self._load_state_dict(self.gat_model, gat_checkpoint)
+            self.gat_model.to(self.config.device)
+            self.gat_model.eval()
+            logger.info("✅ GAT model loaded")
         else:
             raise ValueError(f"Unknown training mode: {self.model_type}")
 
-        # Load state dict
+        # Load state dict for main model
+        self._load_state_dict(self.model, checkpoint)
+
+        self.model.to(self.config.device)
+        self.model.eval()
+        logger.info("✅ Model loaded and ready for inference")
+
+    def _load_state_dict(self, model: nn.Module, checkpoint: Any) -> None:
+        """Load state dict into model, handling different checkpoint formats."""
         if isinstance(checkpoint, dict) and 'state_dict' in checkpoint:
             # Lightning checkpoint format
             state_dict = checkpoint['state_dict']
             # Remove 'model.' prefix if present
             cleaned_state = {k.replace('model.', ''): v for k, v in state_dict.items()}
-            self.model.load_state_dict(cleaned_state, strict=False)
+            model.load_state_dict(cleaned_state, strict=False)
+        elif isinstance(checkpoint, dict) and 'q_network_state_dict' in checkpoint:
+            # DQN agent checkpoint format
+            # For EnhancedDQNFusionAgent, load Q-network weights
+            if hasattr(model, 'q_network'):
+                model.q_network.load_state_dict(checkpoint['q_network_state_dict'])
+            else:
+                model.load_state_dict(checkpoint, strict=False)
         else:
             # Raw state dict
-            self.model.load_state_dict(checkpoint, strict=False)
-
-        self.model.to(self.config.device)
-        self.model.eval()
-        logger.info("✅ Model loaded and ready for inference")
+            model.load_state_dict(checkpoint, strict=False)
 
     def _build_vgae_model(self, num_ids: int) -> nn.Module:
         """Build VGAE model for inference."""
@@ -464,23 +512,124 @@ class Evaluator:
 
     def _infer_fusion_batch(self, batch) -> Tuple[List[int], List[float]]:
         """
-        DQN fusion inference: combine VGAE and GAT predictions.
+        DQN fusion inference with 15D state space.
 
-        For fusion evaluation, we need both VGAE and GAT models.
-        This is a simplified version that uses a heuristic combination.
+        Extracts rich features from both VGAE and GAT, then uses DQN to select fusion weight.
         """
-        logger.warning("Fusion mode inference: simplified implementation using averaging strategy")
-
-        # For now, use a simple averaging approach
-        # In a full implementation, this would require loading both VGAE and GAT models
-        # and using the DQN to weight their predictions
-
-        # Simplified: use random predictions (placeholder for full fusion)
         batch_size = batch.num_graphs
-        predictions = np.random.randint(0, 2, batch_size).tolist()
-        scores = np.random.rand(batch_size).tolist()
 
-        logger.warning(f"  Fusion batch inference: {batch_size} samples (simplified placeholder)")
+        # ========== VGAE Feature Extraction (8 dims) ==========
+        cont_out, canid_logits, neighbor_logits, z, _ = self.vgae_model(batch)
+
+        # Error components (3 dims)
+        continuous_features = batch.x[:, 1:]
+        node_errors = F.mse_loss(cont_out, continuous_features, reduction='none').mean(dim=1)
+        canid_errors = F.cross_entropy(canid_logits, batch.x[:, 0].long(), reduction='none')
+        neighbor_errors = F.binary_cross_entropy_with_logits(
+            neighbor_logits, batch.edge_attr.float(), reduction='none'
+        ).mean(dim=1) if batch.edge_attr.numel() > 0 else torch.zeros_like(node_errors)
+
+        # Aggregate errors per graph
+        vgae_errors = []
+        vgae_latent = []
+        vgae_confidence = []
+
+        for graph_idx in range(batch_size):
+            node_mask = (batch.batch == graph_idx)
+            graph_node_errors = node_errors[node_mask].mean().item()
+            graph_canid_errors = canid_errors[node_mask].mean().item()
+            graph_neighbor_errors = neighbor_errors[node_mask].mean().item() if neighbor_errors.numel() > 0 else 0.0
+
+            vgae_errors.append([graph_node_errors, graph_canid_errors, graph_neighbor_errors])
+
+            # Latent statistics (4 dims: mean, std, max, min)
+            graph_latent = z[node_mask]
+            vgae_latent.append([
+                graph_latent.mean().item(),
+                graph_latent.std().item(),
+                graph_latent.max().item(),
+                graph_latent.min().item()
+            ])
+
+            # VGAE confidence: inverse of error variance
+            error_vec = torch.tensor([graph_node_errors, graph_canid_errors, graph_neighbor_errors])
+            vgae_confidence.append(1.0 / (1.0 + error_vec.var().item()))
+
+        vgae_errors = torch.tensor(vgae_errors, dtype=torch.float32)
+        vgae_latent = torch.tensor(vgae_latent, dtype=torch.float32)
+        vgae_confidence = torch.tensor(vgae_confidence, dtype=torch.float32)
+
+        # ========== GAT Feature Extraction (7 dims) ==========
+        # Get intermediate representations (pre-pooling embeddings)
+        xs = self.gat_model(batch, return_intermediate=True)
+        pre_pooling_embeddings = xs[-1]  # Last layer's output before pooling [num_nodes, hidden_dim * heads]
+
+        # Also get final logits for classification
+        gat_logits = self.gat_model(batch, return_intermediate=False)  # [num_nodes, 2]
+
+        # Aggregate features per graph
+        gat_logits_per_graph = []
+        gat_embeddings = []
+        gat_confidence = []
+
+        for graph_idx in range(batch_size):
+            node_mask = (batch.batch == graph_idx)
+            graph_logits = gat_logits[node_mask]
+            graph_embeddings = pre_pooling_embeddings[node_mask]
+
+            # Aggregate logits per graph (mean across nodes)
+            graph_logits_mean = graph_logits.mean(dim=0)
+            gat_logits_per_graph.append(graph_logits_mean.cpu().numpy())
+
+            # Embedding statistics (4 dims: mean, std, max, min of pre-pooling embeddings)
+            gat_embeddings.append([
+                graph_embeddings.mean().item(),
+                graph_embeddings.std().item(),
+                graph_embeddings.max().item(),
+                graph_embeddings.min().item()
+            ])
+
+            # GAT confidence: 1 - normalized entropy
+            probs = F.softmax(graph_logits_mean, dim=0)
+            entropy = -(probs * torch.log(probs + 1e-10)).sum()
+            normalized_entropy = entropy / np.log(2)  # Normalize by log(num_classes)
+            gat_confidence.append((1.0 - normalized_entropy).item())
+
+        gat_logits_tensor = torch.tensor(gat_logits_per_graph, dtype=torch.float32)
+        gat_embeddings = torch.tensor(gat_embeddings, dtype=torch.float32)
+        gat_confidence = torch.tensor(gat_confidence, dtype=torch.float32)
+
+        # ========== Stack 15D State and Use DQN ==========
+        predictions = []
+        scores = []
+
+        for i in range(batch_size):
+            # Stack 15D state vector
+            state_15d = np.concatenate([
+                vgae_errors[i].numpy(),      # 3 dims
+                vgae_latent[i].numpy(),      # 4 dims
+                [vgae_confidence[i].item()], # 1 dim
+                gat_logits_tensor[i].numpy(),# 2 dims
+                gat_embeddings[i].numpy(),   # 4 dims
+                [gat_confidence[i].item()]   # 1 dim
+            ])  # Total: 15 dims
+
+            # Use DQN to select fusion weight
+            alpha, _, _ = self.model.select_action(state_15d, training=False)
+
+            # Derive scalar scores for fusion
+            vgae_weights = np.array([0.4, 0.35, 0.25])
+            anomaly_score = np.clip(np.sum(vgae_errors[i].numpy() * vgae_weights), 0.0, 1.0)
+
+            gat_probs = np.exp(gat_logits_tensor[i].numpy()) / np.sum(np.exp(gat_logits_tensor[i].numpy()))
+            gat_prob = gat_probs[1]
+
+            # Fused prediction
+            fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob
+            prediction = 1 if fused_score > 0.5 else 0
+
+            predictions.append(prediction)
+            scores.append(fused_score)
 
         return predictions, scores
 
@@ -658,6 +807,10 @@ Examples:
     # Optional arguments
     parser.add_argument('--teacher-path', default=None,
                        help='Path to teacher model (for KD or baseline comparison)')
+    parser.add_argument('--vgae-path', default=None,
+                       help='Path to VGAE model (required for fusion mode evaluation)')
+    parser.add_argument('--gat-path', default=None,
+                       help='Path to GAT model (required for fusion mode evaluation)')
     parser.add_argument('--batch-size', type=int, default=512,
                        help='Batch size for inference')
     parser.add_argument('--device', default='auto',

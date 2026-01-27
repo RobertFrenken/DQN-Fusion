@@ -662,50 +662,104 @@ class DQNLightningModule(BaseKDGATModule):
 
 class FusionPredictionCache(Dataset):
     """
-    Pre-computed cache of VGAE and GAT predictions for efficient fusion training.
-    
-    Stores:
-    - Anomaly scores from VGAE
-    - Classification probabilities from GAT
-    - Ground truth labels
-    - Sample indices for tracking
+    Enhanced prediction cache with 15D state space for DQN fusion.
+
+    Stores rich features from both VGAE and GAT models:
+
+    VGAE Features (8 dimensions):
+    - 3 error components: node_error, neighbor_error, canid_error
+    - 4 latent statistics: mean, std, max, min of latent z (per graph)
+    - 1 confidence: inverse of error variance
+
+    GAT Features (7 dimensions):
+    - 2 logits: raw logits for both classes
+    - 4 embedding statistics: mean, std, max, min of pre-pooling embeddings (per graph)
+    - 1 confidence: 1 - normalized entropy
+
+    Total: 15 dimensions per sample
     """
-    
+
     def __init__(
-        self, 
-        anomaly_scores: np.ndarray, 
-        gat_probs: np.ndarray, 
-        labels: np.ndarray, 
+        self,
+        vgae_errors: np.ndarray,           # [N, 3]
+        vgae_latent: np.ndarray,          # [N, 4]
+        vgae_confidence: np.ndarray,       # [N]
+        gat_logits: np.ndarray,            # [N, 2]
+        gat_embeddings: np.ndarray,        # [N, 4]
+        gat_confidence: np.ndarray,        # [N]
+        labels: np.ndarray,                 # [N]
         indices: np.ndarray = None
     ):
         """
-        Initialize prediction cache.
-        
+        Initialize enhanced prediction cache with 15D state space.
+
         Args:
-            anomaly_scores: [N] array of anomaly scores in [0, 1]
-            gat_probs: [N] array of GAT probabilities in [0, 1]
-            labels: [N] array of binary labels (0=normal, 1=attack)
-            indices: [N] array of original sample indices (optional)
+            vgae_errors: [N, 3] VGAE error components (node, neighbor, canid)
+            vgae_latent: [N, 4] VGAE latent space statistics (mean, std, max, min)
+            vgae_confidence: [N] VGAE confidence scores
+            gat_logits: [N, 2] GAT raw logits for both classes
+            gat_embeddings: [N, 4] GAT embedding statistics (mean, std, max, min)
+            gat_confidence: [N] GAT confidence scores
+            labels: [N] Ground truth binary labels (0=normal, 1=attack)
+            indices: [N] Optional sample indices for tracking
         """
-        self.anomaly_scores = torch.tensor(anomaly_scores, dtype=torch.float32)
-        self.gat_probs = torch.tensor(gat_probs, dtype=torch.float32)
+        # VGAE features
+        self.vgae_errors = torch.tensor(vgae_errors, dtype=torch.float32)
+        self.vgae_latent = torch.tensor(vgae_latent, dtype=torch.float32)
+        self.vgae_confidence = torch.tensor(vgae_confidence, dtype=torch.float32)
+
+        # GAT features
+        self.gat_logits = torch.tensor(gat_logits, dtype=torch.float32)
+        self.gat_embeddings = torch.tensor(gat_embeddings, dtype=torch.float32)
+        self.gat_confidence = torch.tensor(gat_confidence, dtype=torch.float32)
+
+        # Labels
         self.labels = torch.tensor(labels, dtype=torch.long)
-        
+
+        # Indices
         if indices is None:
-            self.indices = torch.arange(len(anomaly_scores))
+            self.indices = torch.arange(len(labels))
         else:
             self.indices = torch.tensor(indices, dtype=torch.long)
-        
-        if not (len(self.anomaly_scores) == len(self.gat_probs) == len(self.labels)):
-            raise ValueError("All inputs must have same length")
-    
+
+        # Validate all arrays have same length
+        N = len(self.labels)
+        if not all(len(x) == N for x in [
+            self.vgae_errors, self.vgae_latent, self.vgae_confidence,
+            self.gat_logits, self.gat_embeddings, self.gat_confidence
+        ]):
+            raise ValueError("All feature arrays must have same length")
+
+        logger.info(f"✅ FusionPredictionCache initialized: {N} samples with 15D state space")
+
     def __len__(self):
-        return len(self.anomaly_scores)
-    
+        return len(self.labels)
+
     def __getitem__(self, idx):
+        """
+        Returns a dict with all 15 features + label.
+
+        The DQN state vector is constructed as:
+        [vgae_err_0, vgae_err_1, vgae_err_2,        # 3 VGAE errors
+         vgae_lat_0, vgae_lat_1, vgae_lat_2, vgae_lat_3,  # 4 latent stats
+         vgae_conf,                                  # 1 VGAE confidence
+         gat_log_0, gat_log_1,                       # 2 GAT logits
+         gat_emb_0, gat_emb_1, gat_emb_2, gat_emb_3,  # 4 GAT embeddings
+         gat_conf]                                    # 1 GAT confidence
+        Total: 15 dimensions
+        """
         return {
-            'anomaly_score': self.anomaly_scores[idx],
-            'gat_prob': self.gat_probs[idx],
+            # VGAE features (8 dims)
+            'vgae_errors': self.vgae_errors[idx],      # [3]
+            'vgae_latent': self.vgae_latent[idx],      # [4]
+            'vgae_confidence': self.vgae_confidence[idx],  # scalar
+
+            # GAT features (7 dims)
+            'gat_logits': self.gat_logits[idx],        # [2]
+            'gat_embeddings': self.gat_embeddings[idx],  # [4]
+            'gat_confidence': self.gat_confidence[idx],  # scalar
+
+            # Label
             'label': self.labels[idx],
             'index': self.indices[idx]
         }
@@ -750,7 +804,7 @@ class FusionLightningModule(pl.LightningModule):
         
         self.fusion_agent = EnhancedDQNFusionAgent(
             alpha_steps=fusion_config.get('alpha_steps', 21),
-            state_dim=2,  # anomaly_score, gat_prob
+            state_dim=15,  # Enhanced: 8 VGAE + 7 GAT features
             lr=fusion_config.get('fusion_lr', 0.001),
             gamma=fusion_config.get('gamma', 0.9),
             epsilon=fusion_config.get('fusion_epsilon', 0.9),
@@ -760,6 +814,10 @@ class FusionLightningModule(pl.LightningModule):
             batch_size=fusion_config.get('fusion_batch_size', 256),
             device=device_str
         )
+
+        logger.info("✅ DQN Fusion Agent initialized with 15D state space")
+        logger.info("   VGAE: 3 errors + 4 latent + 1 confidence = 8 dims")
+        logger.info("   GAT: 2 logits + 4 embeddings + 1 confidence = 7 dims")
         
         # Training tracking
         self.episode_rewards = []
@@ -790,24 +848,44 @@ class FusionLightningModule(pl.LightningModule):
     
     def training_step(self, batch, batch_idx):
         """
-        Single training step on a minibatch of cached predictions.
-        
+        Single training step on minibatch with enhanced 15D state space.
+
         Args:
-            batch: Dict with keys 'anomaly_score', 'gat_prob', 'label', 'index'
+            batch: Dict with 15D features:
+                - vgae_errors: [batch_size, 3]
+                - vgae_latent: [batch_size, 4]
+                - vgae_confidence: [batch_size]
+                - gat_logits: [batch_size, 2]
+                - gat_embeddings: [batch_size, 4]
+                - gat_confidence: [batch_size]
+                - label: [batch_size]
             batch_idx: Index of batch in epoch
-        
+
         Returns:
             None (manual optimization)
         """
-        # Extract batch data
-        anomaly_scores = batch['anomaly_score']  # [batch_size]
-        gat_probs = batch['gat_prob']            # [batch_size]
-        labels = batch['label']                  # [batch_size]
-        
-        batch_size = len(anomaly_scores)
-        
-        # Normalize and stack states
-        states = torch.stack([anomaly_scores, gat_probs], dim=1)  # [batch_size, 2]
+        # Extract all 15D features from batch
+        vgae_errors = batch['vgae_errors']          # [batch_size, 3]
+        vgae_latent = batch['vgae_latent']          # [batch_size, 4]
+        vgae_confidence = batch['vgae_confidence']  # [batch_size]
+        gat_logits = batch['gat_logits']            # [batch_size, 2]
+        gat_embeddings = batch['gat_embeddings']    # [batch_size, 4]
+        gat_confidence = batch['gat_confidence']    # [batch_size]
+        labels = batch['label']                      # [batch_size]
+
+        batch_size = len(labels)
+
+        # Stack all features into 15D state vector
+        # Order: vgae_errors(3) + vgae_latent(4) + vgae_conf(1) + gat_logits(2) + gat_emb(4) + gat_conf(1)
+        states = torch.cat([
+            vgae_errors,                        # [batch, 3]
+            vgae_latent,                        # [batch, 4]
+            vgae_confidence.unsqueeze(1),       # [batch, 1]
+            gat_logits,                         # [batch, 2]
+            gat_embeddings,                     # [batch, 4]
+            gat_confidence.unsqueeze(1)         # [batch, 1]
+        ], dim=1)  # [batch_size, 15]
+
         states = states.to(self.device)  # Move to device
         
         # Forward pass: get Q-values for all actions
@@ -819,11 +897,20 @@ class FusionLightningModule(pl.LightningModule):
         else:
             actions = q_values.argmax(dim=1)
         
+        # Derive scalar scores for fusion from rich features
+        # VGAE anomaly score: weighted composite of 3 error components
+        vgae_weights = torch.tensor([0.4, 0.35, 0.25], device=self.device)
+        anomaly_scores_derived = (vgae_errors * vgae_weights).sum(dim=1)
+        anomaly_scores_derived = torch.sigmoid(anomaly_scores_derived * 3 - 1.5)  # Normalize to [0, 1]
+
+        # GAT probability: softmax of logits to get class 1 probability
+        gat_probs_derived = torch.softmax(gat_logits, dim=1)[:, 1]  # Probability of attack class
+
         # Get fusion weights and compute fused predictions
         alphas = self.fusion_agent.alpha_values[actions.cpu().numpy()]
-        fused_scores = (1 - alphas) * anomaly_scores.cpu().numpy() + alphas * gat_probs.cpu().numpy()
+        fused_scores = (1 - alphas) * anomaly_scores_derived.cpu().numpy() + alphas * gat_probs_derived.cpu().numpy()
         predictions = (fused_scores > 0.5).astype(int)
-        
+
         # Compute rewards
         correct = (predictions == labels.cpu().numpy())
         rewards = torch.tensor(
@@ -831,11 +918,11 @@ class FusionLightningModule(pl.LightningModule):
             dtype=torch.float32,
             device=self.device
         )
-        
-        # Add confidence bonus
-        confidence = np.maximum(anomaly_scores.cpu().numpy(), gat_probs.cpu().numpy())
+
+        # Add confidence bonus using both model confidence scores
+        combined_confidence = torch.maximum(vgae_confidence, gat_confidence).cpu().numpy()
         confidence_bonus = torch.tensor(
-            np.where(correct, 0.5 * confidence, -0.3 * confidence),
+            np.where(correct, 0.5 * combined_confidence, -0.3 * combined_confidence),
             dtype=torch.float32,
             device=self.device
         )
