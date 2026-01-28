@@ -1,0 +1,28 @@
+# Conda environment for GNN experiments
+# Used by Snakemake rules to ensure consistent environment
+
+name: gnn-experiments
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pytorch>=2.0
+  - pytorch-cuda=12.1
+  - pyg
+  - numpy
+  - pandas
+  - scikit-learn
+  - matplotlib
+  - seaborn
+  - pyyaml
+  - tqdm
+  - pip
+  - pip:
+    - hydra-core
+    - hydra-zen
+    - mlflow
+    - pytorch-lightning
+    - torch-geometric

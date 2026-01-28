@@ -1,0 +1,76 @@
+# ============================================================================
+# Snakemake SLURM Profile Configuration
+# ============================================================================
+# This profile configures Snakemake to submit jobs to OSC's SLURM cluster
+# ============================================================================
+
+# Executor: use SLURM for job submission
+executor: slurm
+
+# Maximum number of simultaneous jobs
+jobs: 20
+
+# Rerun incomplete jobs on restart
+rerun-incomplete: true
+
+# Print shell commands
+printshellcmds: true
+
+# Keep going with independent jobs if one fails
+keep-going: true
+
+# Use conda environments defined in rules
+use-conda: true
+
+# Restart times for failed jobs
+restart-times: 1
+
+# ============================================================================
+# SLURM-specific settings
+# ============================================================================
+
+# Default resources for all jobs (can be overridden per rule)
+default-resources:
+  - slurm_account=PAS3209
+  - slurm_partition=gpu
+  - runtime=360
+  - mem_mb=64000
+  - cpus_per_task=16
+
+# SLURM submission script template
+# Snakemake will automatically translate resources to SBATCH directives
+slurm-extra: "--mail-type=END,FAIL --mail-user=frugoli.1@osu.edu"
+
+# ============================================================================
+# Resource mapping
+# ============================================================================
+# Map Snakemake resource names to SLURM sbatch parameters
+
+# Resources that need custom handling
+# gpus -> --gres=gpu:TYPE:COUNT
+# gpu_type + gpus -> --gres=gpu:{gpu_type}:{gpus}
+
+# ============================================================================
+# Logging
+# ============================================================================
+
+# Store logs in a centralized location
+# Individual rules can override with their own log directives
+slurm-log-dir: "slurm_logs"
+
+# ============================================================================
+# Latency
+# ============================================================================
+
+# Wait for output files (network file system latency)
+latency-wait: 60
+
+# ============================================================================
+# Performance
+# ============================================================================
+
+# Use at most 20 cores for local rules (non-SLURM)
+local-cores: 4
+
+# Maximum status checks per second
+max-status-checks-per-second: 1

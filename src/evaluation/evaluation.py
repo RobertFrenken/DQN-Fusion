@@ -33,6 +33,14 @@ from src.models.vgae import GraphAutoencoderNeighborhood
 from src.models.models import GATWithJK
 from src.models.dqn import EnhancedDQNFusionAgent
 
+# Import frozen config and LightningModule for config-driven model loading
+from src.config.frozen_config import load_frozen_config
+from src.training.lightning_modules import (
+    VAELightningModule,
+    GATLightningModule,
+    FusionLightningModule
+)
+
 # Setup logging
 logging.basicConfig(
     level=logging.INFO,
@@ -315,6 +323,9 @@ class Evaluator:
         """
         Load and instantiate model based on training mode.
 
+        Uses config-driven loading when frozen config is available,
+        falls back to architecture inference for legacy checkpoints.
+
         For fusion mode, also loads VGAE and GAT models.
 
         Args:
@@ -322,52 +333,45 @@ class Evaluator:
         """
         logger.info(f"Loading model from {self.config.model_path}...")
 
-        # Load checkpoint
-        checkpoint = self.model_loader.load_model(self.config.model_path)
-
-        # Determine model type from training mode
-        self.model_type = self.config.training_mode
-        logger.info(f"Model type: {self.model_type}")
-
         # Get num_ids from dataset handler
         num_ids = len(self.dataset_handler.id_mapping) if self.dataset_handler.id_mapping else 1000
         logger.info(f"Number of IDs: {num_ids}")
 
-        # Instantiate model based on training mode
+        # Determine model type from training mode (legacy support)
+        self.model_type = self.config.training_mode
+        logger.info(f"Training mode: {self.model_type}")
+
+        # Use new config-driven loading approach
         if self.model_type == 'autoencoder':
-            self.model = self._build_vgae_model(num_ids)
+            logger.info("Loading VGAE autoencoder model...")
+            self.model = self._load_model_from_checkpoint(self.config.model_path, num_ids)
+
         elif self.model_type in ['normal', 'curriculum']:
-            self.model = self._build_gat_model(num_ids)
+            logger.info("Loading GAT classifier model...")
+            self.model = self._load_model_from_checkpoint(self.config.model_path, num_ids)
+
         elif self.model_type == 'fusion':
             # For fusion, load DQN agent + VGAE + GAT models
-            self.model = self._build_dqn_model()
+            logger.info("Loading fusion models (DQN + VGAE + GAT)...")
 
             # Load VGAE model
             logger.info(f"Loading VGAE model from {self.config.vgae_path}...")
-            vgae_checkpoint = self.model_loader.load_model(self.config.vgae_path)
-            self.vgae_model = self._build_vgae_model(num_ids)
-            self._load_state_dict(self.vgae_model, vgae_checkpoint)
-            self.vgae_model.to(self.config.device)
-            self.vgae_model.eval()
+            self.vgae_model = self._load_model_from_checkpoint(self.config.vgae_path, num_ids)
             logger.info("✅ VGAE model loaded")
 
             # Load GAT model
             logger.info(f"Loading GAT model from {self.config.gat_path}...")
-            gat_checkpoint = self.model_loader.load_model(self.config.gat_path)
-            self.gat_model = self._build_gat_model(num_ids)
-            self._load_state_dict(self.gat_model, gat_checkpoint)
-            self.gat_model.to(self.config.device)
-            self.gat_model.eval()
+            self.gat_model = self._load_model_from_checkpoint(self.config.gat_path, num_ids)
             logger.info("✅ GAT model loaded")
+
+            # Load DQN fusion agent
+            logger.info(f"Loading DQN fusion agent from {self.config.model_path}...")
+            self.model = self._load_model_from_checkpoint(self.config.model_path, num_ids)
+
         else:
             raise ValueError(f"Unknown training mode: {self.model_type}")
 
-        # Load state dict for main model
-        self._load_state_dict(self.model, checkpoint)
-
-        self.model.to(self.config.device)
-        self.model.eval()
-        logger.info("✅ Model loaded and ready for inference")
+        logger.info("✅ All models loaded and ready for inference")
 
     def _load_state_dict(self, model: nn.Module, checkpoint: Any) -> None:
         """Load state dict into model, handling different checkpoint formats."""
@@ -388,8 +392,237 @@ class Evaluator:
             # Raw state dict
             model.load_state_dict(checkpoint, strict=False)
 
+    def _discover_frozen_config(self, checkpoint_path: str) -> Optional[str]:
+        """
+        Auto-discover frozen_config.json relative to checkpoint.
+
+        Standard experiment structure:
+        experiment_dir/
+        ├── configs/
+        │   └── frozen_config_TIMESTAMP.json  ← Config here
+        └── models/
+            └── model.pth  ← Checkpoint here
+        """
+        checkpoint_dir = Path(checkpoint_path).parent
+
+        # Pattern 1: ../configs/frozen_config*.json (most common)
+        configs_dir = checkpoint_dir.parent / "configs"
+        if configs_dir.exists():
+            configs = sorted(configs_dir.glob("frozen_config*.json"))
+            if configs:
+                logger.info(f"Found frozen config: {configs[-1]}")
+                return str(configs[-1])
+
+        # Pattern 2: Same directory as checkpoint (legacy)
+        config_same_dir = checkpoint_dir / "frozen_config.json"
+        if config_same_dir.exists():
+            logger.info(f"Found frozen config: {config_same_dir}")
+            return str(config_same_dir)
+
+        # Pattern 3: ../../configs/ (if checkpoint nested deeper)
+        configs_dir_up2 = checkpoint_dir.parent.parent / "configs"
+        if configs_dir_up2.exists():
+            configs = sorted(configs_dir_up2.glob("frozen_config*.json"))
+            if configs:
+                logger.info(f"Found frozen config: {configs[-1]}")
+                return str(configs[-1])
+
+        logger.warning(f"No frozen config found for checkpoint: {checkpoint_path}")
+        return None
+
+    def _load_model_from_checkpoint(self, checkpoint_path: str, num_ids: int) -> nn.Module:
+        """
+        Load model using frozen config + LightningModule.
+
+        This approach:
+        1. Loads frozen config (has all parameters)
+        2. Infers num_ids from checkpoint (to handle cross-dataset evaluation)
+        3. Instantiates appropriate LightningModule (handles model building)
+        4. Loads checkpoint weights
+        5. Extracts and returns the model
+
+        Benefits:
+        - Reuses tested training code
+        - No parameter duplication
+        - Automatically handles teacher/student/KD variants
+        """
+        # Step 1: Load checkpoint first to infer num_ids
+        checkpoint = torch.load(checkpoint_path, map_location=self.config.device)
+        state_dict = checkpoint.get('state_dict', checkpoint)
+
+        # Clean state_dict (remove 'model.' prefix if present)
+        if any(k.startswith('model.') for k in state_dict.keys()):
+            state_dict = {k.replace('model.', ''): v for k, v in state_dict.items()}
+
+        # Infer num_ids from checkpoint (overrides dataset num_ids)
+        if 'id_embedding.weight' in state_dict:
+            checkpoint_num_ids = state_dict['id_embedding.weight'].shape[0]
+            if checkpoint_num_ids != num_ids:
+                logger.warning(
+                    f"num_ids mismatch: checkpoint has {checkpoint_num_ids}, "
+                    f"dataset has {num_ids}. Using checkpoint num_ids={checkpoint_num_ids}."
+                )
+                num_ids = checkpoint_num_ids
+
+        # Step 2: Find frozen config
+        config_path = self._discover_frozen_config(checkpoint_path)
+
+        if config_path is None:
+            logger.warning("No frozen config found, falling back to inference")
+            return self._build_model_by_inference(checkpoint_path, num_ids)
+
+        # Step 3: Load frozen config
+        logger.info(f"Loading frozen config: {config_path}")
+        config = load_frozen_config(config_path)
+
+        # Step 4: Instantiate appropriate LightningModule
+        model_type = config.model.type
+        training_mode = config.training.mode
+
+        logger.info(f"Building {model_type} model (mode: {training_mode}, size: {config.model_size})")
+        logger.info(f"Using num_ids={num_ids} from checkpoint")
+
+        if model_type in ["vgae", "vgae_student"]:
+            lightning_module = VAELightningModule(cfg=config, num_ids=num_ids)
+        elif model_type in ["gat", "gat_student"]:
+            lightning_module = GATLightningModule(cfg=config, num_ids=num_ids)
+        elif training_mode == "fusion":
+            # For fusion, we need to handle differently (needs sub-models)
+            logger.warning("Fusion models not yet supported in config-driven loading, using inference fallback")
+            return self._build_model_by_inference(checkpoint_path, num_ids)
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+
+        # Step 5: Load checkpoint weights
+        # state_dict already loaded and cleaned above
+        lightning_module.model.load_state_dict(state_dict, strict=False)
+
+        # Step 6: Extract and return the model
+        model = lightning_module.model
+        model.eval()
+        model.to(self.config.device)
+
+        logger.info(f"✅ Successfully loaded {model_type} model with config-driven architecture")
+        return model
+
+    def _build_model_by_inference(self, checkpoint_path: str, num_ids: int) -> nn.Module:
+        """
+        Fallback: Infer model architecture from checkpoint state_dict.
+        Used when frozen config is not available (legacy checkpoints).
+        """
+        logger.info("Building model by inferring architecture from checkpoint")
+
+        checkpoint = torch.load(checkpoint_path, map_location='cpu')
+        state_dict = checkpoint.get('state_dict', checkpoint)
+
+        # Clean state_dict (remove 'model.' prefix if present)
+        if any(k.startswith('model.') for k in state_dict.keys()):
+            state_dict = {k.replace('model.', ''): v for k, v in state_dict.items()}
+
+        # Detect model type from state_dict keys
+        if 'id_embedding.weight' in state_dict and 'z_mean.weight' in state_dict:
+            # VGAE model
+            arch = self._infer_vgae_architecture(state_dict)
+            arch['num_ids'] = num_ids
+            model = GraphAutoencoderNeighborhood(**arch)
+
+        elif 'id_embedding.weight' in state_dict and 'convs.0.lin_src.weight' in state_dict:
+            # GAT model
+            arch = self._infer_gat_architecture(state_dict)
+            arch['num_ids'] = num_ids
+            model = GATWithJK(**arch)
+
+        else:
+            raise ValueError("Cannot infer model type from checkpoint")
+
+        model.load_state_dict(state_dict, strict=False)
+        model.eval()
+        model.to(self.config.device)
+
+        logger.info("✅ Model loaded using architecture inference")
+        return model
+
+    def _infer_vgae_architecture(self, state_dict: dict) -> dict:
+        """Infer VGAE params from state_dict (ported from fusion.py)."""
+        num_ids, embedding_dim = state_dict['id_embedding.weight'].shape
+        latent_dim = state_dict['z_mean.weight'].shape[0]
+
+        # Infer hidden_dims from batch norm layers
+        hidden_dims = []
+        for i in range(10):
+            key = f'encoder_bns.{i}.weight'
+            if key in state_dict:
+                hidden_dims.append(state_dict[key].shape[0])
+            else:
+                break
+
+        encoder_heads = state_dict['encoder_layers.0.att_src'].shape[1]
+        decoder_heads = state_dict['decoder_layers.0.att_src'].shape[1]
+
+        first_layer_in = state_dict['encoder_layers.0.lin.weight'].shape[1]
+        in_channels = first_layer_in - embedding_dim + 1
+
+        mlp_hidden = state_dict.get('neighborhood_decoder.0.weight',
+                                     torch.zeros(latent_dim, 1)).shape[0]
+
+        logger.info(f"Inferred VGAE architecture: hidden_dims={hidden_dims}, latent={latent_dim}, embedding={embedding_dim}")
+
+        return {
+            'in_channels': in_channels,
+            'hidden_dims': hidden_dims,
+            'latent_dim': latent_dim,
+            'encoder_heads': encoder_heads,
+            'decoder_heads': decoder_heads,
+            'embedding_dim': embedding_dim,
+            'mlp_hidden': mlp_hidden,
+            'dropout': 0.15,
+            'batch_norm': True,
+        }
+
+    def _infer_gat_architecture(self, state_dict: dict) -> dict:
+        """Infer GAT params from state_dict."""
+        num_ids, embedding_dim = state_dict['id_embedding.weight'].shape
+
+        # Count layers
+        num_layers = sum(1 for i in range(10) if f'convs.{i}.lin_src.weight' in state_dict)
+
+        # Infer dimensions
+        first_conv_out = state_dict['convs.0.lin_src.weight'].shape[0]
+        heads = state_dict['convs.0.att_src'].shape[1]
+        hidden_channels = first_conv_out // heads
+
+        first_conv_in = state_dict['convs.0.lin_src.weight'].shape[1]
+        in_channels = first_conv_in - embedding_dim + 1
+
+        # Infer FC layers
+        fc_keys = [k for k in state_dict.keys() if k.startswith('fc_layers.') and '.weight' in k]
+        if fc_keys:
+            last_fc = sorted(fc_keys)[-1]
+            out_channels = state_dict[last_fc].shape[0]
+            num_fc_layers = len([k for k in fc_keys if 'bn' not in k])
+        else:
+            out_channels = 2
+            num_fc_layers = 2
+
+        logger.info(f"Inferred GAT architecture: hidden={hidden_channels}, layers={num_layers}, heads={heads}")
+
+        return {
+            'in_channels': in_channels,
+            'hidden_channels': hidden_channels,
+            'out_channels': out_channels,
+            'num_layers': num_layers,
+            'heads': heads,
+            'embedding_dim': embedding_dim,
+            'num_fc_layers': num_fc_layers,
+            'dropout': 0.15,
+        }
+
     def _build_vgae_model(self, num_ids: int) -> nn.Module:
-        """Build VGAE model for inference."""
+        """
+        DEPRECATED: Use _load_model_from_checkpoint instead.
+        Kept for backward compatibility only.
+        """
+        logger.warning("Using deprecated _build_vgae_model. Consider using _load_model_from_checkpoint.")
         model = GraphAutoencoderNeighborhood(
             num_ids=num_ids,
             in_channels=8,  # Standard input dimension
@@ -404,7 +637,11 @@ class Evaluator:
         return model
 
     def _build_gat_model(self, num_ids: int) -> nn.Module:
-        """Build GAT model for inference."""
+        """
+        DEPRECATED: Use _load_model_from_checkpoint instead.
+        Kept for backward compatibility only.
+        """
+        logger.warning("Using deprecated _build_gat_model. Consider using _load_model_from_checkpoint.")
         model = GATWithJK(
             in_channels=8,
             hidden_channels=128,
@@ -419,9 +656,18 @@ class Evaluator:
         return model
 
     def _build_dqn_model(self) -> nn.Module:
-        """Build DQN fusion model for inference."""
+        """
+        DEPRECATED: Use _load_model_from_checkpoint instead.
+        Kept for backward compatibility only.
+        """
+        logger.warning("Using deprecated _build_dqn_model. Consider using _load_model_from_checkpoint.")
         # DQN fusion agent expects 2 inputs (VGAE anomaly score + GAT probability)
-        model = EnhancedDQNFusionAgent(input_dim=2, hidden_dim=64)
+        # NOTE: This signature is wrong - EnhancedDQNFusionAgent doesn't have input_dim/hidden_dim params
+        model = EnhancedDQNFusionAgent(
+            alpha_steps=21,
+            state_dim=2,
+            device=str(self.config.device)
+        )
         return model
 
     def _infer_subset(self, dataset: List) -> Tuple[np.ndarray, Optional[np.ndarray]]:
