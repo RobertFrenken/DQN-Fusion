@@ -1,0 +1,289 @@
+# Claude Code Documentation Index
+
+**Last Updated**: 2026-01-27
+**Status**: Current and Active
+
+---
+
+## Quick Start - Read This First
+
+**New to this project?** Start here:
+1. **[STAGING.md](STAGING.md)** - Current state and active work (5 min read)
+2. **[MAYBE.md](MAYBE.md)** - Historical context and reference (browse as needed)
+3. **[MIGRATION.md](MIGRATION.md)** - What's outdated and why (if confused about old docs)
+
+---
+
+## Documentation Structure
+
+```
+.claude/
+├── INDEX.md (THIS FILE)        ← Navigation and overview
+├── STAGING.md                  ← ⭐ ESSENTIAL - Current work context
+├── MAYBE.md                    ← 📚 REFERENCE - Historical context
+├── PARAMETER_AUDIT.md          ← 🔍 AUDIT - Parameter overlaps/mismatches (2026-01-27)
+├── MIGRATION.md                ← ⚠️ STALE INFO - What's outdated
+├── MAINTENANCE.md              ← 🔧 PROCESS - Doc update strategy
+├── QUICK_REFERENCE.md          ← ⚠️ OUTDATED - Old CLI patterns
+├── FROZEN_CONFIG_ROADMAP.md    ← ⚠️ PARTIAL - Needs verification
+└── PIPELINE_INVESTIGATION.md   ← ⚠️ OUTDATED - Old workflow analysis
+```
+
+---
+
+## File Purposes
+
+### Active Documents (Use These)
+
+**[STAGING.md](STAGING.md)** ⭐ MOST IMPORTANT
+- Current project state and active work
+- Next immediate actions
+- Critical technical context (15D DQN, recent bugfixes)
+- Updated: 2026-01-27
+- **Read this at the start of every session**
+
+**[MAYBE.md](MAYBE.md)** 📚 REFERENCE
+- Historical context and completed work
+- Useful code patterns and examples
+- Evaluation framework documentation
+- GPU monitoring best practices
+- Read when you need context on past decisions
+
+**[PARAMETER_AUDIT.md](PARAMETER_AUDIT.md)** 🔍 AUDIT (NEW)
+- Comprehensive parameter overlap analysis
+- 5 CRITICAL mismatches found (learning_rate, epochs/max_epochs, DQN params, etc.)
+- Complete inventory of all config parameters
+- Precedence flow documentation
+- **Action Required**: Review todo list for resolution
+
+**[MAINTENANCE.md](MAINTENANCE.md)** 🔧 PROCESS
+- Documentation update strategy
+- When to update which docs
+- Changelog of doc updates
+- Still valid and useful
+
+**[MIGRATION.md](MIGRATION.md)** ⚠️ ARCHIVE
+- Stale information from old docs
+- What's outdated and why
+- Migration strategy for updating docs
+- Read if encountering old references
+
+---
+
+### Outdated Documents (Needs Update)
+
+**[QUICK_REFERENCE.md](QUICK_REFERENCE.md)** ⚠️ OUTDATED
+- References old `can-train` CLI that may not match current workflow
+- Golden rules may not apply
+- **DO NOT USE** until verified and updated
+
+**[FROZEN_CONFIG_ROADMAP.md](FROZEN_CONFIG_ROADMAP.md)** ⚠️ PARTIAL
+- Frozen config infrastructure exists
+- Roadmap may not match current implementation
+- Needs verification before use
+
+**[PIPELINE_INVESTIGATION.md](PIPELINE_INVESTIGATION.md)** ⚠️ OUTDATED
+- Describes old validation stack and pipeline structure
+- May not reflect current workflow
+- Archived information in MIGRATION.md
+
+---
+
+## Current Project Status
+
+### Active Work: Phase 7 - Visualizations
+
+**Phase 7.1**: Infrastructure ✅ COMPLETE
+- paper_style.mplstyle created
+- visualizations/ package with utilities (500+ lines)
+- Demo figures generated successfully
+
+**Phase 7.2**: Essential Figures - NEXT PRIORITY
+- Fig 5: Performance comparison
+- Fig 4: DQN policy analysis
+- Fig 2: Embedding visualization
+- Fig 1: System architecture
+
+**Blocker**: Need evaluation data from full training runs
+
+---
+
+## Key Technical Context
+
+### 15D DQN State Space (Current)
+- **VGAE Features (8 dims)**: 3 errors + 4 latent stats + 1 confidence
+- **GAT Features (7 dims)**: 2 logits + 4 embedding stats + 1 confidence
+- **Status**: ✅ Complete and verified
+- **Details**: See STAGING.md
+
+### Recent Bugfixes (Last 48 Hours)
+1. ✅ Double safety factor bug (1.82x batch size improvement)
+2. ✅ Import error in prediction_cache.py (missing Dict)
+3. ✅ GPU monitor analysis script (CSV parsing)
+
+**Pipeline Status**: ✅ READY FOR PRODUCTION
+
+---
+
+## Where Things Are
+
+### Key Files
+- **Current Context**: `.claude/STAGING.md`
+- **Evaluation**: `../src/evaluation/evaluation.py`
+- **Training Script**: `../train_with_hydra_zen.py`
+
+### Output Locations
+```
+experimentruns/automotive/{dataset}/
+  ├── configs/          ← Frozen configs (if used)
+  ├── slurm_logs/       ← SLURM outputs
+  ├── checkpoints/      ← Training checkpoints
+  └── models/           ← Final models
+
+test_results/           ← Evaluation outputs
+  ├── *.csv             ← Wide format metrics
+  └── *.json            ← Nested results
+
+figures/                ← Visualizations
+  ├── *.pdf             ← Publication figures
+  └── supplementary/    ← Extra materials
+```
+
+---
+
+## Current Workflow
+
+### Training
+```bash
+# Run training directly
+python train_with_hydra_zen.py [args]
+
+# Or with frozen config
+python train_with_hydra_zen.py --frozen-config /path/to/config.json
+```
+
+### Evaluation
+```bash
+python -m src.evaluation.evaluation \
+  --dataset [dataset] \
+  --model-path [path] \
+  --training-mode [mode] \
+  --csv-output results.csv
+```
+
+### Visualization
+```bash
+cd visualizations
+python demo_visualization.py  # Test
+
+# After evaluation: implement individual figures
+```
+
+---
+
+## Documentation Maintenance
+
+### Update Triggers
+| Event | Update File |
+|-------|-------------|
+| Start new work | STAGING.md |
+| Complete work | Move to MAYBE.md |
+| Find stale info | MIGRATION.md |
+| Major change | INDEX.md |
+
+**Full Process**: See [MAINTENANCE.md](MAINTENANCE.md)
+
+---
+
+## Session Start Checklist
+
+**Every New Session**:
+1. ✅ Read [STAGING.md](STAGING.md)
+2. ✅ Check project status
+3. ✅ Identify next task
+4. ✅ Verify no blockers
+
+---
+
+## Common Questions
+
+**Q: Where's the main task list?**
+A: Check STAGING.md "Next Steps" section
+
+**Q: What should I work on?**
+A: See STAGING.md → Active Work section
+
+**Q: Where are eval docs?**
+A: Historical in MAYBE.md, current in ../src/evaluation/
+
+**Q: Can I use QUICK_REFERENCE.md?**
+A: No, outdated. Use STAGING.md.
+
+**Q: What's 15D DQN?**
+A: See STAGING.md → Critical Technical Context
+
+**Q: Where are session notes?**
+A: Consolidated into STAGING/MAYBE, obsolete ones deleted
+
+---
+
+## Migration Notes (2026-01-27)
+
+### Changes
+- Created: STAGING.md, MAYBE.md, MIGRATION.md
+- Consolidated: 20+ session notes → 2 files
+- Deleted: Outdated session notes
+- Updated: This INDEX.md
+- Marked: Old .claude/ files as outdated
+
+### Why
+- Too many scattered notes
+- Mixed current/historical info
+- Old CLI patterns obsolete
+- Need single source of truth
+
+---
+
+## Status Summary
+
+| Document | Status | Action |
+|----------|--------|--------|
+| STAGING.md | ✅ Current | Keep updated |
+| MAYBE.md | ✅ Current | Add completed work |
+| MIGRATION.md | ✅ Current | Document stale info |
+| MAINTENANCE.md | ✅ Current | Reference only |
+| INDEX.md | ✅ Updated | Update quarterly |
+| QUICK_REFERENCE.md | ⚠️ Outdated | Update or delete |
+| FROZEN_CONFIG_ROADMAP.md | ⚠️ Partial | Verify & update |
+| PIPELINE_INVESTIGATION.md | ⚠️ Outdated | Archive or delete |
+
+---
+
+---
+
+## Parameter Audit (2026-01-27)
+
+### Critical Findings
+
+⚠️ **5 CRITICAL PARAMETER MISMATCHES DISCOVERED**
+
+Comprehensive audit found **13 parameters defined in multiple locations**, with **5 having conflicting default values**. See [PARAMETER_AUDIT.md](PARAMETER_AUDIT.md) for full details.
+
+**Priority 1 Issues** (conflicting defaults):
+1. `learning_rate`: OptimizerConfig (0.005) vs BaseTrainingConfig (0.003)
+2. `epochs/max_epochs`: DEFAULT_MODEL_ARGS (50) vs BaseTrainingConfig (400) - 8x difference
+3. `replay_buffer_size`: DQNConfig (100000) vs DEFAULT_MODEL_ARGS (10000) - 10x difference
+4. `weight_decay`: BaseTrainingConfig (0.0001) vs DEFAULT_MODEL_ARGS (0.0)
+5. `patience`: BaseTrainingConfig (100) vs DEFAULT_MODEL_ARGS (10) - 10x difference
+
+**Priority 2 Issues** (consistent but duplicated):
+- `batch_size`: 3 locations
+- `optimize_batch_size`: 3 locations (fixed by __post_init__, still duplicated)
+- `gradient_checkpointing`: 3 locations
+
+**Action Items**: See TODO list for tracking resolution of each mismatch.
+
+---
+
+**Last Updated**: 2026-01-27
+**Maintainer**: Claude Code + User

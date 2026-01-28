@@ -181,7 +181,7 @@ class DatasetHandler:
 
         # Try standard structure first
         if os.path.exists(train_root):
-            dataset = graph_creation(train_root, folder_type='training_',
+            dataset = graph_creation(train_root, folder_type='train_',
                                     id_mapping=self.id_mapping, window_size=100)
             combined_dataset.extend(dataset)
 
@@ -190,7 +190,7 @@ class DatasetHandler:
             if folder.startswith('train_') and '_' not in folder.split('_', 1)[1] if len(folder.split('_')) > 1 else False:
                 folder_path = os.path.join(self.config.root_folder, folder)
                 if os.path.isdir(folder_path):
-                    dataset = graph_creation(folder_path, folder_type='training_',
+                    dataset = graph_creation(folder_path, folder_type='train_',
                                             id_mapping=self.id_mapping, window_size=100)
                     combined_dataset.extend(dataset)
 
