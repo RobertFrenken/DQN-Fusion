@@ -7,6 +7,8 @@
 #SBATCH --account=PAS3209
 #SBATCH --partition=gpu
 #SBATCH --chdir=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT
+#SBATCH --mail-type=END,FAIL
+#SBATCH --mail-user=firstname.lastname@osc.edu
 
 # TEST: Run counter + Batch size config implementation
 # Fast test with 10 epochs to verify:
