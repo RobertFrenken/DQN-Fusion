@@ -357,23 +357,26 @@ class FusionTrainer:
         # Use SLURM allocation or default to 8 workers
         slurm_cpus = os.environ.get('SLURM_CPUS_PER_TASK') or os.environ.get('SLURM_CPUS_ON_NODE')
         num_workers = int(slurm_cpus) if slurm_cpus else min(os.cpu_count() or 1, 8)
-        
+        mp_ctx = "spawn" if num_workers > 0 else None
+
         fusion_train_loader = DataLoader(
             train_dataset,
             batch_size=fusion_cfg.fusion_batch_size,
             shuffle=True,
             num_workers=num_workers,
             pin_memory=torch.cuda.is_available(),
-            persistent_workers=num_workers > 0
+            persistent_workers=num_workers > 0,
+            multiprocessing_context=mp_ctx,
         )
-        
+
         fusion_val_loader = DataLoader(
             val_dataset,
             batch_size=fusion_cfg.fusion_batch_size,
             shuffle=False,
             num_workers=num_workers,
             pin_memory=torch.cuda.is_available(),
-            persistent_workers=num_workers > 0
+            persistent_workers=num_workers > 0,
+            multiprocessing_context=mp_ctx,
         )
         
         logger.info(f"✓ Fusion dataloaders created (batch size: {fusion_cfg.fusion_batch_size})")

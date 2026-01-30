@@ -35,6 +35,12 @@ from src.paths import PathResolver
 
 logger = logging.getLogger(__name__)
 
+# Default multiprocessing start method for DataLoader workers.
+# 'spawn' is required when CUDA is initialized before DataLoader workers
+# are created (e.g. difficulty scoring in curriculum stage). 'fork' will
+# crash with "Cannot re-initialize CUDA in forked subprocess".
+DEFAULT_MP_CONTEXT = "spawn"
+
 
 # ============================================================================
 # Standard DataModule
@@ -43,45 +49,52 @@ logger = logging.getLogger(__name__)
 class CANGraphDataModule(pl.LightningDataModule):
     """
     Standard Lightning DataModule for CAN graph training.
-    
+
     Used for normal training modes (GAT, VGAE, DQN).
     Provides efficient batch loading with PyTorch Geometric DataLoader.
     """
-    
-    def __init__(self, train_dataset, val_dataset, batch_size: int, num_workers: int = 8):
+
+    def __init__(self, train_dataset, val_dataset, batch_size: int, num_workers: int = 8,
+                 mp_start_method: str = DEFAULT_MP_CONTEXT):
         """
         Initialize standard datamodule.
-        
+
         Args:
             train_dataset: Training dataset
             val_dataset: Validation dataset
             batch_size: Batch size for training
             num_workers: Number of dataloader workers
+            mp_start_method: Multiprocessing start method ('spawn' for CUDA safety)
         """
         super().__init__()
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.batch_size = batch_size
         self.num_workers = num_workers
+        self.mp_start_method = mp_start_method
 
     def train_dataloader(self):
+        nw = self.num_workers
         return DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.num_workers,
+            num_workers=nw,
             pin_memory=torch.cuda.is_available(),
-            persistent_workers=self.num_workers > 0
+            persistent_workers=nw > 0,
+            multiprocessing_context=self.mp_start_method if nw > 0 else None,
         )
 
     def val_dataloader(self):
+        nw = self.num_workers
         return DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.num_workers,
+            num_workers=nw,
             pin_memory=torch.cuda.is_available(),
-            persistent_workers=self.num_workers > 0
+            persistent_workers=nw > 0,
+            multiprocessing_context=self.mp_start_method if nw > 0 else None,
         )
 
 
@@ -337,25 +350,26 @@ class AdaptiveGraphDataset(Dataset):
 class EnhancedCANGraphDataModule(pl.LightningDataModule):
     """
     Enhanced DataModule with curriculum learning and hard mining.
-    
+
     Used for curriculum training mode with progressive difficulty increase.
     Integrates AdaptiveGraphDataset for dynamic sampling.
     """
     
     def __init__(
-        self, 
-        train_normal: List, 
+        self,
+        train_normal: List,
         train_attack: List,
-        val_normal: List, 
+        val_normal: List,
         val_attack: List,
-        vgae_model=None, 
-        batch_size: int = 32, 
+        vgae_model=None,
+        batch_size: int = 32,
         num_workers: int = 4,
-        total_epochs: int = 200
+        total_epochs: int = 200,
+        mp_start_method: str = DEFAULT_MP_CONTEXT,
     ):
         """
         Initialize enhanced datamodule.
-        
+
         Args:
             train_normal: Normal training graphs
             train_attack: Attack training graphs
@@ -369,12 +383,13 @@ class EnhancedCANGraphDataModule(pl.LightningDataModule):
         super().__init__()
         self.train_normal = train_normal
         self.train_attack = train_attack
-        self.val_normal = val_normal  
+        self.val_normal = val_normal
         self.val_attack = val_attack
         self.vgae_model = vgae_model
         self.batch_size = batch_size
         self.num_workers = num_workers
         self.total_epochs = total_epochs
+        self.mp_start_method = mp_start_method
         
         # Create adaptive datasets
         self.train_dataset = AdaptiveGraphDataset(
@@ -468,29 +483,33 @@ class EnhancedCANGraphDataModule(pl.LightningDataModule):
         logger.info(f"   Expected batches: {len(self.train_dataset) // self.batch_size + (1 if len(self.train_dataset) % self.batch_size else 0)}")
         logger.info(f"   Num workers: {self.num_workers}")
 
+        nw = self.num_workers
         dataloader = DataLoader(
             self.train_dataset,
             batch_size=self.batch_size,
             shuffle=True,
-            num_workers=self.num_workers,
-            collate_fn=self._collate_graphs
+            num_workers=nw,
+            collate_fn=self._collate_graphs,
+            multiprocessing_context=self.mp_start_method if nw > 0 else None,
         )
 
         logger.info(f"   Actual batches (len(dataloader)): {len(dataloader)}")
         return dataloader
-    
+
     def val_dataloader(self):
         logger.info(f"🔍 Creating val dataloader:")
         logger.info(f"   Dataset length: {len(self.val_dataset)}")
         logger.info(f"   Batch size: {self.batch_size}")
         logger.info(f"   Expected batches: {len(self.val_dataset) // self.batch_size + (1 if len(self.val_dataset) % self.batch_size else 0)}")
 
+        nw = self.num_workers
         dataloader = DataLoader(
             self.val_dataset,
             batch_size=self.batch_size,
             shuffle=False,
-            num_workers=self.num_workers,
-            collate_fn=self._collate_graphs
+            num_workers=nw,
+            collate_fn=self._collate_graphs,
+            multiprocessing_context=self.mp_start_method if nw > 0 else None,
         )
 
         logger.info(f"   Actual batches (len(dataloader)): {len(dataloader)}")
@@ -703,42 +722,47 @@ def load_dataset(
 
 
 def create_dataloaders(
-    train_dataset, 
-    val_dataset, 
-    batch_size: int, 
-    num_workers: int = 8
+    train_dataset,
+    val_dataset,
+    batch_size: int,
+    num_workers: int = 8,
+    mp_start_method: str = DEFAULT_MP_CONTEXT,
 ) -> Tuple[DataLoader, DataLoader]:
     """
     Create optimized PyTorch Geometric dataloaders.
-    
+
     Args:
         train_dataset: Training dataset
         val_dataset: Validation dataset
         batch_size: Batch size
         num_workers: Number of workers
-        
+        mp_start_method: Multiprocessing start method ('spawn' for CUDA safety)
+
     Returns:
         Tuple of (train_loader, val_loader)
     """
+    mp_ctx = mp_start_method if num_workers > 0 else None
     train_loader = DataLoader(
         train_dataset,
         batch_size=batch_size,
         shuffle=True,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
-        persistent_workers=num_workers > 0
+        persistent_workers=num_workers > 0,
+        multiprocessing_context=mp_ctx,
     )
-    
+
     val_loader = DataLoader(
         val_dataset,
         batch_size=batch_size,
         shuffle=False,
         num_workers=num_workers,
         pin_memory=torch.cuda.is_available(),
-        persistent_workers=num_workers > 0
+        persistent_workers=num_workers > 0,
+        multiprocessing_context=mp_ctx,
     )
-    
-    logger.info(f"Created dataloaders with {num_workers} workers")
+
+    logger.info(f"Created dataloaders with {num_workers} workers (mp_context={mp_start_method})")
     return train_loader, val_loader
 
 

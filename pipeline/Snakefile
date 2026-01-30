@@ -1,0 +1,252 @@
+# ===========================================================================
+# KD-GAT Pipeline Orchestration
+#
+# Path layout: {EXP}/{MODALITY}/{ds}/{size}/{learning}/{arch}/{distill}/{mode}
+#
+# Run:  snakemake -s pipeline/Snakefile --profile profiles/slurm --jobs 20
+# Dry:  snakemake -s pipeline/Snakefile -n
+# DAG:  snakemake -s pipeline/Snakefile --dag | dot -Tpdf > dag.pdf
+# ===========================================================================
+
+DATASETS  = ["hcrl_ch", "hcrl_sa", "set_01", "set_02", "set_03", "set_04"]
+EXP       = "experimentruns"
+MOD       = "automotive"
+CLI       = "/users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pipeline.cli"
+
+# Helper: build canonical path segment
+# {EXP}/{MOD}/{ds}/{size}/{learn}/{arch}/{distill}/{mode}/best_model.pt
+def _p(ds, size, learn, arch, distill, mode):
+    return f"{EXP}/{MOD}/{ds}/{size}/{learn}/{arch}/{distill}/{mode}/best_model.pt"
+
+# ---------------------------------------------------------------------------
+# Targets
+# ---------------------------------------------------------------------------
+
+rule all:
+    input:
+        # Teacher pipeline
+        expand(_p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"), ds=DATASETS),
+        # Student with KD
+        expand(_p("{ds}", "student", "rl_fusion", "dqn", "distilled", "fusion"), ds=DATASETS),
+        # Student without KD (ablation)
+        expand(_p("{ds}", "student", "rl_fusion", "dqn", "no_distillation", "fusion"), ds=DATASETS),
+
+rule teachers:
+    input:
+        expand(_p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"), ds=DATASETS),
+
+rule students:
+    input:
+        expand(_p("{ds}", "student", "rl_fusion", "dqn", "distilled", "fusion"), ds=DATASETS),
+
+rule students_nokd:
+    input:
+        expand(_p("{ds}", "student", "rl_fusion", "dqn", "no_distillation", "fusion"), ds=DATASETS),
+
+# ---------------------------------------------------------------------------
+# SLURM resource defaults
+# ---------------------------------------------------------------------------
+
+_TRAIN_RES = dict(
+    time_min=360, mem_mb=64000, cpus_per_task=16, gpus=1, gpu_type="v100",
+    slurm_account="PAS3209", slurm_partition="gpu",
+)
+_EVAL_RES = dict(
+    time_min=60, mem_mb=32000, cpus_per_task=8, gpus=1, gpu_type="v100",
+    slurm_account="PAS3209", slurm_partition="gpu",
+)
+
+# ===========================================================================
+# Teacher pipeline  (no KD dependencies, runs first)
+# ===========================================================================
+
+rule vgae_teacher:
+    output:
+        _p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+    resources: **_TRAIN_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/teacher/unsupervised/vgae/no_distillation/autoencoder/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/teacher/unsupervised/vgae/no_distillation/autoencoder/slurm.err",
+    shell:
+        CLI + " autoencoder --preset vgae,teacher --dataset {wildcards.ds}"
+        " > {log.out} 2> {log.err}"
+
+rule gat_teacher:
+    input:
+        vgae=_p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+    output:
+        _p("{ds}", "teacher", "supervised", "gat", "no_distillation", "curriculum"),
+    resources: **_TRAIN_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/teacher/supervised/gat/no_distillation/curriculum/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/teacher/supervised/gat/no_distillation/curriculum/slurm.err",
+    shell:
+        CLI + " curriculum --preset gat,teacher --dataset {wildcards.ds}"
+        " > {log.out} 2> {log.err}"
+
+rule dqn_teacher:
+    input:
+        vgae=_p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+        gat=_p("{ds}", "teacher", "supervised", "gat", "no_distillation", "curriculum"),
+    output:
+        _p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"),
+    resources: **_TRAIN_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/teacher/rl_fusion/dqn/no_distillation/fusion/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/teacher/rl_fusion/dqn/no_distillation/fusion/slurm.err",
+    shell:
+        CLI + " fusion --preset dqn,teacher --dataset {wildcards.ds}"
+        " > {log.out} 2> {log.err}"
+
+# ===========================================================================
+# Student with KD  (each stage depends on teacher counterpart)
+# ===========================================================================
+
+rule vgae_student:
+    input:
+        teacher=_p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+    output:
+        _p("{ds}", "student", "unsupervised", "vgae", "distilled", "autoencoder"),
+    resources: **_TRAIN_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/student/unsupervised/vgae/distilled/autoencoder/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/student/unsupervised/vgae/distilled/autoencoder/slurm.err",
+    shell:
+        CLI + " autoencoder --preset vgae,student --dataset {wildcards.ds}"
+        " --teacher-path {input.teacher}"
+        " > {log.out} 2> {log.err}"
+
+rule gat_student:
+    input:
+        teacher=_p("{ds}", "teacher", "supervised", "gat", "no_distillation", "curriculum"),
+        vgae=_p("{ds}", "student", "unsupervised", "vgae", "distilled", "autoencoder"),
+    output:
+        _p("{ds}", "student", "supervised", "gat", "distilled", "curriculum"),
+    resources: **_TRAIN_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/student/supervised/gat/distilled/curriculum/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/student/supervised/gat/distilled/curriculum/slurm.err",
+    shell:
+        CLI + " curriculum --preset gat,student --dataset {wildcards.ds}"
+        " --teacher-path {input.teacher}"
+        " > {log.out} 2> {log.err}"
+
+rule dqn_student:
+    input:
+        teacher=_p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"),
+        vgae=_p("{ds}", "student", "unsupervised", "vgae", "distilled", "autoencoder"),
+        gat=_p("{ds}", "student", "supervised", "gat", "distilled", "curriculum"),
+    output:
+        _p("{ds}", "student", "rl_fusion", "dqn", "distilled", "fusion"),
+    resources: **_TRAIN_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/student/rl_fusion/dqn/distilled/fusion/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/student/rl_fusion/dqn/distilled/fusion/slurm.err",
+    shell:
+        CLI + " fusion --preset dqn,student --dataset {wildcards.ds}"
+        " --teacher-path {input.teacher}"
+        " > {log.out} 2> {log.err}"
+
+# ===========================================================================
+# Student without KD  (ablation — no teacher dependency)
+# ===========================================================================
+
+rule vgae_student_nokd:
+    output:
+        _p("{ds}", "student", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+    resources: **_TRAIN_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/student/unsupervised/vgae/no_distillation/autoencoder/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/student/unsupervised/vgae/no_distillation/autoencoder/slurm.err",
+    shell:
+        CLI + " autoencoder --preset vgae,student --dataset {wildcards.ds}"
+        " --use-kd false"
+        " > {log.out} 2> {log.err}"
+
+rule gat_student_nokd:
+    input:
+        vgae=_p("{ds}", "student", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+    output:
+        _p("{ds}", "student", "supervised", "gat", "no_distillation", "curriculum"),
+    resources: **_TRAIN_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/student/supervised/gat/no_distillation/curriculum/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/student/supervised/gat/no_distillation/curriculum/slurm.err",
+    shell:
+        CLI + " curriculum --preset gat,student --dataset {wildcards.ds}"
+        " --use-kd false"
+        " > {log.out} 2> {log.err}"
+
+rule dqn_student_nokd:
+    input:
+        vgae=_p("{ds}", "student", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+        gat=_p("{ds}", "student", "supervised", "gat", "no_distillation", "curriculum"),
+    output:
+        _p("{ds}", "student", "rl_fusion", "dqn", "no_distillation", "fusion"),
+    resources: **_TRAIN_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/student/rl_fusion/dqn/no_distillation/fusion/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/student/rl_fusion/dqn/no_distillation/fusion/slurm.err",
+    shell:
+        CLI + " fusion --preset dqn,student --dataset {wildcards.ds}"
+        " --use-kd false"
+        " > {log.out} 2> {log.err}"
+
+# ===========================================================================
+# Evaluation  (one rule per pipeline variant)
+# ===========================================================================
+
+rule eval_teacher:
+    input:
+        vgae=_p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+        gat=_p("{ds}", "teacher", "supervised", "gat", "no_distillation", "curriculum"),
+        dqn=_p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"),
+    output:
+        EXP + "/" + MOD + "/{ds}/teacher/evaluation/eval/no_distillation/evaluation/metrics.json",
+    resources: **_EVAL_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/teacher/evaluation/eval/no_distillation/evaluation/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/teacher/evaluation/eval/no_distillation/evaluation/slurm.err",
+    shell:
+        CLI + " evaluation --dataset {wildcards.ds} --model-size teacher"
+        " > {log.out} 2> {log.err}"
+
+rule eval_student:
+    input:
+        vgae=_p("{ds}", "student", "unsupervised", "vgae", "distilled", "autoencoder"),
+        gat=_p("{ds}", "student", "supervised", "gat", "distilled", "curriculum"),
+        dqn=_p("{ds}", "student", "rl_fusion", "dqn", "distilled", "fusion"),
+    output:
+        EXP + "/" + MOD + "/{ds}/student/evaluation/eval/distilled/evaluation/metrics.json",
+    resources: **_EVAL_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/student/evaluation/eval/distilled/evaluation/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/student/evaluation/eval/distilled/evaluation/slurm.err",
+    shell:
+        CLI + " evaluation --dataset {wildcards.ds} --model-size student --use-kd true"
+        " > {log.out} 2> {log.err}"
+
+rule eval_student_nokd:
+    input:
+        vgae=_p("{ds}", "student", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+        gat=_p("{ds}", "student", "supervised", "gat", "no_distillation", "curriculum"),
+        dqn=_p("{ds}", "student", "rl_fusion", "dqn", "no_distillation", "fusion"),
+    output:
+        EXP + "/" + MOD + "/{ds}/student/evaluation/eval/no_distillation/evaluation/metrics.json",
+    resources: **_EVAL_RES,
+    log:
+        out=EXP + "/" + MOD + "/{ds}/student/evaluation/eval/no_distillation/evaluation/slurm.out",
+        err=EXP + "/" + MOD + "/{ds}/student/evaluation/eval/no_distillation/evaluation/slurm.err",
+    shell:
+        CLI + " evaluation --dataset {wildcards.ds} --model-size student"
+        " > {log.out} 2> {log.err}"
+
+# ---------------------------------------------------------------------------
+# Utilities
+# ---------------------------------------------------------------------------
+
+rule clean_logs:
+    shell: "find {EXP} -name 'slurm.*' -delete"
+
+rule clean_all:
+    shell: "rm -rf {EXP}"

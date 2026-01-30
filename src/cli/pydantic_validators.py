@@ -1,12 +1,5 @@
 """
 Pydantic validators for CAN-Graph CLI configuration.
-
-Implements design principles from DESIGN_PRINCIPLES.md:
-- PRINCIPLE 1: All folder structure parameters must be explicit in CLI
-- PRINCIPLE 8: Dependency schema with fail-early prerequisite checking
-
-Enforces P→Q validation rules from parameters/required_cli.yaml and
-parameters/dependencies.yaml.
 """
 
 from pathlib import Path
@@ -443,35 +436,6 @@ class CANGraphCLIConfig(BaseModel):
             errors.append(str(e))
 
         return errors
-
-
-# ============================================================================
-# Utility Functions
-# ============================================================================
-
-def load_parameter_bible() -> Dict[str, Any]:
-    """Load parameter bible from YAML file."""
-    bible_path = Path(__file__).parent.parent.parent / "parameters" / "required_cli.yaml"
-
-    if not bible_path.exists():
-        logger.warning(f"Parameter bible not found at {bible_path}")
-        return {}
-
-    with open(bible_path, 'r') as f:
-        return yaml.safe_load(f)
-
-
-def load_dependency_schema() -> Dict[str, Any]:
-    """Load dependency schema from YAML file."""
-    schema_path = Path(__file__).parent.parent.parent / "parameters" / "dependencies.yaml"
-
-    if not schema_path.exists():
-        logger.warning(f"Dependency schema not found at {schema_path}")
-        return {}
-
-    with open(schema_path, 'r') as f:
-        return yaml.safe_load(f)
-
 
 def validate_cli_config(
     model: str,

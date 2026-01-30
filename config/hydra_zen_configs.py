@@ -12,79 +12,176 @@ import logging
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class BatchSizeSafetyConfig:
+    """Safety Factor for Graph Data Batch Size"""
+
+    hcrl_ch: 0.6
+    hcrl_sa: 0.55
+    set_01: 0.55
+    set_02: 0.35
+    set_03: 0.35
+    set_04: 0.35
+
+    hcrl_ch_kd: 0.45
+    hcrl_sa_kd: 0.41
+    set_01_kd: 0.41
+    set_02_kd: 0.26
+    set_03_kd: 0.26
+    set_04_kd: 0.26
 
 # ============================================================================
 # Base Configuration Classes
 # ============================================================================
-
 @dataclass
-class OptimizerConfig:
-    """Optimizer configuration."""
-    name: str = "adam"
-    lr: float = 0.005
+class TrainingConfigBase:
+
+    accelerator: str = "auto"
+    devices: str = "auto"
+    precision: str = "32-true"
+    max_epochs: int = 400
+    gradient_clip_val: float = 1.0
+    log_every_n_steps: int = 50
+    enable_checkpointing: bool = True
+    enable_progress_bar: bool = True
+    num_sanity_val_steps: int = 2
+    """Base training configuration."""
+    mode: str = "normal"
+    max_epochs: int = 500
+    batch_size: int = 512
+    learning_rate: float = 0.003
     weight_decay: float = 0.0001
-    momentum: float = 0.9  # For SGD
+    momentum: float = 0.9
 
-
-@dataclass
-class SchedulerConfig:
     """Learning rate scheduler configuration."""
     use_scheduler: bool = False
     scheduler_type: str = "cosine"
     params: Dict[str, Any] = field(default_factory=lambda: {"T_max": 100})
 
 
-@dataclass
-class MemoryOptimizationConfig:
     """Memory optimization settings."""
     use_teacher_cache: bool = True
     clear_cache_every_n_steps: int = 100
     offload_teacher_to_cpu: bool = False
     gradient_checkpointing: bool = True  # Enabled by default for GNN memory efficiency
 
-
-@dataclass
-class BatchSizeConfig:
-    """Batch size tuning and optimization settings.
-
-    Policy:
-    - On first run: tuned_batch_size=None, uses default_batch_size
-    - During tuning: if optimize_batch_size=true:
-        run_batch_size = floor(tuner_output * safety_factor)
-    - After success: update tuned_batch_size = run_batch_size in frozen config
-    - On next run: uses tuned_batch_size from previous successful run
-
-    Each frozen config is independent with pre-set safety_factor:
-    - Standard/Normal: 0.55
-    - Curriculum: 0.90 (VGAE scoring needs headroom)
-    - Knowledge Distillation: 0.75 (teacher model overhead)
-    """
-
+    """Batch size tuning and optimization settings."""
     default_batch_size: int = 64
-    """Initial batch size if tuned_batch_size is None."""
-
     tuned_batch_size: Optional[int] = None
-    """Batch size confirmed working from previous successful run.
-
-    Updated by trainer after successful training.
-    Used by next run as starting point.
-    """
-
     safety_factor: float = 0.5
-    """Multiply tuner output by this factor.
-
-    run_batch_size = floor(tuner_output * safety_factor)
-    Pre-set when creating frozen config based on run type.
-    """
 
     optimize_batch_size: bool = False
-    """Run batch size tuner before training."""
-
     batch_size_mode: str = "binsearch"
-    """Tuning strategy: 'power' or 'binsearch'."""
-
     max_batch_size_trials: int = 10
-    """Maximum batch size tuning trials."""
+
+    # Training behavior
+    early_stopping_patience: int = 100  # Increased for more robust training
+    gradient_clip_val: float = 1.0
+    accumulate_grad_batches: int = 1
+
+    # Hardware optimization
+    precision: str = "32-true"
+    find_unused_parameters: bool = False
+
+
+    use_adaptive_batch_size_factor: bool = True  # Enable adaptive learning (recommended)
+    graph_memory_safety_factor: Optional[float] = None  # None = use JSON file or auto-select
+
+    # Evaluation
+    run_test: bool = True
+    test_every_n_epochs: int = 5
+
+    # Checkpointing
+    save_top_k: int = 3
+    monitor_metric: str = "val_loss"
+    monitor_mode: str = "min"
+
+    # Logging
+    log_every_n_steps: int = 50
+    save_hyperparameters: bool = True
+
+    # Reproducibility and validation
+    seed: Optional[int] = None
+    deterministic_training: bool = True
+    cudnn_benchmark: bool = False
+    # Automatically validate saved artifacts after training (torch.load weights_only) and write sanitized copies if needed
+    validate_artifacts: bool = True
+
+    use_knowledge_distillation: bool = False  # Toggle KD on/off
+    teacher_model_path: Optional[str] = None  # Path to teacher .pth or .ckpt file
+    distillation_temperature: float = 4.0     # Temperature for soft labels (higher = softer)
+    distillation_alpha: float = 0.7 
+    
+    """Autoencoder training configuration."""
+    mode: str = "autoencoder"
+    description: str = "Unsupervised autoencoder training on normal samples only"
+    max_epochs: int = 400
+    learning_rate: float = 0.002
+    batch_size: int = 64  # Starting point for Lightning Tuner
+    reconstruction_loss: str = "mse"
+    use_normal_samples_only: bool = True
+    early_stopping_patience: int = 100 
+    
+    
+    """Knowledge distillation training configuration."""
+    mode: str = "knowledge_distillation"
+    description: str = "Knowledge distillation from teacher to student model"
+
+    # Distillation specific
+    teacher_model_path: Optional[str] = None
+    distillation_temperature: float = 4.0
+    distillation_alpha: float = 0.7
+    student_model_scale: float = 1.0
+
+    # Adjusted defaults for distillation
+    max_epochs: int = 400
+    batch_size: int = 64  # Starting point for Lightning Tuner
+    learning_rate: float = 0.002
+    precision: str = "16-mixed"
+    accumulate_grad_batches: int = 2
+
+    # Note: memory_optimization now inherited from BaseTrainingConfig
+
+    # Enhanced monitoring for distillation
+    log_teacher_student_comparison: bool = True
+    compare_with_teacher: bool = True
+    
+    # More conservative batch size optimization
+    optimize_batch_size: bool = True
+    max_batch_size_trials: int = 15
+
+@dataclass
+class EvaluationTrainingConfig(BaseTrainingConfig):
+    """Evaluation configuration to run comprehensive evaluation pipelines."""
+    mode: str = "evaluation"
+    description: str = "Run comprehensive evaluation (student & teacher) and save reports"
+
+    # Optional explicit model paths (if not provided, will use hierarchical defaults)
+    autoencoder_path: Optional[str] = None
+    classifier_path: Optional[str] = None
+    threshold_path: Optional[str] = None
+
+    # Execution options
+    device: str = "cuda"  # 'cuda' or 'cpu' or 'auto'
+    optimize_thresholds: bool = True
+    threshold_methods: List[str] = field(default_factory=lambda: ["anomaly_only", "two_stage"])
+
+    # Reporting & plotting
+    save_report_dir: str = "outputs/evaluation"
+    save_plots: bool = True
+    save_plots_dir: str = "outputs/workbench_plots"
+    plot_examples: int = 3  # Number of example graphs to plot for visualizations
+
+    # MLflow options
+    use_mlflow: bool = True
+    mlflow_experiment_name: Optional[str] = None  # override experiment name if desired
+
+    metrics: List[str] = field(default_factory=lambda: ["accuracy", "precision", "recall", "f1", "roc_auc"])
+    evaluate_student: bool = True
+    evaluate_teacher: bool = True
+    run_on_test: bool = True
+    batch_size: Optional[int] = None
+    memory_strength: float = 0.1          # EWC regularization strength
 
 
 # ============================================================================
@@ -308,144 +405,12 @@ class CANDatasetConfig(BaseDatasetConfig):
 # ============================================================================
 # Training Configurations
 # ============================================================================
-
-@dataclass
-class BaseTrainingConfig:
-    """Base training configuration."""
-    mode: str = "normal"
-    max_epochs: int = 400
-    batch_size: int = 64  # Starting point for Lightning Tuner
-    learning_rate: float = 0.003
-    weight_decay: float = 0.0001
-
-    # Optimization
-    optimizer: OptimizerConfig = field(default_factory=OptimizerConfig)
-    scheduler: SchedulerConfig = field(default_factory=SchedulerConfig)
-
-    # Training behavior
-    early_stopping_patience: int = 100  # Increased for more robust training
-    gradient_clip_val: float = 1.0
-    accumulate_grad_batches: int = 1
-
-    # Hardware optimization
-    precision: str = "32-true"
-    find_unused_parameters: bool = False
-
-    # Memory optimization (now available for ALL training modes)
-    # Gradient checkpointing is critical for preventing OOM on large datasets
-    memory_optimization: MemoryOptimizationConfig = field(default_factory=MemoryOptimizationConfig)
-
-    # Lightning Tuner - enabled for optimal batch size
-    optimize_batch_size: bool = True
-    batch_size_mode: str = "binsearch"  # More precise than 'power' mode
-    max_batch_size_trials: int = 10
-
-    # Graph data memory safety factor - ADAPTIVE LEARNING SYSTEM
-    # Graph operations have hidden memory overhead from message passing, attention, etc.
-    # Tuner doesn't account for this, so we apply a safety factor to prevent OOM
-    #
-    # ADAPTIVE MODE (use_adaptive_batch_size_factor=True):
-    #   - System learns optimal factor for each dataset×model×mode combination
-    #   - Starts with experience-based initial factors (see adaptive_batch_size.py)
-    #   - Monitors actual memory usage during training
-    #   - Adjusts factor with momentum targeting 90% GPU utilization
-    #   - Handles OOM crashes by reducing factor before job dies
-    #   - Converges to optimal factor over multiple runs
-    #
-    # STATIC MODE (use_adaptive_batch_size_factor=False):
-    #   - Uses fixed graph_memory_safety_factor value
-    #   - Useful for debugging or when you want manual control
-    #
-    # Priority: 1) config/batch_size_factors.json, 2) graph_memory_safety_factor, 3) auto-select
-    use_adaptive_batch_size_factor: bool = True  # Enable adaptive learning (recommended)
-    graph_memory_safety_factor: Optional[float] = None  # None = use JSON file or auto-select
-
-    # Evaluation
-    run_test: bool = True
-    test_every_n_epochs: int = 5
-
-    # Checkpointing
-    save_top_k: int = 3
-    monitor_metric: str = "val_loss"
-    monitor_mode: str = "min"
-
-    # Logging
-    log_every_n_steps: int = 50
-    save_hyperparameters: bool = True
-
-    # Reproducibility and validation
-    seed: Optional[int] = None
-    deterministic_training: bool = True
-    cudnn_benchmark: bool = False
-    # Automatically validate saved artifacts after training (torch.load weights_only) and write sanitized copies if needed
-    validate_artifacts: bool = True
-
-    # ========================================================================
-    # Knowledge Distillation (toggle - orthogonal to training mode)
-    # ========================================================================
-    # KD can be applied to ANY training mode (autoencoder, curriculum, normal)
-    # except fusion (DQN uses already-distilled models)
-    #
-    # When enabled:
-    # - VGAE modes: distills both latent vectors and reconstructed features
-    # - GAT modes: distills soft labels with temperature scaling
-    # - Projection layer automatically added if teacher/student dims differ
-
-    use_knowledge_distillation: bool = False  # Toggle KD on/off
-    teacher_model_path: Optional[str] = None  # Path to teacher .pth or .ckpt file
-    distillation_temperature: float = 4.0     # Temperature for soft labels (higher = softer)
-    distillation_alpha: float = 0.7           # Weight: alpha*KD_loss + (1-alpha)*task_loss
-
-
-@dataclass
-class NormalTrainingConfig(BaseTrainingConfig):
-    """Normal training configuration."""
-    mode: str = "normal"
-    description: str = "Standard supervised training"
-
-
-@dataclass
-class AutoencoderTrainingConfig(BaseTrainingConfig):
-    """Autoencoder training configuration."""
-    mode: str = "autoencoder"
-    description: str = "Unsupervised autoencoder training on normal samples only"
-    max_epochs: int = 400
-    learning_rate: float = 0.002
-    batch_size: int = 64  # Starting point for Lightning Tuner
-    reconstruction_loss: str = "mse"
-    use_normal_samples_only: bool = True
-    early_stopping_patience: int = 100  # Longer patience for autoencoder convergence
+       # Weight: alpha*KD_loss + (1-alpha)*task_loss
 
 
 @dataclass
 class KnowledgeDistillationConfig(BaseTrainingConfig):
-    """Knowledge distillation training configuration."""
-    mode: str = "knowledge_distillation"
-    description: str = "Knowledge distillation from teacher to student model"
-
-    # Distillation specific
-    teacher_model_path: Optional[str] = None
-    distillation_temperature: float = 4.0
-    distillation_alpha: float = 0.7
-    student_model_scale: float = 1.0
-
-    # Adjusted defaults for distillation
-    max_epochs: int = 400
-    batch_size: int = 64  # Starting point for Lightning Tuner
-    learning_rate: float = 0.002
-    precision: str = "16-mixed"
-    accumulate_grad_batches: int = 2
-
-    # Note: memory_optimization now inherited from BaseTrainingConfig
-
-    # Enhanced monitoring for distillation
-    log_teacher_student_comparison: bool = True
-    compare_with_teacher: bool = True
     
-    # More conservative batch size optimization
-    optimize_batch_size: bool = True
-    max_batch_size_trials: int = 15
-
 
 @dataclass
 class StudentBaselineTrainingConfig(BaseTrainingConfig):
@@ -529,58 +494,6 @@ class CurriculumTrainingConfig(BaseTrainingConfig):
 
     # Memory preservation
     use_memory_preservation: bool = True  # Prevent catastrophic forgetting
-
-
-@dataclass
-class EvaluationTrainingConfig(BaseTrainingConfig):
-    """Evaluation configuration to run comprehensive evaluation pipelines."""
-    mode: str = "evaluation"
-    description: str = "Run comprehensive evaluation (student & teacher) and save reports"
-
-    # Optional explicit model paths (if not provided, will use hierarchical defaults)
-    autoencoder_path: Optional[str] = None
-    classifier_path: Optional[str] = None
-    threshold_path: Optional[str] = None
-
-    # Execution options
-    device: str = "cuda"  # 'cuda' or 'cpu' or 'auto'
-    optimize_thresholds: bool = True
-    threshold_methods: List[str] = field(default_factory=lambda: ["anomaly_only", "two_stage"])
-
-    # Reporting & plotting
-    save_report_dir: str = "outputs/evaluation"
-    save_plots: bool = True
-    save_plots_dir: str = "outputs/workbench_plots"
-    plot_examples: int = 3  # Number of example graphs to plot for visualizations
-
-    # MLflow options
-    use_mlflow: bool = True
-    mlflow_experiment_name: Optional[str] = None  # override experiment name if desired
-
-    metrics: List[str] = field(default_factory=lambda: ["accuracy", "precision", "recall", "f1", "roc_auc"])
-    evaluate_student: bool = True
-    evaluate_teacher: bool = True
-    run_on_test: bool = True
-    batch_size: Optional[int] = None
-    memory_strength: float = 0.1          # EWC regularization strength
-
-
-# ============================================================================
-# Lightning Trainer Configuration
-# ============================================================================
-
-@dataclass
-class TrainerConfig:
-    """PyTorch Lightning Trainer configuration."""
-    accelerator: str = "auto"
-    devices: str = "auto"
-    precision: str = "32-true"
-    max_epochs: int = 400
-    gradient_clip_val: float = 1.0
-    log_every_n_steps: int = 50
-    enable_checkpointing: bool = True
-    enable_progress_bar: bool = True
-    num_sanity_val_steps: int = 2
 
 
 # ============================================================================
@@ -831,54 +744,7 @@ class CANGraphConfigStore:
             self.store = store
             self._register_base_configs()
             self._register_presets()
-            CANGraphConfigStore._initialized = True
-    
-    def _register_base_configs(self):
-        """Register base configuration components."""
-        # Use try/except to handle cases where configs are already registered
-        configs_to_register = [
-            (GATConfig, "gat", "model"),  # Teacher GAT
-            (StudentGATConfig, "gat_student", "model"),  # Student GAT
-            (VGAEConfig, "vgae", "model"),  # Teacher VGAE
-            (StudentVGAEConfig, "vgae_student", "model"),  # Student VGAE
-            (DQNConfig, "dqn", "model"),  # Teacher DQN
-            (StudentDQNConfig, "dqn_student", "model"),  # Student DQN
-            (NormalTrainingConfig, "normal", "training"),
-            (AutoencoderTrainingConfig, "autoencoder", "training"),
-            (KnowledgeDistillationConfig, "knowledge_distillation", "training"),
-            (StudentBaselineTrainingConfig, "student_baseline", "training"),
-            (FusionTrainingConfig, "fusion", "training"),
-            (EvaluationTrainingConfig, "evaluation", "training"),
-            (TrainerConfig, "default", "trainer"),
-        ]
-        
-        for config_cls, name, group in configs_to_register:
-            try:
-                self.store(config_cls, name=name, group=group)
-            except ValueError as e:
-                # Config already registered, skip
-                if "already exists" not in str(e):
-                    raise
-    
-    def _register_presets(self):
-        """Register common preset configurations."""
-        # Dataset presets - CORRECT PATHS: data/automotive/{dataset}
-        datasets = {
-            "hcrl_sa": CANDatasetConfig(name="hcrl_sa", data_path="data/automotive/hcrl_sa"),
-            "hcrl_ch": CANDatasetConfig(name="hcrl_ch", data_path="data/automotive/hcrl_ch"),
-            "set_01": CANDatasetConfig(name="set_01", data_path="data/automotive/set_01"),
-            "set_02": CANDatasetConfig(name="set_02", data_path="data/automotive/set_02"),
-            "set_03": CANDatasetConfig(name="set_03", data_path="data/automotive/set_03"),
-            "set_04": CANDatasetConfig(name="set_04", data_path="data/automotive/set_04"),
-        }
-        
-        for name, config in datasets.items():
-            try:
-                self.store(config, name=name, group="dataset")
-            except ValueError as e:
-                # Config already registered, skip
-                if "already exists" not in str(e):
-                    raise
+            CANGraphConfigStore._initialized = True  
     
     def create_config(self, model_type: str = "gat", dataset_name: str = "hcrl_sa", 
                      training_mode: str = "normal", **overrides) -> CANGraphConfig:
@@ -961,35 +827,6 @@ class CANGraphConfigStore:
 # Convenience factory helpers for presets (used by CLI and tests)
 # ---------------------------------------------------------------------------
 
-def create_gat_normal_config(dataset: str, **overrides) -> CANGraphConfig:
-    """Create a standard GAT normal-training preset for `dataset`."""
-    store = CANGraphConfigStore()
-    return store.create_config(model_type="gat", dataset_name=dataset, training_mode="normal", **overrides)
-
-
-def create_distillation_config(dataset: str, student_model: str = "gat_student", student_scale: float = 1.0, teacher_model_path: Optional[str] = None, **overrides) -> CANGraphConfig:
-    """Create a knowledge-distillation preset. Optionally set `teacher_model_path` and student scale."""
-    store = CANGraphConfigStore()
-    cfg = store.create_config(model_type=student_model, dataset_name=dataset, training_mode="knowledge_distillation", **overrides)
-    # Apply teacher path/scale if provided
-    if teacher_model_path:
-        cfg.training.teacher_model_path = teacher_model_path
-    cfg.training.student_model_scale = student_scale
-    return cfg
-
-
-def create_autoencoder_config(dataset: str, **overrides) -> CANGraphConfig:
-    """Create an autoencoder (VGAE) preset for `dataset`."""
-    store = CANGraphConfigStore()
-    return store.create_config(model_type="vgae", dataset_name=dataset, training_mode="autoencoder", **overrides)
-
-
-def create_fusion_config(dataset: str, **overrides) -> CANGraphConfig:
-    """Create a fusion-training preset for `dataset`."""
-    store = CANGraphConfigStore()
-    return store.create_config(model_type="dqn", dataset_name=dataset, training_mode="fusion", **overrides)
-
-
 def create_curriculum_config(dataset: str, vgae_model_path: Optional[str] = None, **overrides) -> CANGraphConfig:
     """Create curriculum learning config for GAT with VGAE-guided hard mining.
     
@@ -1018,73 +855,245 @@ def create_curriculum_config(dataset: str, vgae_model_path: Optional[str] = None
     return cfg
 
 
+"""
+Example adapter code for train_with_hydra_zen.py to support Snakemake.
+
+This shows how to modify your training script to accept simple CLI arguments
+from Snakemake while maintaining backward compatibility with the frozen config
+system used by can-train.
+
+Add this code to your train_with_hydra_zen.py file.
+"""
+
+import argparse
+import sys
+from pathlib import Path
+
+
+def create_snakemake_parser():
+    """
+    Create simple argument parser for Snakemake invocation.
+
+    This parser accepts straightforward CLI arguments that Snakemake can easily
+    pass from the Snakefile, avoiding the complex bucket-based config system.
+    """
+    parser = argparse.ArgumentParser(
+        description='Train GNN models (Snakemake-compatible interface)'
+    )
+
+    # Core configuration
+    parser.add_argument(
+        '--model',
+        required=True,
+        choices=['vgae', 'gat', 'dqn'],
+        help='Model architecture'
+    )
+    parser.add_argument(
+        '--model-size',
+        required=True,
+        choices=['teacher', 'student'],
+        help='Model size variant'
+    )
+    parser.add_argument(
+        '--dataset',
+        required=True,
+        help='Dataset name (e.g., hcrl_sa, hcrl_ch)'
+    )
+    parser.add_argument(
+        '--modality',
+        required=True,
+        choices=['automotive', 'industrial', 'robotics'],
+        help='Application domain'
+    )
+    parser.add_argument(
+        '--training',
+        required=True,
+        choices=['autoencoder', 'curriculum', 'fusion', 'normal'],
+        help='Training strategy/mode'
+    )
+    parser.add_argument(
+        '--learning-type',
+        required=True,
+        choices=['supervised', 'unsupervised', 'rl_fusion'],
+        help='Learning paradigm'
+    )
+
+    # Paths for special modes
+    parser.add_argument(
+        '--teacher-path',
+        type=Path,
+        default=None,
+        help='Path to teacher model for knowledge distillation'
+    )
+    parser.add_argument(
+        '--vgae-path',
+        type=Path,
+        default=None,
+        help='Path to VGAE model for fusion'
+    )
+    parser.add_argument(
+        '--gat-path',
+        type=Path,
+        default=None,
+        help='Path to GAT model for fusion'
+    )
+
+    # Output configuration
+    parser.add_argument(
+        '--output-dir',
+        type=Path,
+        required=True,
+        help='Output directory for models and logs'
+    )
+
+    # Optional hyperparameters
+    parser.add_argument('--epochs', type=int, help='Number of training epochs')
+    parser.add_argument('--batch-size', type=int, help='Batch size')
+    parser.add_argument('--learning-rate', type=float, help='Learning rate')
+
+    return parser
+
+
+def build_config_from_simple_args(args):
+    """
+    Build full config object from simple Snakemake arguments.
+
+    This function translates the simple CLI arguments into whatever config
+    structure your training code expects. Adapt this to match your actual
+    config structure.
+
+    Args:
+        args: Parsed arguments from create_snakemake_parser()
+
+    Returns:
+        Config object suitable for train() function
+    """
+    # Example structure - adapt to your actual config format
+    config = {
+        'model': {
+            'type': args.model,
+            'size': args.model_size,
+        },
+        'dataset': {
+            'name': args.dataset,
+            'modality': args.modality,
+        },
+        'training': {
+            'mode': args.training,
+            'learning_type': args.learning_type,
+        },
+        'paths': {
+            'output_dir': args.output_dir,
+        },
+    }
+
+    # Add distillation config if teacher path provided
+    if args.teacher_path:
+        config['distillation'] = {
+            'enabled': True,
+            'teacher_path': args.teacher_path,
+        }
+
+    # Add fusion paths if provided
+    if args.vgae_path and args.gat_path:
+        config['fusion'] = {
+            'vgae_path': args.vgae_path,
+            'gat_path': args.gat_path,
+        }
+
+    # Add optional hyperparameters
+    if args.epochs:
+        config['training']['epochs'] = args.epochs
+    if args.batch_size:
+        config['training']['batch_size'] = args.batch_size
+    if args.learning_rate:
+        config['training']['learning_rate'] = args.learning_rate
+
+    return config
+
+
+def main():
+    """
+    Main entry point with dual-mode support.
+
+    Detects whether called from:
+    1. can-train CLI (legacy) → use frozen config
+    2. Snakemake (new) → use simple args
+    """
+
+    # Mode 1: Legacy frozen config path (from can-train)
+    if '--frozen-config' in sys.argv:
+        print("Running in LEGACY mode (frozen config from can-train)")
+        # Your existing frozen config loading code
+        # Example:
+        # from src.config.frozen_config import load_frozen_config
+        # config_path = sys.argv[sys.argv.index('--frozen-config') + 1]
+        # config = load_frozen_config(config_path)
+        # train(config)
+        pass
+
+    # Mode 2: New Snakemake mode (simple CLI args)
+    else:
+        print("Running in SNAKEMAKE mode (simple CLI arguments)")
+        parser = create_snakemake_parser()
+        args = parser.parse_args()
+
+        # Convert simple args to config
+        config = build_config_from_simple_args(args)
+
+        # Run training with config
+        # train(config)  # Your actual training function
+        print(f"Would train with config: {config}")
+
+
+if __name__ == '__main__':
+    main()
+
+
 # ============================================================================
-# Configuration Validation
+# Integration Instructions
 # ============================================================================
-#
-# NOTE: Deep validation logic has been consolidated into src/cli/validator.py
-# to avoid duplication across multiple modules. This module focuses on config
-# schema definitions only.
-#
-# Validation responsibilities are now separated:
-#   - pydantic_validators.py: CLI input validation, P→Q rules
-#   - config_builder.py: Bucket parsing, config construction
-#   - validator.py: ALL pre-flight validation (filesystem, artifacts, SLURM)
-#   - hydra_zen_configs.py: Config schema/dataclass definitions (THIS FILE)
-#
-# To validate a config, use:
-#   from src.cli.validator import validate_config
-#   result = validate_config(config, slurm_args)
-#   if not result.is_valid():
-#       raise ValidationError(result.format_report())
+"""
+To integrate this into your existing train_with_hydra_zen.py:
+
+1. Copy create_snakemake_parser() function
+2. Copy build_config_from_simple_args() function (adapt to your config format!)
+3. Modify your main() function to add the dual-mode detection:
+
+    def main():
+        if '--frozen-config' in sys.argv:
+            # Existing frozen config path
+            run_with_frozen_config()
+        else:
+            # New Snakemake path
+            parser = create_snakemake_parser()
+            args = parser.parse_args()
+            config = build_config_from_simple_args(args)
+            train(config)
+
+4. Test both modes:
+
+   # Old way (should still work)
+   python train_with_hydra_zen.py --frozen-config /path/to/config.json
+
+   # New way (for Snakemake)
+   python train_with_hydra_zen.py \
+       --model vgae \
+       --model-size teacher \
+       --dataset hcrl_sa \
+       --modality automotive \
+       --training autoencoder \
+       --learning-type unsupervised \
+       --output-dir test_output
+
+5. Verify model outputs:
+   - Models saved to: {output_dir}/models/{model}_{size}_{distillation}_best.pth
+   - Checkpoints saved to: {output_dir}/checkpoints/last.ckpt
+   - Logs saved to: {output_dir}/logs/training.log
+
+That's it! Your training script now works with both systems.
+"""
 
 
 # Initialize the global store
 config_store = CANGraphConfigStore()
-
-
-# ---------------------------------------------------------------------------
-# PyTorch safe-globals registration
-#
-# PyTorch >=2.6 may refuse to unpickle objects whose globals are not explicitly
-# allow-listed. Lightning's tuner writes temporary checkpoints that can include
-# references to our config dataclasses (e.g., `VGAEConfig`). Register the
-# fully-qualified names of our config classes as safe globals so `torch.load`
-# succeeds when loading tuner checkpoints on training nodes.
-# ---------------------------------------------------------------------------
-try:
-    safe_globals = [
-        "src.config.hydra_zen_configs.OptimizerConfig",
-        "src.config.hydra_zen_configs.SchedulerConfig",
-        "src.config.hydra_zen_configs.MemoryOptimizationConfig",
-        "src.config.hydra_zen_configs.GATConfig",
-        "src.config.hydra_zen_configs.StudentGATConfig",
-        "src.config.hydra_zen_configs.VGAEConfig",
-        "src.config.hydra_zen_configs.StudentVGAEConfig",
-        "src.config.hydra_zen_configs.DQNConfig",
-        "src.config.hydra_zen_configs.StudentDQNConfig",
-        "src.config.hydra_zen_configs.BaseDatasetConfig",
-        "src.config.hydra_zen_configs.CANDatasetConfig",
-        "src.config.hydra_zen_configs.BaseTrainingConfig",
-        "src.config.hydra_zen_configs.NormalTrainingConfig",
-        "src.config.hydra_zen_configs.AutoencoderTrainingConfig",
-        "src.config.hydra_zen_configs.KnowledgeDistillationConfig",
-        "src.config.hydra_zen_configs.StudentBaselineTrainingConfig",
-        "src.config.hydra_zen_configs.FusionAgentConfig",
-        "src.config.hydra_zen_configs.FusionTrainingConfig",
-        "src.config.hydra_zen_configs.CurriculumTrainingConfig",
-        "src.config.hydra_zen_configs.EvaluationTrainingConfig",
-        "src.config.hydra_zen_configs.TrainerConfig",
-        "src.config.hydra_zen_configs.CANGraphConfig",
-    ]
-
-    if hasattr(torch, "serialization") and hasattr(torch.serialization, "add_safe_globals"):
-        try:
-            torch.serialization.add_safe_globals(safe_globals)
-            logger.info("Registered PyTorch safe-globals for config dataclasses")
-        except Exception:
-            logger.exception("Failed to register safe-globals with torch.serialization.add_safe_globals")
-    else:
-        logger.debug("torch.serialization.add_safe_globals not available; skipping safe-globals registration")
-except Exception:
-    logger.exception("Unexpected error while attempting to register PyTorch safe-globals for config classes")

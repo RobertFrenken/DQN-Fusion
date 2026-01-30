@@ -1,158 +1,139 @@
 # CAN-Graph KD-GAT: Project Overview
 
-## Project Name & Purpose
-**CAN-Graph Knowledge Distillation GAT** - Transfer learning system for CAN bus anomaly detection using knowledge distillation from teacher models to lightweight student models.
+**Last Updated**: 2026-01-28
 
-## Core Architecture
+## Purpose
 
-### Three-Stage Pipeline
+Transfer learning system for CAN bus intrusion detection. Knowledge distillation compresses large teacher models (VGAE, GAT) into lightweight students, then a DQN fusion agent learns to combine their predictions.
+
+---
+
+## Pipeline Architecture
+
 ```
-Stage 1: VGAE          Stage 2: GAT             Stage 3: DQN
-Unsupervised           Supervised              Reinforcement Learning
-Autoencoder            Classification          Fusion Agent
-```
-
-### Model Sizing Strategy
-- **Teacher Models**: Larger, fully-featured versions for pretraining
-  - VGAE Teacher: `hidden_dims=[128, 128]`, `latent_dim=32`
-  - GAT Teacher: `hidden_channels=128`, 4 attention heads
-- **Student Models**: Compressed versions for KD training
-  - VGAE Student: `hidden_dims=[64, 64]`, `latent_dim=16`
-  - GAT Student: `hidden_channels=64`, 4 attention heads
-- Model size ALWAYS specified via `--training-strategyl-size {teacher|student}`
-
-### Dataset Organization
-```
-Datasets:
-- hcrl_ch:  Small dataset (~1,200 samples)
-- hcrl_sa:  Medium dataset (~10,000 samples)
-- set_01:   Small-medium dataset
-- set_02:   Large dataset (OOM risk)
-- set_03:   Large dataset (OOM risk)
-- set_04:   Large dataset (OOM risk)
+Stage 1: AUTOENCODER (VGAE)     Stage 2: CURRICULUM (GAT)     Stage 3: FUSION (DQN)
+Unsupervised reconstruction  →  Supervised classification   →  RL-based prediction fusion
+                                     ↑
+                              Stage 4: EVALUATION (all models)
 ```
 
-### Modality (Application Domain)
+**Entry point**: `python -m pipeline.cli <stage> [options]`
+
+### Pipeline Module (`pipeline/`)
+
+| File | Purpose |
+|------|---------|
+| `config.py` | `PipelineConfig` frozen dataclass — every tunable parameter in one place, JSON save/load, preset factory |
+| `paths.py` | `stage_dir()` canonical path layout, `checkpoint_path()`, `config_path()`, dataset list |
+| `stages.py` | All training logic: `train_autoencoder`, `train_curriculum`, `train_fusion`, `evaluate` |
+| `validate.py` | Config validation (dataset existence, KD consistency, numeric sanity) |
+| `cli.py` | Argument parser dispatching to `STAGE_FNS` |
+| `Snakefile` | Snakemake workflow definition for automated multi-stage runs |
+
+No Hydra, no Pydantic in the pipeline module — plain Python dataclasses and JSON.
+
+---
+
+## Models (`src/models/`)
+
+| Model | File | Role | Teacher / Student |
+|-------|------|------|-------------------|
+| `GraphAutoencoderNeighborhood` | `vgae.py` | Unsupervised graph reconstruction (continuous features + CAN ID + neighborhood) | Teacher: `(1024,512,96)` latent 96 / Student: `(80,40,16)` latent 16 |
+| `GATWithJK` | `models.py` | Supervised binary classification with Jumping Knowledge | Teacher: hidden 64, 5 layers, 8 heads / Student: hidden 24, 2 layers, 4 heads |
+| `EnhancedDQNFusionAgent` | `dqn.py` | DQN that selects fusion alpha from 15D state vector (VGAE+GAT features) | Teacher: hidden 576, 3 layers / Student: hidden 160, 2 layers |
+
+### 15D DQN State Space
+
 ```
---modality {automotive, industrial, robotics}
-```
-REQUIRED for all CLI commands. Affects data loading and result paths.
-
-## Knowledge Distillation Strategy
-
-### KD as Orthogonal Toggle (NOT a training mode)
-- KD is INDEPENDENT from training mode
-- Can combine with: `autoencoder`, `curriculum`, `normal` modes
-- CANNOT combine with: `fusion` mode (uses already-distilled models)
-
-### VGAE KD: Dual-Signal Approach
-```
-Signal 1: Latent Space
-  - MSE loss between student z and projected teacher z
-  - Projection layer: student_latent_dim → teacher_latent_dim
-
-Signal 2: Reconstruction
-  - MSE loss between student and teacher continuous outputs
-  - Same features being reconstructed
-
-Combined: 0.5 * latent_loss + 0.5 * recon_loss
-```
-
-### GAT KD: Soft Label Distillation
-```
-- Temperature-scaled softmax on logits
-- KL divergence loss with temperature^2 scaling
-- Temperature default: 4.0
-- Alpha (KD weight): 0.7 (70% KD loss, 30% task loss)
+VGAE (8D): 3 error components + 4 latent stats (mean/std/max/min) + 1 confidence
+GAT  (7D): 2 logits + 4 embedding stats (mean/std/max/min) + 1 confidence
 ```
 
-## Memory Management
+---
 
-### Safety Factor System
-Located: `config/batch_size_factors.json`
-- Per-dataset factors (0.3-0.8 range, lower = more conservative)
-- KD-specific factors = regular factors × 0.75 (25% extra for teacher)
-- Automatically selected by trainer based on `use_knowledge_distillation` flag
+## Knowledge Distillation
 
-### Example Factors
-```json
-{
-  "hcrl_ch": 0.6,      "hcrl_ch_kd": 0.45,
-  "hcrl_sa": 0.55,     "hcrl_sa_kd": 0.41,
-  "set_02": 0.35,      "set_02_kd": 0.26
-}
+KD is an orthogonal toggle (`use_kd` flag), independent from the training stage.
+
+| Stage | KD Method | Details |
+|-------|-----------|---------|
+| VGAE | Dual-signal MSE | `0.5 * MSE(project(z_s), z_t) + 0.5 * MSE(recon_s, recon_t)` |
+| GAT | Soft-label KL div | `KL(student/T, teacher/T) * T^2`, T=4.0, alpha=0.7 |
+| DQN/Fusion | Not supported | Fusion uses already-distilled models |
+
+---
+
+## Datasets
+
+| Name | Size | OOM Risk |
+|------|------|----------|
+| `hcrl_ch` | ~1,200 samples | None |
+| `hcrl_sa` | ~10,000 samples | None |
+| `set_01` | Small-medium | Low |
+| `set_02` | Large | High |
+| `set_03` | Large | High |
+| `set_04` | Large | High |
+
+---
+
+## Directory Layout
+
+```
+experimentruns/{modality}/{dataset}/{size}/{learning_type}/{model}/{distill}/{mode}/
+├── best_model.pt          # Model checkpoint
+├── config.json            # Frozen PipelineConfig for this run
+├── logs/                  # Lightning CSV logs
+└── metrics.json           # Evaluation results (stage 4 only)
 ```
 
-### OOM Mitigation Techniques
-1. Teacher frozen with `@torch.no_grad()` (no gradient graph)
-2. Memory cleanup every 20 batches
-3. Gradient checkpointing for VGAE/GAT
-4. Mixed precision training (AMP)
-5. Adaptive batch sizing based on safety factors
+---
 
-## Key Files & Modules
+## Training Flow
 
-### Lightning Modules
-- `src/training/lightning_modules.py`: VAELightningModule, GATLightningModule, DQNLightningModule
-- Each supports KD via `KDHelper` class
+```bash
+# Teacher pipeline (no KD)
+python -m pipeline.cli autoencoder --preset vgae,teacher --dataset hcrl_ch
+python -m pipeline.cli curriculum  --preset gat,teacher  --dataset hcrl_ch
+python -m pipeline.cli fusion      --preset dqn,teacher  --dataset hcrl_ch
+python -m pipeline.cli evaluation  --dataset hcrl_ch
 
-### Knowledge Distillation
-- `src/training/knowledge_distillation.py`: KDHelper class (450+ lines)
-  - Teacher loading and freezing
-  - Projection layer management
-  - Model-specific KD loss computation
-
-### Configuration
-- `src/config/hydra_zen_configs.py`: Base configs with KD fields
-  - `use_knowledge_distillation: bool`
-  - `teacher_model_path: Optional[str]`
-  - `distillation_temperature: float = 4.0`
-  - `distillation_alpha: float = 0.7`
-
-### CLI & Pipeline
-- `src/cli/main.py`: Entry point with pipeline command
-- `src/cli/job_manager.py`: SLURM job generation and submission
-- `src/cli/config_builder.py`: Build CANGraphConfig from CLI args
-- `train_with_hydra_zen.py`: Training script entry point
-
-### Batch Size Optimization
-- `src/training/trainer.py`: Reads safety factors from JSON
-- `src/training/adaptive_batch_size.py`: SafetyFactorDatabase class for persistence
-- JSON database at `config/batch_size_factors.json`
-
-## SLURM Job Organization
-```
-experimentruns/
-  slurm_runs/
-    hcrl_ch/           (all jobs for dataset hcrl_ch)
-      vgae_hcrl_ch_autoencode.sh
-      gat_hcrl_ch_curriculum.sh
-      dqn_hcrl_ch_fusion.sh
-    hcrl_sa/           (organized by dataset)
-      ...
+# Student pipeline (with KD)
+python -m pipeline.cli autoencoder --preset vgae,student --dataset hcrl_ch --teacher-path /path/to/vgae_teacher.pt
+python -m pipeline.cli curriculum  --preset gat,student  --dataset hcrl_ch --teacher-path /path/to/gat_teacher.pt
+python -m pipeline.cli fusion      --preset dqn,student  --dataset hcrl_ch
+python -m pipeline.cli evaluation  --dataset hcrl_ch --model-size student
 ```
 
-## Critical Constraints
+### Legacy Entry Point
 
-### Pipeline Rules
-1. DQN (fusion mode) CANNOT use KD (explicitly rejected)
-2. `--training-strategyl-size` and `--distillation` are INDEPENDENT dimensions (any combo valid except fusion+KD)
-3. KD requires valid `--teacher_path` (validated before SLURM submission)
-4. Multi-value params (--training-strategyl, --training-strategy, --distillation) must have same length
-5. Modality MUST be specified (automotive/industrial/robotics)
+`train_with_hydra_zen.py` still works via `--frozen-config` or manual args, delegates to `HydraZenTrainer` in `src/training/trainer.py`.
 
-### Config Validation
-- Happens at TWO levels:
-  1. Pydantic validators (`src/cli/pydantic_validators.py`)
-  2. Hydra config validation (`src/config/hydra_zen_configs.py`)
-- Both must pass or training doesn't start
+---
 
-## Common Pitfalls & Solutions
+## Source Tree
 
-| Problem | Cause | Solution |
-|---------|-------|----------|
-| Jobs submitted but no KD happening | `format_training_args()` not passing flags | Fixed: now passes `--use-kd` and `--teacher_path` |
-| Model overwrites | Same filename for teacher/student | Fixed: filename now includes model_size (vgae_teacher_autoencoder.pth) |
-| Fusion+KD jobs submitted | Validation only at config level, not CLI | Fixed: added pipeline CLI validation |
-| OOM on large datasets with KD | Safety factors not accounting for teacher | Fixed: KD-specific factors in JSON (×0.75) |
-| Missing modality in examples | Inconsistent CLI documentation | Solution: ALWAYS include --modality in examples |
+```
+pipeline/               # Self-contained training pipeline (new, preferred)
+src/
+├── models/             # VGAE, GAT, DQN architectures
+├── training/           # Legacy trainer, Lightning modules, datamodules, KD helpers
+├── evaluation/         # Metrics, evaluation, ablation
+├── preprocessing/      # Raw CAN data → graph construction
+├── config/             # Hydra-Zen configs (legacy), frozen config utils
+├── cli/                # Legacy CLI (pydantic validators)
+├── visualizations/     # Publication figure generators (UMAP, performance, policy)
+├── scripts/            # Utility scripts
+└── utils/              # GPU monitoring, plotting, seeding, caching
+config/                 # SLURM profile, Snakemake config, conda envs, plot styles
+docs/                   # Architecture docs, readmes, migration notes
+```
+
+---
+
+## Key Technical Details
+
+- **OOM mitigation**: Frozen teacher (`@torch.no_grad`), memory cleanup every N batches, gradient checkpointing, adaptive batch sizing via safety factors
+- **Curriculum learning**: VGAE scores graph reconstruction difficulty → GAT trains on progressively harder normals
+- **Frozen configs**: Every run saves its `PipelineConfig` as JSON alongside the checkpoint for full reproducibility
+- **Presets**: `PipelineConfig.from_preset("gat", "teacher")` loads architecture-specific defaults
+- **Safety factors**: Per-preset batch size scaling (0.45–0.6) to prevent OOM on large datasets
