@@ -92,6 +92,9 @@ publication_figures/
 ehthumbs.db
 Thumbs.db
 
+# NFS silly-rename artifacts (HPC filesystem)
+.nfs*
+
 # ===== ENVIRONMENT & CONFIG =====
 # Virtual environments
 venv/
