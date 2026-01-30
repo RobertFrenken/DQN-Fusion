@@ -16,4 +16,4 @@ dependencies = [
 ]
 
 [project.scripts]
-can-train = "src.cli.main:main"
+can-train = "pipeline.cli:main"

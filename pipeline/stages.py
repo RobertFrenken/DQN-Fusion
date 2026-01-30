@@ -37,37 +37,15 @@ if str(_ROOT) not in sys.path:
 # Data loading (bridges to existing src/ data pipeline)
 # ---------------------------------------------------------------------------
 
-class _NS:
-    """Minimal attribute-access namespace for legacy config compatibility."""
-    def __init__(self, d: dict):
-        for k, v in d.items():
-            setattr(self, k, _NS(v) if isinstance(v, dict) else v)
-
-    def get(self, key, default=None):
-        return getattr(self, key, default)
-
-
 def _load_data(cfg: PipelineConfig):
     """Load graph dataset. Returns (train_graphs, val_graphs, num_ids, in_channels)."""
     from src.training.datamodules import load_dataset
 
-    legacy = _NS({
-        "dataset": {
-            "name": cfg.dataset,
-            "modality": cfg.modality,
-            "data_path": str(data_dir(cfg)),
-            "cache_dir": str(cache_dir(cfg)),
-            "cache_processed_data": True,
-            "preprocessing": {
-                "normalize_features": False,
-                "feature_scaling": "standard",
-            },
-            "time_window": 100,
-            "overlap": 100,
-        },
-        "experiment_root": cfg.experiment_root,
-    })
-    train_data, val_data, num_ids = load_dataset(cfg.dataset, legacy)
+    train_data, val_data, num_ids = load_dataset(
+        cfg.dataset,
+        dataset_path=data_dir(cfg),
+        cache_dir_path=cache_dir(cfg),
+    )
     in_channels = train_data[0].x.shape[1] if train_data else 11
     return train_data, val_data, num_ids, in_channels
 
