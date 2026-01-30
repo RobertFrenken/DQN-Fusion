@@ -27,16 +27,16 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 - `cli.py` — Arg parser → `STAGE_FNS` dispatch
 - `Snakefile` — Snakemake workflow
 
-## Legacy System: `src/`
+## Supporting Code: `src/`
 
-Still required — `pipeline/stages.py` imports 5 modules from it:
+`pipeline/stages.py` imports from these `src/` modules:
 - `src.models.vgae`, `src.models.models`, `src.models.dqn` — model architectures
 - `src.training.datamodules` — `load_dataset()`, `CANGraphDataModule`
 - `src.preprocessing.preprocessing` — `GraphDataset`, graph construction
 
-**Dependency chain**: `load_dataset()` → `PathResolver` (src/paths.py, ~1200 lines, only ~100 needed). `pipeline/stages.py` uses a `_NS` adapter to bridge PipelineConfig to PathResolver's old interface. This is the main technical debt.
+`load_dataset()` accepts direct `Path` arguments from `pipeline/paths.py`. No legacy adapters remain.
 
-Other `src/` subdirs (`cli/`, `config/`, `evaluation/`, `utils/`) are not imported by pipeline and are candidates for removal (see `docs/CODEBASE_AUDIT.md`).
+Quarantined for paper/future: `src/evaluation/`, `src/config/plotting_config.py`, `src/utils/plotting_utils.py`, `src/utils/seeding.py`.
 
 ## Models
 
