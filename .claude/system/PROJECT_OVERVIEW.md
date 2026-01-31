@@ -1,6 +1,6 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-01-30
+**Updated**: 2026-01-31
 
 ## What This Is
 
@@ -26,6 +26,7 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 - `validate.py` — Config validation
 - `cli.py` — Arg parser → `STAGE_FNS` dispatch
 - `Snakefile` — Snakemake workflow
+- `snakemake_config.yaml` — Pipeline-level Snakemake config
 
 ## Supporting Code: `src/`
 
@@ -36,7 +37,20 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 
 `load_dataset()` accepts direct `Path` arguments from `pipeline/paths.py`. No legacy adapters remain.
 
-Quarantined for paper/future: `src/evaluation/`, `src/config/plotting_config.py`, `src/utils/plotting_utils.py`, `src/utils/seeding.py`.
+Quarantined for paper/future: `src/config/plotting_config.py`, `src/utils/plotting_utils.py`.
+
+## Data Pipeline
+
+```
+data/automotive/{dataset}/train_*/  →  data/cache/{dataset}/processed_graphs.pt
+     (raw CSVs, DVC-tracked)              (PyG Data objects, DVC-tracked)
+                                          + id_mapping.pkl
+                                          + cache_metadata.json
+```
+
+- 6 datasets: hcrl_ch, hcrl_sa, set_01-04
+- Cache auto-built on first access, validated via metadata on subsequent loads
+- All data versioned with DVC (remote: `/fs/scratch/PAS1266/can-graph-dvc`)
 
 ## Models
 
@@ -58,16 +72,37 @@ DQN state: 15D vector (VGAE 8D: errors + latent stats + confidence; GAT 7D: logi
 - **NFS filesystem**: `.nfs*` ghost files appear when processes delete open files. Already in `.gitignore`. Git operations (stash, reset) can fail on them.
 - **No GUI on HPC**: Git auth via SSH key (configured), not HTTPS tokens. Avoid `gnome-ssh-askpass`.
 
+## Experiment Management
+
+**Dual-system architecture**: Snakemake owns the filesystem (DAG orchestration), MLflow owns the metadata (tracking/UI).
+
+**Filesystem** (NFS home, permanent — Snakemake-managed):
+```
+experimentruns/{dataset}/{model_size}_{stage}[_kd]/
+├── best_model.pt       # Snakemake DAG trigger
+├── config.json         # Frozen config (also logged to MLflow)
+├── metrics.json        # Evaluation stage only
+```
+
+**MLflow** (GPFS scratch, 90-day purge — supplementary):
+```
+/fs/scratch/PAS1266/mlflow/
+├── mlflow.db           # SQLite tracking DB
+├── mlruns/             # Artifact store (model copies, plots)
+```
+
+Snakemake needs deterministic file paths at DAG construction time. MLflow artifact paths contain run UUIDs (not deterministic). So models save to filesystem first (Snakemake), then log to MLflow (tracking). If scratch purges, checkpoints/configs survive on NFS.
+
+**Current state**: Paths are still 8 levels; MLflow integration not yet wired. See `docs/registry_plan.md` for full analysis.
+
 ## Environment
 
 - **Cluster**: Ohio Supercomputer Center (OSC), RHEL 9, SLURM scheduler
-- **Filesystem**: NFS (shared home across all nodes)
+- **Home**: `/users/PAS2022/rf15/` — NFS v4, 1.7TB — permanent, safe for checkpoints
+- **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge — safe for concurrent DB writes
 - **Git remote**: `git@github.com:RobertFrenken/DQN-Fusion.git` (SSH)
-- **Python**: conda environment, PyTorch + PyG + Lightning
-
-## Output Layout
-
-```
-experimentruns/{modality}/{dataset}/{size}/{learning_type}/{model}/{distill}/{mode}/
-├── best_model.pt, config.json, logs/, metrics.json
-```
+- **Python**: conda `gnn-experiments`, PyTorch + PyG + Lightning
+- **Key packages**: SQLite 3.51.1, Pandas 2.3.3, MLflow 3.8.1
+- **SLURM account**: PAS3209, gpu partition, V100 GPUs
+- **Jupyter**: Available via OSC OnDemand portal
+- **MLflow UI**: Available via OSC OnDemand app (`bc_osc_mlflow`)

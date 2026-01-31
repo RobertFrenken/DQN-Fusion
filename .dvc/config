@@ -1,0 +1,4 @@
+[core]
+    remote = scratch
+['remote "scratch"']
+    url = /fs/scratch/PAS1266/can-graph-dvc

@@ -1,3 +1,24 @@
+# Pipeline Quick Reference
+
+```bash
+# Stage 1: autoencoder (no deps, can run all datasets in parallel)
+python -m pipeline.cli autoencoder --dataset hcrl_ch --model-size teacher
+
+# Stage 2: curriculum (needs autoencoder done)
+python -m pipeline.cli curriculum --dataset <ds> --model-size teacher
+
+# Stage 3: fusion (needs autoencoder + curriculum done)
+python -m pipeline.cli fusion --dataset <ds> --model-size teacher
+
+# Snakemake orchestration
+snakemake -s pipeline/Snakefile -n                                       # dry run
+snakemake -s pipeline/Snakefile --profile profiles/slurm --jobs 20       # actual run
+```
+
+---
+
+# Development Notes (Historical)
+
 Modality in training script - Need to verify train_with_hydra_zen.py accepts --modality argument
 Dependency paths - Stage 2 (curriculum) needs VGAE checkpoint path, Stage 3 (fusion) needs classifier path
 Per-stage SLURM overrides - Currently all stages use same walltime/memory

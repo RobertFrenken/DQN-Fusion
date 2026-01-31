@@ -1,0 +1,6 @@
+outs:
+- md5: 128a1e69b038b7709801933986e8095c.dir
+  size: 1411375220
+  nfiles: 3
+  hash: md5
+  path: set_03

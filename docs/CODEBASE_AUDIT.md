@@ -54,7 +54,7 @@ Everything else in `src/` is dead code relative to the active pipeline.
 | `src/preprocessing/__init__.py` | Package init |
 | `src/training/__init__.py` | Package init |
 | `config/config.yaml` | SLURM profile for Snakemake (account, partition, resources) |
-| `config/snakemake_config.yaml` | Pipeline-level Snakemake config (datasets, modalities, sizes) |
+| `pipeline/snakemake_config.yaml` | Pipeline-level Snakemake config (datasets, modalities, sizes) |
 | `config/slurm-status.py` | Snakemake SLURM job status checker |
 | `pyproject.toml` | Project metadata + dependencies |
 | `requirements.txt` | Dependency manifest |
@@ -398,5 +398,5 @@ After each phase:
 ```bash
 python -c "from pipeline.stages import STAGE_FNS; print('OK:', list(STAGE_FNS.keys()))"
 python -m pipeline.cli --help
-snakemake -n -s pipeline/Snakefile --configfile config/snakemake_config.yaml
+snakemake -n -s pipeline/Snakefile --configfile pipeline/snakemake_config.yaml
 ```

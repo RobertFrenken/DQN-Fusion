@@ -1,0 +1,6 @@
+outs:
+- md5: c3d4e322c0535a95661f0109ae35e96a.dir
+  size: 48707900
+  nfiles: 3
+  hash: md5
+  path: hcrl_sa

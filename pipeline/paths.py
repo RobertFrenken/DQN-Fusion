@@ -65,4 +65,4 @@ def data_dir(cfg: PipelineConfig) -> Path:
 
 def cache_dir(cfg: PipelineConfig) -> Path:
     """Processed-graph cache directory."""
-    return Path(cfg.experiment_root) / cfg.modality / cfg.dataset / "cache"
+    return Path("data") / "cache" / cfg.dataset

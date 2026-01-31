@@ -6,16 +6,24 @@ Components:
 - load_dataset(): Dataset loading with intelligent caching
 """
 
+import json
 import os
 import glob
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
 from torch_geometric.loader import DataLoader
 import lightning.pytorch as pl
 
-from src.preprocessing.preprocessing import GraphDataset
+from src.preprocessing.preprocessing import (
+    GraphDataset,
+    DEFAULT_WINDOW_SIZE,
+    DEFAULT_STRIDE,
+    NODE_FEATURE_COUNT,
+    EDGE_FEATURE_COUNT,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,31 +188,34 @@ def _load_cached_data(cache_file, id_mapping_file, dataset_name):
             return None, None
         
         logger.info(f"Loaded {len(graphs)} cached graphs with {len(id_mapping)} unique IDs")
-        
-        # Validate cache size
-        expected_sizes = {
-            'set_01': 300000, 'set_02': 400000, 'set_03': 330000, 'set_04': 240000,
-            'hcrl_sa': 18000, 'hcrl_ch': 290000
-        }
-        
-        if dataset_name in expected_sizes:
-            expected = expected_sizes[dataset_name]
-            actual = len(graphs)
-            
-            if actual < expected * 0.1:
-                logger.warning(
-                    f"🚨 CACHE ISSUE: Only {actual} graphs found, expected ~{expected}. "
-                    "Rebuilding cache."
-                )
-                return None, None
-            elif actual < expected * 0.5:
-                logger.warning(
-                    f"⚠️  Cache has fewer graphs than expected: {actual} vs ~{expected}. "
-                    "Use --force-rebuild to recreate."
-                )
-            else:
-                logger.info(f"✅ Cache size looks good: {actual} graphs (expected ~{expected})")
-        
+
+        # Validate cache using metadata if available
+        metadata_file = cache_file.parent / "cache_metadata.json"
+        if metadata_file.exists():
+            try:
+                metadata = json.loads(metadata_file.read_text())
+                expected = metadata.get("num_graphs", 0)
+                actual = len(graphs)
+                version = metadata.get("preprocessing_version", "unknown")
+
+                if expected > 0 and actual < expected * 0.1:
+                    logger.warning(
+                        f"CACHE ISSUE: Only {actual} graphs found, expected {expected} "
+                        f"(preprocessing v{version}). Rebuilding cache."
+                    )
+                    return None, None
+                elif expected > 0 and actual < expected * 0.5:
+                    logger.warning(
+                        f"Cache has fewer graphs than expected: {actual} vs {expected}. "
+                        "Use --force-rebuild to recreate."
+                    )
+                else:
+                    logger.info(f"Cache validated: {actual} graphs (expected {expected}, v{version})")
+            except (json.JSONDecodeError, KeyError) as e:
+                logger.warning(f"Cache metadata unreadable: {e}. Proceeding with loaded data.")
+        else:
+            logger.info(f"No cache metadata found. Loaded {len(graphs)} graphs.")
+
         return graphs, id_mapping
         
     except (pickle.UnpicklingError, AttributeError, EOFError) as e:
@@ -284,9 +295,40 @@ def _process_dataset_from_scratch(
         temp_cache.rename(cache_file)
         temp_mapping.rename(id_mapping_file)
         logger.info(f"Cache saved: {len(graphs)} graphs")
+
+        # Write cache metadata for validation on future loads
+        _write_cache_metadata(
+            cache_file.parent, dataset_name, graphs, id_mapping, csv_files
+        )
     except Exception as e:
         logger.error(f"Failed to save cache: {e}")
         temp_cache.unlink(missing_ok=True)
         temp_mapping.unlink(missing_ok=True)
 
     return graphs, id_mapping
+
+
+def _write_cache_metadata(cache_dir, dataset_name, graphs, id_mapping, csv_files):
+    """Write cache_metadata.json alongside processed cache files."""
+    import torch_geometric
+
+    metadata = {
+        "dataset": dataset_name,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "window_size": DEFAULT_WINDOW_SIZE,
+        "stride": DEFAULT_STRIDE,
+        "num_graphs": len(graphs),
+        "num_unique_ids": len(id_mapping) if id_mapping else 0,
+        "node_feature_dim": NODE_FEATURE_COUNT,
+        "edge_feature_dim": EDGE_FEATURE_COUNT,
+        "source_csv_count": len(csv_files),
+        "preprocessing_version": "1.0",
+        "torch_version": torch.__version__,
+        "pyg_version": torch_geometric.__version__,
+    }
+    metadata_file = Path(cache_dir) / "cache_metadata.json"
+    try:
+        metadata_file.write_text(json.dumps(metadata, indent=2))
+        logger.info(f"Cache metadata written to {metadata_file}")
+    except Exception as e:
+        logger.warning(f"Failed to write cache metadata: {e}")

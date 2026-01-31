@@ -1,0 +1,6 @@
+outs:
+- md5: a6c25d84a637c994f7d240def4aef3f1.dir
+  size: 651643942
+  nfiles: 3
+  hash: md5
+  path: hcrl_ch

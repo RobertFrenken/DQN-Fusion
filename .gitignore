@@ -1,9 +1,9 @@
 # ===== CAN-GRAPH PROJECT GITIGNORE =====
 
 # ===== DATASETS =====
-# All dataset directories (raw CAN data is large and shouldn't be in git)
+# Raw CAN data is large - tracked by DVC, not git
+# DVC creates .gitignore entries inside data/ for tracked directories
 datasets/
-data/
 *.csv
 *.log
 *.can
@@ -28,8 +28,10 @@ student_models/
 fusion_agents/
 
 # ===== CACHE & TEMPORARY FILES =====
-# Processing cache and temporary files
-cache/
+# Processing cache and temporary files (data/cache/ managed by DVC)
+fusion_cache/
+preprocessing_cache/
+graph_cache/
 __pycache__/
 *.pyc
 *.pyo
@@ -127,11 +129,6 @@ prof/
 profiling/
 
 # ===== SPECIFIC TO CAN-GRAPH =====
-# Project-specific cache directories
-fusion_cache/
-preprocessing_cache/
-graph_cache/
-
 # Large intermediate files
 *.pkl
 *.pickle
@@ -143,3 +140,7 @@ tmp_*
 *.out
 *.err
 slurm-*.out
+slurm_logs/
+
+# Snakemake working directory
+.snakemake/
