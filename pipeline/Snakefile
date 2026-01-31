@@ -1,7 +1,10 @@
 # ===========================================================================
 # KD-GAT Pipeline Orchestration
 #
-# Path layout: {EXP}/{MODALITY}/{ds}/{size}/{learning}/{arch}/{distill}/{mode}
+# Path layout (simplified): {EXP}/{ds}/{size}_{stage}[_kd]
+#
+# Before: 8 levels (modality/dataset/size/learning/arch/distill/mode)
+# After:  2 levels (dataset/run_name)
 #
 # Run:  snakemake -s pipeline/Snakefile --profile profiles/slurm --jobs 20
 # Dry:  snakemake -s pipeline/Snakefile -n
@@ -10,13 +13,13 @@
 
 DATASETS  = ["hcrl_ch", "hcrl_sa", "set_01", "set_02", "set_03", "set_04"]
 EXP       = "experimentruns"
-MOD       = "automotive"
 CLI       = "/users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pipeline.cli"
 
-# Helper: build canonical path segment
-# {EXP}/{MOD}/{ds}/{size}/{learn}/{arch}/{distill}/{mode}/best_model.pt
-def _p(ds, size, learn, arch, distill, mode):
-    return f"{EXP}/{MOD}/{ds}/{size}/{learn}/{arch}/{distill}/{mode}/best_model.pt"
+# Helper: build canonical checkpoint path (2-level structure)
+# {EXP}/{ds}/{size}_{stage}[_kd]/best_model.pt
+def _p(ds, size, stage, kd=False):
+    suffix = "_kd" if kd else ""
+    return f"{EXP}/{ds}/{size}_{stage}{suffix}/best_model.pt"
 
 # ---------------------------------------------------------------------------
 # Targets
@@ -25,23 +28,23 @@ def _p(ds, size, learn, arch, distill, mode):
 rule all:
     input:
         # Teacher pipeline
-        expand(_p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"), ds=DATASETS),
+        expand(_p("{ds}", "teacher", "fusion"), ds=DATASETS),
         # Student with KD
-        expand(_p("{ds}", "student", "rl_fusion", "dqn", "distilled", "fusion"), ds=DATASETS),
+        expand(_p("{ds}", "student", "fusion", kd=True), ds=DATASETS),
         # Student without KD (ablation)
-        expand(_p("{ds}", "student", "rl_fusion", "dqn", "no_distillation", "fusion"), ds=DATASETS),
+        expand(_p("{ds}", "student", "fusion"), ds=DATASETS),
 
 rule teachers:
     input:
-        expand(_p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"), ds=DATASETS),
+        expand(_p("{ds}", "teacher", "fusion"), ds=DATASETS),
 
 rule students:
     input:
-        expand(_p("{ds}", "student", "rl_fusion", "dqn", "distilled", "fusion"), ds=DATASETS),
+        expand(_p("{ds}", "student", "fusion", kd=True), ds=DATASETS),
 
 rule students_nokd:
     input:
-        expand(_p("{ds}", "student", "rl_fusion", "dqn", "no_distillation", "fusion"), ds=DATASETS),
+        expand(_p("{ds}", "student", "fusion"), ds=DATASETS),
 
 # ---------------------------------------------------------------------------
 # SLURM resource defaults
@@ -62,38 +65,38 @@ _EVAL_RES = dict(
 
 rule vgae_teacher:
     output:
-        _p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+        _p("{ds}", "teacher", "autoencoder"),
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/teacher/unsupervised/vgae/no_distillation/autoencoder/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/teacher/unsupervised/vgae/no_distillation/autoencoder/slurm.err",
+        out=EXP + "/{ds}/teacher_autoencoder/slurm.out",
+        err=EXP + "/{ds}/teacher_autoencoder/slurm.err",
     shell:
         CLI + " autoencoder --preset vgae,teacher --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
 rule gat_teacher:
     input:
-        vgae=_p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+        vgae=_p("{ds}", "teacher", "autoencoder"),
     output:
-        _p("{ds}", "teacher", "supervised", "gat", "no_distillation", "curriculum"),
+        _p("{ds}", "teacher", "curriculum"),
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/teacher/supervised/gat/no_distillation/curriculum/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/teacher/supervised/gat/no_distillation/curriculum/slurm.err",
+        out=EXP + "/{ds}/teacher_curriculum/slurm.out",
+        err=EXP + "/{ds}/teacher_curriculum/slurm.err",
     shell:
         CLI + " curriculum --preset gat,teacher --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
 rule dqn_teacher:
     input:
-        vgae=_p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
-        gat=_p("{ds}", "teacher", "supervised", "gat", "no_distillation", "curriculum"),
+        vgae=_p("{ds}", "teacher", "autoencoder"),
+        gat=_p("{ds}", "teacher", "curriculum"),
     output:
-        _p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"),
+        _p("{ds}", "teacher", "fusion"),
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/teacher/rl_fusion/dqn/no_distillation/fusion/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/teacher/rl_fusion/dqn/no_distillation/fusion/slurm.err",
+        out=EXP + "/{ds}/teacher_fusion/slurm.out",
+        err=EXP + "/{ds}/teacher_fusion/slurm.err",
     shell:
         CLI + " fusion --preset dqn,teacher --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
@@ -104,13 +107,13 @@ rule dqn_teacher:
 
 rule vgae_student:
     input:
-        teacher=_p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+        teacher=_p("{ds}", "teacher", "autoencoder"),
     output:
-        _p("{ds}", "student", "unsupervised", "vgae", "distilled", "autoencoder"),
+        _p("{ds}", "student", "autoencoder", kd=True),
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/student/unsupervised/vgae/distilled/autoencoder/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/student/unsupervised/vgae/distilled/autoencoder/slurm.err",
+        out=EXP + "/{ds}/student_autoencoder_kd/slurm.out",
+        err=EXP + "/{ds}/student_autoencoder_kd/slurm.err",
     shell:
         CLI + " autoencoder --preset vgae,student --dataset {wildcards.ds}"
         " --teacher-path {input.teacher}"
@@ -118,14 +121,14 @@ rule vgae_student:
 
 rule gat_student:
     input:
-        teacher=_p("{ds}", "teacher", "supervised", "gat", "no_distillation", "curriculum"),
-        vgae=_p("{ds}", "student", "unsupervised", "vgae", "distilled", "autoencoder"),
+        teacher=_p("{ds}", "teacher", "curriculum"),
+        vgae=_p("{ds}", "student", "autoencoder", kd=True),
     output:
-        _p("{ds}", "student", "supervised", "gat", "distilled", "curriculum"),
+        _p("{ds}", "student", "curriculum", kd=True),
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/student/supervised/gat/distilled/curriculum/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/student/supervised/gat/distilled/curriculum/slurm.err",
+        out=EXP + "/{ds}/student_curriculum_kd/slurm.out",
+        err=EXP + "/{ds}/student_curriculum_kd/slurm.err",
     shell:
         CLI + " curriculum --preset gat,student --dataset {wildcards.ds}"
         " --teacher-path {input.teacher}"
@@ -133,15 +136,15 @@ rule gat_student:
 
 rule dqn_student:
     input:
-        teacher=_p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"),
-        vgae=_p("{ds}", "student", "unsupervised", "vgae", "distilled", "autoencoder"),
-        gat=_p("{ds}", "student", "supervised", "gat", "distilled", "curriculum"),
+        teacher=_p("{ds}", "teacher", "fusion"),
+        vgae=_p("{ds}", "student", "autoencoder", kd=True),
+        gat=_p("{ds}", "student", "curriculum", kd=True),
     output:
-        _p("{ds}", "student", "rl_fusion", "dqn", "distilled", "fusion"),
+        _p("{ds}", "student", "fusion", kd=True),
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/student/rl_fusion/dqn/distilled/fusion/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/student/rl_fusion/dqn/distilled/fusion/slurm.err",
+        out=EXP + "/{ds}/student_fusion_kd/slurm.out",
+        err=EXP + "/{ds}/student_fusion_kd/slurm.err",
     shell:
         CLI + " fusion --preset dqn,student --dataset {wildcards.ds}"
         " --teacher-path {input.teacher}"
@@ -153,11 +156,11 @@ rule dqn_student:
 
 rule vgae_student_nokd:
     output:
-        _p("{ds}", "student", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+        _p("{ds}", "student", "autoencoder"),
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/student/unsupervised/vgae/no_distillation/autoencoder/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/student/unsupervised/vgae/no_distillation/autoencoder/slurm.err",
+        out=EXP + "/{ds}/student_autoencoder/slurm.out",
+        err=EXP + "/{ds}/student_autoencoder/slurm.err",
     shell:
         CLI + " autoencoder --preset vgae,student --dataset {wildcards.ds}"
         " --use-kd false"
@@ -165,13 +168,13 @@ rule vgae_student_nokd:
 
 rule gat_student_nokd:
     input:
-        vgae=_p("{ds}", "student", "unsupervised", "vgae", "no_distillation", "autoencoder"),
+        vgae=_p("{ds}", "student", "autoencoder"),
     output:
-        _p("{ds}", "student", "supervised", "gat", "no_distillation", "curriculum"),
+        _p("{ds}", "student", "curriculum"),
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/student/supervised/gat/no_distillation/curriculum/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/student/supervised/gat/no_distillation/curriculum/slurm.err",
+        out=EXP + "/{ds}/student_curriculum/slurm.out",
+        err=EXP + "/{ds}/student_curriculum/slurm.err",
     shell:
         CLI + " curriculum --preset gat,student --dataset {wildcards.ds}"
         " --use-kd false"
@@ -179,14 +182,14 @@ rule gat_student_nokd:
 
 rule dqn_student_nokd:
     input:
-        vgae=_p("{ds}", "student", "unsupervised", "vgae", "no_distillation", "autoencoder"),
-        gat=_p("{ds}", "student", "supervised", "gat", "no_distillation", "curriculum"),
+        vgae=_p("{ds}", "student", "autoencoder"),
+        gat=_p("{ds}", "student", "curriculum"),
     output:
-        _p("{ds}", "student", "rl_fusion", "dqn", "no_distillation", "fusion"),
+        _p("{ds}", "student", "fusion"),
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/student/rl_fusion/dqn/no_distillation/fusion/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/student/rl_fusion/dqn/no_distillation/fusion/slurm.err",
+        out=EXP + "/{ds}/student_fusion/slurm.out",
+        err=EXP + "/{ds}/student_fusion/slurm.err",
     shell:
         CLI + " fusion --preset dqn,student --dataset {wildcards.ds}"
         " --use-kd false"
@@ -198,45 +201,45 @@ rule dqn_student_nokd:
 
 rule eval_teacher:
     input:
-        vgae=_p("{ds}", "teacher", "unsupervised", "vgae", "no_distillation", "autoencoder"),
-        gat=_p("{ds}", "teacher", "supervised", "gat", "no_distillation", "curriculum"),
-        dqn=_p("{ds}", "teacher", "rl_fusion", "dqn", "no_distillation", "fusion"),
+        vgae=_p("{ds}", "teacher", "autoencoder"),
+        gat=_p("{ds}", "teacher", "curriculum"),
+        dqn=_p("{ds}", "teacher", "fusion"),
     output:
-        EXP + "/" + MOD + "/{ds}/teacher/evaluation/eval/no_distillation/evaluation/metrics.json",
+        EXP + "/{ds}/teacher_evaluation/metrics.json",
     resources: **_EVAL_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/teacher/evaluation/eval/no_distillation/evaluation/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/teacher/evaluation/eval/no_distillation/evaluation/slurm.err",
+        out=EXP + "/{ds}/teacher_evaluation/slurm.out",
+        err=EXP + "/{ds}/teacher_evaluation/slurm.err",
     shell:
         CLI + " evaluation --dataset {wildcards.ds} --model-size teacher"
         " > {log.out} 2> {log.err}"
 
 rule eval_student:
     input:
-        vgae=_p("{ds}", "student", "unsupervised", "vgae", "distilled", "autoencoder"),
-        gat=_p("{ds}", "student", "supervised", "gat", "distilled", "curriculum"),
-        dqn=_p("{ds}", "student", "rl_fusion", "dqn", "distilled", "fusion"),
+        vgae=_p("{ds}", "student", "autoencoder", kd=True),
+        gat=_p("{ds}", "student", "curriculum", kd=True),
+        dqn=_p("{ds}", "student", "fusion", kd=True),
     output:
-        EXP + "/" + MOD + "/{ds}/student/evaluation/eval/distilled/evaluation/metrics.json",
+        EXP + "/{ds}/student_evaluation_kd/metrics.json",
     resources: **_EVAL_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/student/evaluation/eval/distilled/evaluation/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/student/evaluation/eval/distilled/evaluation/slurm.err",
+        out=EXP + "/{ds}/student_evaluation_kd/slurm.out",
+        err=EXP + "/{ds}/student_evaluation_kd/slurm.err",
     shell:
         CLI + " evaluation --dataset {wildcards.ds} --model-size student --use-kd true"
         " > {log.out} 2> {log.err}"
 
 rule eval_student_nokd:
     input:
-        vgae=_p("{ds}", "student", "unsupervised", "vgae", "no_distillation", "autoencoder"),
-        gat=_p("{ds}", "student", "supervised", "gat", "no_distillation", "curriculum"),
-        dqn=_p("{ds}", "student", "rl_fusion", "dqn", "no_distillation", "fusion"),
+        vgae=_p("{ds}", "student", "autoencoder"),
+        gat=_p("{ds}", "student", "curriculum"),
+        dqn=_p("{ds}", "student", "fusion"),
     output:
-        EXP + "/" + MOD + "/{ds}/student/evaluation/eval/no_distillation/evaluation/metrics.json",
+        EXP + "/{ds}/student_evaluation/metrics.json",
     resources: **_EVAL_RES,
     log:
-        out=EXP + "/" + MOD + "/{ds}/student/evaluation/eval/no_distillation/evaluation/slurm.out",
-        err=EXP + "/" + MOD + "/{ds}/student/evaluation/eval/no_distillation/evaluation/slurm.err",
+        out=EXP + "/{ds}/student_evaluation/slurm.out",
+        err=EXP + "/{ds}/student_evaluation/slurm.err",
     shell:
         CLI + " evaluation --dataset {wildcards.ds} --model-size student"
         " > {log.out} 2> {log.err}"

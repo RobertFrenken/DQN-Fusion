@@ -24,23 +24,33 @@ STAGES = {
 DATASETS = ["hcrl_ch", "hcrl_sa", "set_01", "set_02", "set_03", "set_04"]
 
 
+def run_id(cfg: PipelineConfig, stage: str) -> str:
+    """Deterministic run ID from config and stage.
+
+    Format: {dataset}/{model_size}_{stage}[_kd]
+    Examples:
+        - "hcrl_sa/teacher_autoencoder"
+        - "hcrl_sa/student_curriculum_kd"
+        - "set_01/teacher_fusion"
+
+    This ID is used for:
+    - Filesystem directory names (via stage_dir)
+    - MLflow run names (for tracking)
+    - Snakemake target paths (deterministic at DAG construction time)
+    """
+    kd_suffix = "_kd" if cfg.use_kd else ""
+    return f"{cfg.dataset}/{cfg.model_size}_{stage}{kd_suffix}"
+
+
 def stage_dir(cfg: PipelineConfig, stage: str) -> Path:
     """Canonical experiment directory.
 
-    Layout: {root}/{modality}/{dataset}/{size}/{learning_type}/{model}/{distill}/{mode}
+    Layout (simplified): {root}/{dataset}/{size}_{stage}[_kd]
+
+    Before: 8 levels (modality/dataset/size/learning/model/distill/mode)
+    After:  2 levels (dataset/run_name)
     """
-    learning_type, model_arch, mode = STAGES[stage]
-    distillation = "distilled" if cfg.use_kd else "no_distillation"
-    return (
-        Path(cfg.experiment_root)
-        / cfg.modality
-        / cfg.dataset
-        / cfg.model_size
-        / learning_type
-        / model_arch
-        / distillation
-        / mode
-    )
+    return Path(cfg.experiment_root) / run_id(cfg, stage)
 
 
 def checkpoint_path(cfg: PipelineConfig, stage: str) -> Path:

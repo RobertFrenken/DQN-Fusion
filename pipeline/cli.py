@@ -21,8 +21,9 @@ from dataclasses import fields as dc_fields, replace
 from pathlib import Path
 
 from .config import PipelineConfig, PRESETS
-from .paths import STAGES, config_path
+from .paths import STAGES, config_path, run_id
 from .validate import validate
+from .tracking import start_run, end_run, log_failure
 
 
 def _parse_bool(v: str) -> bool:
@@ -110,10 +111,26 @@ def main(argv: list[str] | None = None) -> None:
     cfg.save(cfg_out)
     log.info("Frozen config: %s", cfg_out)
 
+    # ---- Start MLflow tracking ----
+    run_name = run_id(cfg, args.stage)
+    start_run(cfg, args.stage, run_name)
+    log.info("MLflow run started: %s", run_name)
+
     # ---- Dispatch ----
-    from .stages import STAGE_FNS
-    result = STAGE_FNS[args.stage](cfg)
-    log.info("Stage '%s' complete. Result: %s", args.stage, result)
+    try:
+        from .stages import STAGE_FNS
+        result = STAGE_FNS[args.stage](cfg)
+        log.info("Stage '%s' complete. Result: %s", args.stage, result)
+
+        # ---- Log results to MLflow ----
+        end_run(result if isinstance(result, dict) else None, success=True)
+        log.info("MLflow run completed successfully")
+
+    except Exception as e:
+        # ---- Log failure to MLflow ----
+        log_failure(str(e))
+        log.error("MLflow run failed: %s", str(e))
+        raise
 
 
 if __name__ == "__main__":
