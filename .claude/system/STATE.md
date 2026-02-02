@@ -23,8 +23,11 @@
   - `stages.py`: `mlflow.pytorch.autolog(log_models=False)` in `_make_trainer()` for Lightning stages; manual `mlflow.log_metrics()` in DQN fusion loop and evaluation
   - `query.py`: CLI for querying experiments (`--all`, `--dataset`, `--leaderboard`, `--compare`, `--running`)
   - `migrate.py`: Migration tool with `--dry-run`, `--execute`, `--backfill-only` modes
-- **Snakefile rewritten**: All 19 rules use 2-level `_p()` helper
+- **Snakefile rewritten**: All 19 rules use 2-level `_p()` helper; DATASETS configurable via `config.get()`; `onstart:` hook for MLflow DB init
+- **SLURM profile**: `profiles/slurm/config.yaml` + `profiles/slurm/status.sh` for Snakemake cluster submission
 - **`docs/registry_plan.md` cleaned up**: MLflow decision surfaced as primary; original SQLite design marked as historical appendix
+- **`docs/snakemake_guide.md`**: Reference guide for Snakemake commands, profiles, skip logic
+- **`docs/terminal_upgrades.md`**: Terminal workflow guide (tmux, shells, terminal emulators, CLI tools)
 
 ## Active `src/` Files
 
@@ -37,21 +40,29 @@ Quarantined (for paper/future):
 - `src/config/plotting_config.py`
 - `src/utils/plotting_utils.py`
 
+## What's Working (Pipeline Execution)
+
+- **hcrl_sa single-dataset pipeline partially complete** (2026-02-02):
+  - VGAE teacher + student (no-KD) + student (KD): All 3 completed, `best_model.pt` saved
+  - GAT teacher + student (no-KD): Both completed, `best_model.pt` saved
+  - DQN teacher + student (no-KD): Initially failed with `TypeError: list indices must be integers or slices, not list` in `_cache_predictions()`. **Fixed** in `stages.py:702` -- replaced `data[:max_samples]` slice (incompatible with PyTorch `Subset`) with explicit `range(min(len(data), max_samples))` iteration. Re-submitted and running.
+  - GAT student (KD), DQN student (KD): Pending (depend on teacher completion)
+- **MLflow concurrent initialization race condition fixed**: `onstart:` hook pre-initializes DB; `tracking.py` has retry logic with backoff
+- **Snakemake SLURM profile created**: `profiles/slurm/config.yaml` + `status.sh`
+- **Snakemake single-dataset support**: `--config 'datasets=["hcrl_sa"]'`
+
 ## What's Not Working / Incomplete
 
-- **No training runs validated yet** post-cleanup. All code changes are structural (deletions + refactoring + MLflow wiring), but an end-to-end run hasn't been done since the CUDA crash fix + audit cleanup.
 - **Old experiment checkpoints have no `config.json`**: The 13 migrated VGAE runs predate the frozen config system. MLflow backfill was skipped for these. Future runs will produce config.json automatically.
+- **Data cache race condition** (cosmetic): Two simultaneous DQN jobs on the same dataset both try to write `data/cache/hcrl_sa/processed_graphs.pt`. One succeeds, the other logs `Failed to save cache: No such file or directory` (atomic rename conflict). The job still runs -- it just rebuilds from scratch. Not a blocker but could be optimized.
 
 ## Next Steps (Implementation Order)
 
-1. **Validate pipeline end-to-end** with one dataset (e.g., `hcrl_ch` -- smallest, fast iteration)
-   - Run: `python -m pipeline.cli autoencoder --preset vgae,teacher --dataset hcrl_ch`
-   - Confirm: checkpoint saved at `experimentruns/hcrl_ch/teacher_autoencoder/best_model.pt`
-   - Confirm: MLflow run visible via `python -m pipeline.query --all`
-   - Confirm: frozen `config.json` saved alongside checkpoint
-2. **Begin full training runs** across all 6 datasets via Snakemake
-   - Dry run: `snakemake -s pipeline/Snakefile -n`
-   - Submit: `snakemake -s pipeline/Snakefile --profile profiles/slurm --jobs 20`
+1. **Verify hcrl_sa pipeline completion** -- check that all 9 jobs finished (DQN re-run + KD student jobs)
+   - Check: `squeue -u rf15` for remaining jobs
+   - Verify: all `experimentruns/hcrl_sa/*/best_model.pt` files exist
+   - Verify: MLflow runs visible via `python -m pipeline.query --all`
+2. **Run remaining 5 datasets** via Snakemake (remove `--config` to run all)
 3. **Evaluate and collect results** for thesis
 4. **Publication plots** using quarantined `src/config/plotting_config.py` + `src/utils/plotting_utils.py`
 
@@ -86,6 +97,7 @@ Run: "hcrl_sa/student_curriculum_kd"  -> experimentruns/hcrl_sa/student_curricul
 
 ## Recent Decisions
 
+- **tmux for session persistence** -- Snakemake must stay alive on the login node to submit downstream SLURM jobs. Running it inside tmux prevents SSH disconnects from killing the orchestrator. See `docs/terminal_upgrades.md`.
 - **Snakemake + MLflow architecture** -- After evaluating 9 orchestration tools and 7 unified platforms, concluded that no single tool replaces both orchestration and tracking on HPC/SLURM. Snakemake is irreplaceable for DAG + SLURM. MLflow is the best tracking layer. Full analysis in `docs/registry_plan.md`.
 - **MLflow replaces custom SQLite registry** -- Earlier plan for `pipeline/registry.py` (~130 lines custom SQLite) is superseded. MLflow provides logging, UI, and model registry out of the box.
 - **MLflow backend on GPFS scratch** -- SQLite backend at `sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db`. GPFS has reliable POSIX locking.

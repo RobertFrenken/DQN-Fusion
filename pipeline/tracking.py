@@ -5,6 +5,7 @@ Uses deterministic run IDs for compatibility with Snakemake's DAG.
 """
 from __future__ import annotations
 
+import logging
 import os
 import time
 from dataclasses import asdict
@@ -16,6 +17,8 @@ import mlflow
 if TYPE_CHECKING:
     from .config import PipelineConfig
 
+log = logging.getLogger(__name__)
+
 # MLflow tracking URI - must be on GPFS scratch for concurrent writes
 # Set via environment variable or default to scratch directory
 TRACKING_URI = os.getenv(
@@ -26,19 +29,42 @@ TRACKING_URI = os.getenv(
 # Experiment name for all KD-GAT runs
 EXPERIMENT_NAME = "kd-gat-pipeline"
 
+_tracking_initialized = False
+
 
 def setup_tracking() -> None:
     """Initialize MLflow tracking URI and experiment.
 
     Must be called before any tracking operations.
     Creates the experiment if it doesn't exist.
+
+    Handles concurrent initialization from multiple SLURM jobs
+    by retrying on SQLite "table already exists" errors.
     """
+    global _tracking_initialized
+    if _tracking_initialized:
+        return
+
     mlflow.set_tracking_uri(TRACKING_URI)
 
-    # Ensure experiment exists
-    experiment = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
-    if experiment is None:
-        mlflow.create_experiment(EXPERIMENT_NAME)
+    # Concurrent SLURM jobs may race to create the DB schema.
+    # MLflow's _initialize_tables uses CREATE TABLE (not IF NOT EXISTS),
+    # so a second process can crash. Retry after a short sleep.
+    max_retries = 3
+    for attempt in range(max_retries):
+        try:
+            experiment = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
+            if experiment is None:
+                mlflow.create_experiment(EXPERIMENT_NAME)
+            _tracking_initialized = True
+            return
+        except Exception as e:
+            if "already exists" in str(e) and attempt < max_retries - 1:
+                log.warning("MLflow DB init race (attempt %d/%d), retrying: %s",
+                            attempt + 1, max_retries, e)
+                time.sleep(2 * (attempt + 1))
+            else:
+                raise
 
 
 def start_run(cfg: PipelineConfig, stage: str, run_name: str) -> None:

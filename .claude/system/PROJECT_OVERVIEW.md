@@ -28,8 +28,10 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 - `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
 - `query.py` — CLI for querying MLflow experiments
 - `migrate.py` — Migration from 8-level to 2-level paths + MLflow backfill
-- `Snakefile` — Snakemake workflow (19 rules, 2-level paths)
+- `Snakefile` — Snakemake workflow (19 rules, 2-level paths, configurable DATASETS, onstart MLflow init)
 - `snakemake_config.yaml` — Pipeline-level Snakemake config
+- `profiles/slurm/config.yaml` — SLURM cluster submission profile for Snakemake
+- `profiles/slurm/status.sh` — Job status checker (sacct-based)
 
 ## Supporting Code: `src/`
 
@@ -106,5 +108,6 @@ Snakemake needs deterministic file paths at DAG construction time. MLflow artifa
 - **Python**: conda `gnn-experiments`, PyTorch + PyG + Lightning
 - **Key packages**: SQLite 3.51.1, Pandas 2.3.3, MLflow 3.8.1
 - **SLURM account**: PAS3209, gpu partition, V100 GPUs
+- **tmux**: 3.2a available on login nodes -- use for Snakemake orchestration and Claude Code sessions
 - **Jupyter**: Available via OSC OnDemand portal
 - **MLflow UI**: Available via OSC OnDemand app (`bc_osc_mlflow`)

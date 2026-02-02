@@ -1,0 +1,26 @@
+# Snakemake 7.x SLURM profile for OSC Pitzer/Ascend clusters
+#
+# Usage:
+#   snakemake -s pipeline/Snakefile --profile profiles/slurm
+#   snakemake -s pipeline/Snakefile --profile profiles/slurm --config 'datasets=["hcrl_sa"]'
+
+cluster: >-
+  sbatch
+  --account={resources.slurm_account}
+  --partition={resources.slurm_partition}
+  --time={resources.time_min}
+  --mem={resources.mem_mb}M
+  --cpus-per-task={resources.cpus_per_task}
+  --gpus-per-node={resources.gpus}
+  --job-name=smk-{rule}-{wildcards}
+  --output=slurm_logs/%j-{rule}.out
+  --error=slurm_logs/%j-{rule}.err
+  --parsable
+
+cluster-status: profiles/slurm/status.sh
+cluster-cancel: scancel
+
+jobs: 20
+latency-wait: 120
+printshellcmds: true
+rerun-incomplete: true

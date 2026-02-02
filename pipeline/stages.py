@@ -698,8 +698,10 @@ def _cache_predictions(vgae, gat, data, device, max_samples=150_000):
     states, labels = [], []
     vgae.eval()
     gat.eval()
+    n_samples = min(len(data), max_samples)
     with torch.no_grad():
-        for g in data[:max_samples]:
+        for i in range(n_samples):
+            g = data[i]
             g = g.clone().to(device)  # clone to avoid mutating original (PyG .to() is in-place)
             batch_idx = (g.batch if hasattr(g, "batch") and g.batch is not None
                          else torch.zeros(g.x.size(0), dtype=torch.long, device=device))

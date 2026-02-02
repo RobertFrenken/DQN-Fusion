@@ -6,20 +6,35 @@
 # Before: 8 levels (modality/dataset/size/learning/arch/distill/mode)
 # After:  2 levels (dataset/run_name)
 #
-# Run:  snakemake -s pipeline/Snakefile --profile profiles/slurm --jobs 20
-# Dry:  snakemake -s pipeline/Snakefile -n
-# DAG:  snakemake -s pipeline/Snakefile --dag | dot -Tpdf > dag.pdf
+# All datasets:
+#   snakemake -s pipeline/Snakefile --profile profiles/slurm --jobs 20
+#
+# Single dataset:
+#   snakemake -s pipeline/Snakefile --config datasets='["hcrl_sa"]' -n
+#
+# Dry run:
+#   snakemake -s pipeline/Snakefile -n
+#
+# DAG:
+#   snakemake -s pipeline/Snakefile --dag | dot -Tpdf > dag.pdf
 # ===========================================================================
 
-DATASETS  = ["hcrl_ch", "hcrl_sa", "set_01", "set_02", "set_03", "set_04"]
+ALL_DATASETS = ["hcrl_ch", "hcrl_sa", "set_01", "set_02", "set_03", "set_04"]
+DATASETS     = config.get("datasets", ALL_DATASETS)
 EXP       = "experimentruns"
 CLI       = "/users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pipeline.cli"
+PY        = "/users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python"
 
 # Helper: build canonical checkpoint path (2-level structure)
 # {EXP}/{ds}/{size}_{stage}[_kd]/best_model.pt
 def _p(ds, size, stage, kd=False):
     suffix = "_kd" if kd else ""
     return f"{EXP}/{ds}/{size}_{stage}{suffix}/best_model.pt"
+
+# Pre-initialize MLflow DB on the login node before any SLURM jobs start.
+# Prevents race condition when multiple jobs try to CREATE TABLE concurrently.
+onstart:
+    shell("{PY} -c 'from pipeline.tracking import setup_tracking; setup_tracking()'")
 
 # ---------------------------------------------------------------------------
 # Targets
