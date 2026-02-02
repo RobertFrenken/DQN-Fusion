@@ -1,6 +1,6 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-01-31
+**Updated**: 2026-02-02
 
 ## What This Is
 
@@ -24,8 +24,11 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 - `stages.py` — All training logic (VGAE, GAT, DQN, eval). Imports from `src/` conditionally (inside functions)
 - `paths.py` — Canonical directory layout, checkpoint/config paths
 - `validate.py` — Config validation
-- `cli.py` — Arg parser → `STAGE_FNS` dispatch
-- `Snakefile` — Snakemake workflow
+- `cli.py` — Arg parser, MLflow run lifecycle, `STAGE_FNS` dispatch
+- `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
+- `query.py` — CLI for querying MLflow experiments
+- `migrate.py` — Migration from 8-level to 2-level paths + MLflow backfill
+- `Snakefile` — Snakemake workflow (19 rules, 2-level paths)
 - `snakemake_config.yaml` — Pipeline-level Snakemake config
 
 ## Supporting Code: `src/`
@@ -86,14 +89,13 @@ experimentruns/{dataset}/{model_size}_{stage}[_kd]/
 
 **MLflow** (GPFS scratch, 90-day purge — supplementary):
 ```
-/fs/scratch/PAS1266/mlflow/
+/fs/scratch/PAS1266/kd_gat_mlflow/
 ├── mlflow.db           # SQLite tracking DB
-├── mlruns/             # Artifact store (model copies, plots)
 ```
 
 Snakemake needs deterministic file paths at DAG construction time. MLflow artifact paths contain run UUIDs (not deterministic). So models save to filesystem first (Snakemake), then log to MLflow (tracking). If scratch purges, checkpoints/configs survive on NFS.
 
-**Current state**: Paths are still 8 levels; MLflow integration not yet wired. See `docs/registry_plan.md` for full analysis.
+**MLflow integration**: Fully wired. `cli.py` wraps stage dispatch with `start_run`/`end_run`. `stages.py` uses `mlflow.pytorch.autolog()` for Lightning stages and manual `log_metrics()` for DQN + evaluation. See `docs/registry_plan.md` for full design history.
 
 ## Environment
 

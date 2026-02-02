@@ -13,6 +13,7 @@ import sys
 from pathlib import Path
 from typing import Optional
 
+import mlflow
 import numpy as np
 import torch
 import torch.nn as nn
@@ -413,6 +414,12 @@ def _make_trainer(cfg: PipelineConfig, stage: str) -> pl.Trainer:
     out = stage_dir(cfg, stage)
     out.mkdir(parents=True, exist_ok=True)
     torch.backends.cudnn.benchmark = cfg.cudnn_benchmark
+
+    # Route Lightning self.log() calls to the active MLflow run.
+    # cli.py has already started the run; autolog patches Trainer.fit()
+    # to forward epoch-level metrics (train_loss, val_loss, etc.).
+    mlflow.pytorch.autolog(log_models=False)
+
     return pl.Trainer(
         default_root_dir=str(out),
         max_epochs=cfg.max_epochs,
@@ -832,6 +839,15 @@ def train_fusion(cfg: PipelineConfig) -> Path:
             acc = metrics.get("accuracy", 0)
             log.info("Episode %d/%d  reward=%.1f  val_acc=%.4f",
                      ep + 1, cfg.fusion_episodes, total_reward, acc)
+
+            # Manual MLflow logging for DQN (no Lightning Trainer)
+            mlflow.log_metrics({
+                "total_reward": total_reward,
+                "val_accuracy": acc,
+                "epsilon": agent.epsilon,
+                "best_accuracy": best_acc,
+            }, step=ep + 1)
+
             if acc > best_acc:
                 best_acc = acc
                 torch.save({
@@ -1236,6 +1252,15 @@ def evaluate(cfg: PipelineConfig) -> dict:
 
     if test_metrics:
         all_metrics["test"] = test_metrics
+
+    # Log core metrics to MLflow (flattened as model_metric)
+    for model_name, model_metrics in all_metrics.items():
+        if model_name == "test":
+            continue
+        if "core" in model_metrics:
+            for k, v in model_metrics["core"].items():
+                if isinstance(v, (int, float)):
+                    mlflow.log_metric(f"{model_name}_{k}", v)
 
     # Save all metrics
     out = stage_dir(cfg, "evaluation")
