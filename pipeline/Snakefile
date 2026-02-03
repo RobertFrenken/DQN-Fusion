@@ -66,7 +66,7 @@ rule students_nokd:
 # ---------------------------------------------------------------------------
 
 _TRAIN_RES = dict(
-    time_min=360, mem_mb=64000, cpus_per_task=16, gpus=1, gpu_type="v100",
+    time_min=360, mem_mb=128000, cpus_per_task=16, gpus=1, gpu_type="v100",
     slurm_account="PAS3209", slurm_partition="gpu",
 )
 _EVAL_RES = dict(
@@ -131,7 +131,7 @@ rule vgae_student:
         err=EXP + "/{ds}/student_autoencoder_kd/slurm.err",
     shell:
         CLI + " autoencoder --preset vgae,student --dataset {wildcards.ds}"
-        " --teacher-path {input.teacher}"
+        " --teacher-path {input.teacher} --use-kd true"
         " > {log.out} 2> {log.err}"
 
 rule gat_student:
@@ -146,7 +146,7 @@ rule gat_student:
         err=EXP + "/{ds}/student_curriculum_kd/slurm.err",
     shell:
         CLI + " curriculum --preset gat,student --dataset {wildcards.ds}"
-        " --teacher-path {input.teacher}"
+        " --teacher-path {input.teacher} --use-kd true"
         " > {log.out} 2> {log.err}"
 
 rule dqn_student:
@@ -162,7 +162,7 @@ rule dqn_student:
         err=EXP + "/{ds}/student_fusion_kd/slurm.err",
     shell:
         CLI + " fusion --preset dqn,student --dataset {wildcards.ds}"
-        " --teacher-path {input.teacher}"
+        " --teacher-path {input.teacher} --use-kd true"
         " > {log.out} 2> {log.err}"
 
 # ===========================================================================

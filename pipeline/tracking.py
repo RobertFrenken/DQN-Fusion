@@ -13,6 +13,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import mlflow
+import psutil
+import torch
 
 if TYPE_CHECKING:
     from .config import PipelineConfig
@@ -161,3 +163,61 @@ def _extract_teacher_id(teacher_path: str) -> str | None:
     except Exception:
         pass
     return None
+
+
+def log_memory_metrics(step: int | None = None) -> dict[str, float]:
+    """Log current CPU and GPU memory usage to MLflow.
+
+    Args:
+        step: Optional step number for metric logging
+
+    Returns:
+        Dictionary of memory metrics (useful for logging elsewhere)
+    """
+    metrics = {}
+
+    # CPU memory
+    mem = psutil.virtual_memory()
+    metrics["cpu_mem_percent"] = mem.percent
+    metrics["cpu_mem_used_gb"] = mem.used / (1024 ** 3)
+    metrics["cpu_mem_available_gb"] = mem.available / (1024 ** 3)
+
+    # GPU memory (if available)
+    if torch.cuda.is_available():
+        metrics["gpu_mem_allocated_gb"] = torch.cuda.memory_allocated() / (1024 ** 3)
+        metrics["gpu_mem_reserved_gb"] = torch.cuda.memory_reserved() / (1024 ** 3)
+        metrics["gpu_mem_max_allocated_gb"] = torch.cuda.max_memory_allocated() / (1024 ** 3)
+
+        # Per-GPU stats if multiple GPUs
+        num_gpus = torch.cuda.device_count()
+        if num_gpus > 1:
+            for i in range(num_gpus):
+                metrics[f"gpu{i}_mem_allocated_gb"] = torch.cuda.memory_allocated(i) / (1024 ** 3)
+
+    # Log to MLflow
+    try:
+        if step is not None:
+            mlflow.log_metrics(metrics, step=step)
+        else:
+            mlflow.log_metrics(metrics)
+    except Exception as e:
+        log.warning("Failed to log memory metrics to MLflow: %s", e)
+
+    return metrics
+
+
+def get_memory_summary() -> str:
+    """Get a human-readable memory summary string.
+
+    Returns:
+        Formatted string with current memory usage
+    """
+    mem = psutil.virtual_memory()
+    summary = f"CPU: {mem.percent:.1f}% ({mem.used / (1024**3):.1f}/{mem.total / (1024**3):.1f} GB)"
+
+    if torch.cuda.is_available():
+        gpu_alloc = torch.cuda.memory_allocated() / (1024 ** 3)
+        gpu_reserved = torch.cuda.memory_reserved() / (1024 ** 3)
+        summary += f" | GPU: {gpu_alloc:.2f}/{gpu_reserved:.2f} GB (alloc/reserved)"
+
+    return summary

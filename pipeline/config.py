@@ -89,7 +89,7 @@ class PipelineConfig:
     scheduler_gamma:     float = 0.1
 
     # --- Memory optimization ---
-    gradient_checkpointing: bool  = False
+    gradient_checkpointing: bool  = True
     use_teacher_cache:      bool  = True
     clear_cache_every_n:    int   = 100
     offload_teacher_to_cpu: bool  = False

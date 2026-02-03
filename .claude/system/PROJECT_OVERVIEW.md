@@ -1,6 +1,6 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-02-02
+**Updated**: 2026-02-03
 
 ## What This Is
 
@@ -66,6 +66,17 @@ data/automotive/{dataset}/train_*/  →  data/cache/{dataset}/processed_graphs.p
 | `EnhancedDQNFusionAgent` | `src/models/dqn.py` | hidden 576, 3 layers | hidden 160, 2 layers |
 
 DQN state: 15D vector (VGAE 8D: errors + latent stats + confidence; GAT 7D: logits + embedding stats + confidence).
+
+## Memory Optimization
+
+Default config enables memory-efficient training:
+- `gradient_checkpointing: True` — 30-50% activation memory savings (~20% compute overhead)
+- `precision: "16-mixed"` — 50% model/activation memory reduction
+- Both `GATWithJK` and `GraphAutoencoderNeighborhood` support checkpointing via `use_checkpointing` flag
+
+Memory monitoring logs to MLflow every N epochs:
+- CPU: mem_percent, mem_used_gb, mem_available_gb
+- GPU: mem_allocated_gb, mem_reserved_gb, mem_max_allocated_gb
 
 ## Critical Constraints
 

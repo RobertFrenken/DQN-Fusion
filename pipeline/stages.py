@@ -25,8 +25,34 @@ from torch_geometric.nn import global_mean_pool
 
 from .config import PipelineConfig
 from .paths import stage_dir, checkpoint_path, config_path, data_dir, cache_dir
+from .tracking import log_memory_metrics, get_memory_summary
 
 log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Memory monitoring callback
+# ---------------------------------------------------------------------------
+
+class MemoryMonitorCallback(pl.Callback):
+    """Log memory usage to MLflow at epoch boundaries."""
+
+    def __init__(self, log_every_n_epochs: int = 5):
+        super().__init__()
+        self.log_every_n_epochs = log_every_n_epochs
+
+    def on_train_start(self, trainer, pl_module):
+        log.info("Memory at train start: %s", get_memory_summary())
+        log_memory_metrics(step=0)
+
+    def on_train_epoch_end(self, trainer, pl_module):
+        epoch = trainer.current_epoch
+        if epoch % self.log_every_n_epochs == 0:
+            log_memory_metrics(step=epoch)
+
+    def on_train_end(self, trainer, pl_module):
+        log.info("Memory at train end: %s", get_memory_summary())
+        log_memory_metrics(step=trainer.current_epoch)
 
 # Ensure project root is importable
 _ROOT = Path(__file__).resolve().parent.parent
@@ -248,6 +274,7 @@ class VGAEModule(pl.LightningModule):
             encoder_heads=cfg.vgae_heads,
             embedding_dim=cfg.vgae_embedding_dim,
             dropout=cfg.vgae_dropout,
+            use_checkpointing=cfg.gradient_checkpointing,
         )
         self.teacher = teacher
         self.projection = projection
@@ -330,6 +357,7 @@ class GATModule(pl.LightningModule):
             heads=cfg.gat_heads,
             dropout=cfg.gat_dropout,
             embedding_dim=cfg.gat_embedding_dim,
+            use_checkpointing=cfg.gradient_checkpointing,
         )
         self.teacher = teacher
 
@@ -438,6 +466,7 @@ def _make_trainer(cfg: PipelineConfig, stage: str) -> pl.Trainer:
                 monitor=cfg.monitor_metric, patience=cfg.patience,
                 mode=cfg.monitor_mode,
             ),
+            MemoryMonitorCallback(log_every_n_epochs=cfg.test_every_n_epochs),
         ],
         log_every_n_steps=cfg.log_every_n_steps,
         enable_progress_bar=True,
@@ -767,7 +796,11 @@ def train_fusion(cfg: PipelineConfig) -> Path:
     from src.models.models import GATWithJK
     from src.models.dqn import EnhancedDQNFusionAgent
 
-    vgae_cfg = _load_frozen_cfg(cfg, "autoencoder")
+    # Determine prerequisite stage names based on use_kd flag
+    vgae_stage = "autoencoder_kd" if cfg.use_kd else "autoencoder"
+    gat_stage = "curriculum_kd" if cfg.use_kd else "curriculum"
+
+    vgae_cfg = _load_frozen_cfg(cfg, vgae_stage)
     vgae = GraphAutoencoderNeighborhood(
         num_ids=num_ids, in_channels=in_ch,
         hidden_dims=list(vgae_cfg.vgae_hidden_dims), latent_dim=vgae_cfg.vgae_latent_dim,
@@ -775,11 +808,11 @@ def train_fusion(cfg: PipelineConfig) -> Path:
         dropout=vgae_cfg.vgae_dropout,
     )
     vgae.load_state_dict(torch.load(
-        checkpoint_path(cfg, "autoencoder"), map_location="cpu", weights_only=True,
+        checkpoint_path(cfg, vgae_stage), map_location="cpu", weights_only=True,
     ))
     vgae.to(device)
 
-    gat_cfg = _load_frozen_cfg(cfg, "curriculum")
+    gat_cfg = _load_frozen_cfg(cfg, gat_stage)
     gat = GATWithJK(
         num_ids=num_ids, in_channels=in_ch,
         hidden_channels=gat_cfg.gat_hidden, out_channels=2,
@@ -787,7 +820,7 @@ def train_fusion(cfg: PipelineConfig) -> Path:
         dropout=gat_cfg.gat_dropout, embedding_dim=gat_cfg.gat_embedding_dim,
     )
     gat.load_state_dict(torch.load(
-        checkpoint_path(cfg, "curriculum"), map_location="cpu", weights_only=True,
+        checkpoint_path(cfg, gat_stage), map_location="cpu", weights_only=True,
     ))
     gat.to(device)
 
@@ -1108,10 +1141,14 @@ def evaluate(cfg: PipelineConfig) -> dict:
     all_metrics: dict = {}
     test_metrics: dict = {}
 
+    # Determine stage names based on use_kd flag
+    gat_stage = "curriculum_kd" if cfg.use_kd else "curriculum"
+    vgae_stage = "autoencoder_kd" if cfg.use_kd else "autoencoder"
+
     # ---- GAT evaluation (primary classifier) ----
-    gat_ckpt = checkpoint_path(cfg, "curriculum")
+    gat_ckpt = checkpoint_path(cfg, gat_stage)
     if gat_ckpt.exists():
-        gat_cfg = _load_frozen_cfg(cfg, "curriculum")
+        gat_cfg = _load_frozen_cfg(cfg, gat_stage)
         from src.models.models import GATWithJK
 
         gat = GATWithJK(
@@ -1146,9 +1183,9 @@ def evaluate(cfg: PipelineConfig) -> dict:
         _cleanup()
 
     # ---- VGAE evaluation (anomaly detection via reconstruction error) ----
-    vgae_ckpt = checkpoint_path(cfg, "autoencoder")
+    vgae_ckpt = checkpoint_path(cfg, vgae_stage)
     if vgae_ckpt.exists():
-        vgae_cfg = _load_frozen_cfg(cfg, "autoencoder")
+        vgae_cfg = _load_frozen_cfg(cfg, vgae_stage)
         from src.models.vgae import GraphAutoencoderNeighborhood
 
         vgae = GraphAutoencoderNeighborhood(
@@ -1190,8 +1227,8 @@ def evaluate(cfg: PipelineConfig) -> dict:
     # ---- DQN Fusion evaluation ----
     fusion_ckpt = checkpoint_path(cfg, "fusion")
     if fusion_ckpt.exists() and vgae_ckpt.exists() and gat_ckpt.exists():
-        vgae_cfg = _load_frozen_cfg(cfg, "autoencoder")
-        gat_cfg = _load_frozen_cfg(cfg, "curriculum")
+        vgae_cfg = _load_frozen_cfg(cfg, vgae_stage)
+        gat_cfg = _load_frozen_cfg(cfg, gat_stage)
         fusion_cfg = _load_frozen_cfg(cfg, "fusion")
         from src.models.vgae import GraphAutoencoderNeighborhood
         from src.models.models import GATWithJK
