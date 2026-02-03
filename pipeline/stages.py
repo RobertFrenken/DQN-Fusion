@@ -7,9 +7,12 @@ Everything else (Lightning wrappers, trainer setup, KD) is self-contained here.
 from __future__ import annotations
 
 import gc
+import glob
 import json
 import logging
+import shutil
 import sys
+import tempfile
 from pathlib import Path
 from typing import Optional
 
@@ -90,7 +93,6 @@ def _auto_tune_batch_size(
     """Use Lightning Tuner to find optimal batch size, then apply safety factor."""
     from src.training.datamodules import CANGraphDataModule
     from lightning.pytorch.tuner import Tuner
-    import tempfile, shutil
 
     module.batch_size = cfg.batch_size
     dm = CANGraphDataModule(train_data, val_data, cfg.batch_size, num_workers=cfg.num_workers)
@@ -119,8 +121,7 @@ def _auto_tune_batch_size(
         log.warning("Batch size tuning failed: %s. Falling back.", e)
         return _effective_batch_size(cfg)
     finally:
-        import glob as _glob
-        for ckpt in _glob.glob(".scale_batch_size_*.ckpt"):
+        for ckpt in glob.glob(".scale_batch_size_*.ckpt"):
             Path(ckpt).unlink(missing_ok=True)
         shutil.rmtree(tmp, ignore_errors=True)
 

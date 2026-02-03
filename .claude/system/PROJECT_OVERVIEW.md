@@ -42,8 +42,6 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 
 `load_dataset()` accepts direct `Path` arguments from `pipeline/paths.py`. No legacy adapters remain.
 
-Quarantined for paper/future: `src/config/plotting_config.py`, `src/utils/plotting_utils.py`.
-
 ## Data Pipeline
 
 ```

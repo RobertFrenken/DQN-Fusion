@@ -34,13 +34,16 @@ Essential (imported by pipeline):
 - `src/preprocessing/preprocessing.py` -- graph construction
 - `src/training/datamodules.py` -- load_dataset(), CANGraphDataModule
 
-Quarantined (for paper/future):
-- `src/config/plotting_config.py`
-- `src/utils/plotting_utils.py`
+### Cleanup (2026-02-03)
+Deleted stale code:
+- `src/utils/plotting_utils.py` -- broken imports, unused legacy plotting functions
+- `src/config/plotting_config.py` -- not imported anywhere
+- `src/utils/` directory -- empty after cleanup
+- Debug print statements in `src/models/vgae.py`
+- Misleading "router top2 experts" comment in `src/models/models.py`
 
 ## Documentation Structure
 
-Cleaned up 2026-02-03:
 ```
 docs/
 ├── user_guides/          # For user reference
@@ -49,7 +52,6 @@ docs/
 │   └── terminal_upgrades.md
 └── save/                 # Context for Claude
     ├── ARCHITECTURE.md   # Current system architecture
-    ├── CODEBASE_AUDIT.md # File categorization
     └── memory_management_research.md  # Memory optimization research
 ```
 

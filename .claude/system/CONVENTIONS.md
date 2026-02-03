@@ -12,6 +12,16 @@
 - Don't add docstrings, comments, or type annotations to code that wasn't changed.
 - If something is unused, delete it completely. No compatibility shims or `# removed` comments.
 
+## Iteration Hygiene
+
+Before implementing a new feature or fix:
+1. **Audit touchpoints** — Identify files that will be modified
+2. **Cut stale code** — Remove dead code, hack workarounds, or overly complex solutions in those files
+3. **Simplify** — Replace complex patterns with simpler ones if the workaround reason no longer applies
+4. **Delete, don't comment** — Unused code gets deleted, not commented out
+
+This keeps the codebase lean. Every PR should leave the code cleaner than it was found.
+
 ## Git
 
 - Commit messages: short summary line, body explains why not what.
