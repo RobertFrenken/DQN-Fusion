@@ -99,6 +99,7 @@ class PipelineConfig:
     safety_factor:         float = 0.5
     batch_size_mode:       str   = "binsearch"
     max_batch_size_trials: int   = 10
+    memory_estimation:     str   = "measured"  # static | measured
 
     # --- Training dynamics ---
     accumulate_grad_batches: int  = 1

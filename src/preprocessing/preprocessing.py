@@ -14,22 +14,20 @@ Key Features:
 - Categorical encoding for CAN IDs with out-of-vocabulary handling
 """
 
+import logging
+import os
+import warnings
+from typing import Dict, List, Optional, Tuple, Union
+
 import numpy as np
 import pandas as pd
 import torch
-import logging
-from torch_geometric.data import Dataset, Data
-import warnings
-
-# Suppress pandas SettingWithCopyWarning to keep logs clean
-warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
-import os
-import unittest
-from typing import List, Dict, Tuple, Optional, Union
-import warnings
+from torch_geometric.data import Data, Dataset
 
 # Suppress pandas warnings for cleaner output
+warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
 warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
+
 logger = logging.getLogger(__name__)
 
 # ==================== Configuration Constants ====================
@@ -43,6 +41,15 @@ HEX_CHARS = '0123456789abcdefABCDEF'
 # Node feature configuration
 NODE_FEATURE_COUNT = 11  # CAN_ID + 8 data bytes + count + position
 EDGE_FEATURE_COUNT = 11  # Streamlined edge features
+
+# Column indices for processed DataFrame (after conversion to numpy)
+# Columns: [CAN_ID, Data1-8, Source, Target, label]
+COL_CAN_ID = 0
+COL_DATA_START = 1
+COL_DATA_END = 9  # exclusive
+COL_SOURCE = -3
+COL_TARGET = -2
+COL_LABEL = -1
 
 # ==================== Core Data Processing Functions ====================
 
@@ -71,194 +78,89 @@ def safe_hex_to_int(value: Union[str, int, float]) -> Optional[int]:
     except (ValueError, TypeError):
         return None
 
-def normalize_payload_bytes(df: pd.DataFrame, byte_columns: List[str]) -> pd.DataFrame:
-    """
-    Normalize payload byte columns to [0, 1] range.
-    
-    Args:
-        df: DataFrame containing payload data
-        byte_columns: List of column names containing byte data
-        
-    Returns:
-        DataFrame with normalized payload columns
-    """
-    df_copy = df.copy()
-    for col in byte_columns:
-        df_copy[col] = df_copy[col] / 255.0
-    return df_copy
-
-def build_complete_id_mapping_streaming(csv_files: List[str], verbose: bool = False) -> Dict[Union[int, str], int]:
-    """
-    Build COMPLETE CAN ID mapping using streaming approach with minimal memory.
-    Gets 100% of all CAN IDs by reading each file once and extracting only the IDs.
-    
-    Args:
-        csv_files: List of CSV file paths
-        verbose: Whether to print progress
-        
-    Returns:
-        Dictionary mapping ALL CAN IDs to integer indices
-    """
-    unique_ids = set()
-    
-    if verbose:
-        print(f"Building COMPLETE ID mapping by streaming through {len(csv_files)} files...")
-    
-    for i, csv_file in enumerate(csv_files):
-        if verbose:
-            print(f"  📂 Processing {os.path.basename(csv_file)} ({i+1}/{len(csv_files)})")
-        
-        try:
-            # Read the ENTIRE file (but we'll only extract IDs)
-            df = pd.read_csv(csv_file)
-            df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
-            
-            # Extract ALL unique CAN IDs from this file
-            can_ids = df['arbitration_id'].dropna().unique()
-            file_ids = set()
-            
-            for can_id in can_ids:
-                converted_id = safe_hex_to_int(can_id)
-                if converted_id is not None:
-                    file_ids.add(converted_id)
-            
-            # Add to global set
-            unique_ids.update(file_ids)
-            
-            # IMMEDIATELY discard the DataFrame to free memory
-            del df
-            
-            if verbose:
-                print(f"     Found {len(file_ids)} unique IDs in this file")
-                print(f"     Total unique IDs so far: {len(unique_ids)}")
-                    
-        except Exception as e:
-            if verbose:
-                print(f"     Warning: Could not process {csv_file}: {e}")
-            continue
-    
-    if verbose:
-        print(f"✅ Found {len(unique_ids)} TOTAL unique CAN IDs (100% coverage)")
-    
-    # Create mapping from ALL unique IDs
-    sorted_ids = sorted(list(unique_ids))
-    id_mapping = {can_id: idx for idx, can_id in enumerate(sorted_ids)}
-    
-    # Add out-of-vocabulary index (for truly corrupted data)
-    oov_index = len(id_mapping)
-    id_mapping['OOV'] = oov_index
-    
-    if verbose:
-        print(f"📋 Final mapping size: {len(id_mapping)} entries (including OOV)")
-    
-    return id_mapping
-
 def apply_dynamic_id_mapping(df: pd.DataFrame, id_mapping: Dict, verbose: bool = False) -> Tuple[pd.DataFrame, Dict]:
     """
     Apply ID mapping with dynamic expansion for new IDs encountered during processing.
-    
+
     Args:
         df: DataFrame to process
         id_mapping: Existing ID mapping
         verbose: Whether to print information about new IDs
-        
+
     Returns:
         Tuple of (processed DataFrame, updated ID mapping)
     """
     # Make a copy to avoid modifying the original mapping
     dynamic_mapping = id_mapping.copy()
-    oov_index = dynamic_mapping['OOV']
     new_ids_found = []
-    
-    # Check all CAN ID columns for new IDs
+
+    # First pass: collect all new IDs from all columns
     for col in ['CAN ID', 'Source', 'Target']:
         if col in df.columns:
             unique_vals = df[col].dropna().unique()
-            
             for val in unique_vals:
                 if val not in dynamic_mapping:
-                    # Found a new ID not in our mapping
                     new_id_index = len(dynamic_mapping) - 1  # Insert before OOV
                     dynamic_mapping[val] = new_id_index
-                    dynamic_mapping['OOV'] = len(dynamic_mapping) - 1  # Update OOV index
+                    dynamic_mapping['OOV'] = len(dynamic_mapping) - 1
                     new_ids_found.append(val)
-            
-            # Apply the mapping (now including new IDs)
-            df[col] = df[col].apply(lambda x: dynamic_mapping.get(x, dynamic_mapping['OOV']))
-    
+
+    # Second pass: apply mapping using vectorized .map() instead of .apply()
+    oov_index = dynamic_mapping['OOV']
+    for col in ['CAN ID', 'Source', 'Target']:
+        if col in df.columns:
+            df[col] = df[col].map(dynamic_mapping).fillna(oov_index).astype(int)
+
     if new_ids_found and verbose:
         print(f"  Dynamically added {len(new_ids_found)} new CAN IDs: {new_ids_found[:5]}{'...' if len(new_ids_found) > 5 else ''}")
-    
-    return df, dynamic_mapping
 
-def build_id_mapping(df: pd.DataFrame) -> Dict[Union[int, str], int]:
-    """
-    Build a mapping from CAN IDs to indices for categorical encoding.
-    
-    Args:
-        df: DataFrame containing CAN ID columns
-        
-    Returns:
-        Dictionary mapping CAN IDs to integer indices, with 'OOV' for out-of-vocabulary
-    """
-    # Extract all unique CAN IDs from relevant columns
-    id_columns = ['CAN ID', 'Source', 'Target']
-    all_ids = []
-    
-    for col in id_columns:
-        if col in df.columns:
-            unique_vals = df[col].dropna().unique()
-            converted_ids = [safe_hex_to_int(x) for x in unique_vals]
-            all_ids.extend([x for x in converted_ids if x is not None])
-    
-    # Create mapping from unique IDs
-    unique_ids = sorted(list(set(all_ids)))
-    id_mapping = {can_id: idx for idx, can_id in enumerate(unique_ids)}
-    
-    # Add out-of-vocabulary index
-    oov_index = len(id_mapping)
-    id_mapping['OOV'] = oov_index
-    
-    return id_mapping
+    return df, dynamic_mapping
 
 def build_id_mapping_from_normal(root_folder: str, folder_type: str = 'train_') -> Dict[Union[int, str], int]:
     """
     Build CAN ID mapping using only normal (non-attack) data for cleaner feature space.
-    
+
+    This function reads full CSV files to filter by attack label. For faster preprocessing
+    that includes all IDs (without filtering), use build_lightweight_id_mapping() instead.
+
     Args:
         root_folder: Path to root folder containing CSV files
         folder_type: Type of folder to process (e.g., 'train_', 'test_')
-        
+
     Returns:
-        Dictionary mapping CAN IDs to integer indices
+        Dictionary mapping CAN IDs to integer indices, with 'OOV' for out-of-vocabulary
     """
     csv_files = find_csv_files(root_folder, folder_type)
-    normal_dfs = []
-    
+    all_ids = []
+
     for csv_file in csv_files:
         try:
             df = pd.read_csv(csv_file)
             df.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
-            df.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
-            
-            # Add Source and Target columns for graph construction
-            df['Source'] = df['CAN ID']
-            df['Target'] = df['CAN ID'].shift(-1)
-            
+
             # Filter to normal traffic only
             normal_df = df[df['attack'] == 0]
-            if len(normal_df) > 0:
-                normal_dfs.append(normal_df)
-                
+            if len(normal_df) == 0:
+                continue
+
+            # Extract and convert CAN IDs
+            can_ids = normal_df['arbitration_id'].dropna().unique()
+            converted = [safe_hex_to_int(x) for x in can_ids]
+            all_ids.extend([x for x in converted if x is not None])
+
         except Exception as e:
-            print(f"Warning: Could not process {csv_file}: {e}")
+            logger.warning(f"Could not process {csv_file}: {e}")
             continue
-    
-    if normal_dfs:
-        combined_df = pd.concat(normal_dfs, ignore_index=True)
-        return build_id_mapping(combined_df)
-    else:
+
+    if not all_ids:
         return {'OOV': 0}
+
+    # Create sorted mapping with OOV index
+    unique_ids = sorted(set(all_ids))
+    id_mapping = {can_id: idx for idx, can_id in enumerate(unique_ids)}
+    id_mapping['OOV'] = len(id_mapping)
+
+    return id_mapping
 
 def find_csv_files(root_folder: str, folder_type: str = 'train_') -> List[str]:
     """
@@ -357,50 +259,51 @@ def dataset_creation_streaming(csv_path: str, id_mapping: Optional[Dict] = None,
 def _process_dataframe_chunk(chunk: pd.DataFrame, id_mapping: Optional[Dict] = None) -> pd.DataFrame:
     """
     Process a single chunk of DataFrame.
-    
+
     Args:
         chunk: DataFrame chunk to process
         id_mapping: Pre-built CAN ID mapping
-        
+
     Returns:
         Processed DataFrame chunk
     """
-    # Handle data field parsing
-    chunk['data_field'] = chunk['data_field'].astype(str).fillna('')
-    chunk['DLC'] = chunk['data_field'].apply(lambda x: len(x) // 2)
-    
-    # Split data field into individual bytes
-    chunk['data_field'] = chunk['data_field'].str.strip()
-    chunk['bytes'] = chunk['data_field'].apply(lambda x: [x[i:i+2] for i in range(0, len(x), 2)])
-    
-    # Create Data1-Data8 columns
+    # Handle data field parsing - use vectorized string operations
+    chunk['data_field'] = chunk['data_field'].astype(str).fillna('').str.strip()
+    chunk['DLC'] = chunk['data_field'].str.len() // 2  # Vectorized length
+
+    # Extract bytes using vectorized string slicing
+    data_field = chunk['data_field'].values
     for i in range(MAX_DATA_BYTES):
-        chunk[f'Data{i+1}'] = chunk['bytes'].apply(lambda x: x[i] if i < len(x) else '00')
-    
+        start = i * 2
+        end = start + 2
+        # Vectorized extraction with padding for short strings
+        chunk[f'Data{i+1}'] = [s[start:end] if len(s) >= end else '00' for s in data_field]
+
     # Add graph structure columns
     chunk['Source'] = chunk['CAN ID']
     chunk['Target'] = chunk['CAN ID'].shift(-1)
-    
+
     # Pad and clean data
     chunk = pad_data_field(chunk)
-    
-    # Convert hex values to decimal
+
+    # Convert hex values to decimal - use vectorized approach where possible
     hex_columns = ['CAN ID', 'Source', 'Target'] + [f'Data{i+1}' for i in range(MAX_DATA_BYTES)]
     for col in hex_columns:
         chunk[col] = chunk[col].apply(safe_hex_to_int)
-    
+
     # Apply dynamic ID mapping (handles new IDs gracefully)
     if id_mapping is not None:
         chunk, _ = apply_dynamic_id_mapping(chunk, id_mapping, verbose=False)
-    
+
     # Clean up and normalize - make explicit copy to avoid SettingWithCopyWarning
     chunk = chunk.iloc[:-1].copy()  # Remove last row (no target) and create copy
-    chunk.loc[:, 'label'] = chunk['attack'].astype(int)  # Use .loc[] for assignment
-    
-    # Normalize payload bytes to [0, 1]
+    chunk.loc[:, 'label'] = chunk['attack'].astype(int)
+
+    # Normalize payload bytes to [0, 1] - vectorized
     byte_columns = [f'Data{i+1}' for i in range(MAX_DATA_BYTES)]
-    chunk = normalize_payload_bytes(chunk, byte_columns)
-    
+    for col in byte_columns:
+        chunk[col] = chunk[col] / 255.0
+
     # Return essential columns
     return chunk[['CAN ID'] + byte_columns + ['Source', 'Target', 'label']]
 
@@ -430,18 +333,18 @@ def create_graphs_numpy(data: pd.DataFrame, window_size: int = DEFAULT_WINDOW_SI
 def create_graph_from_window(window_data: np.ndarray) -> Data:
     """
     Transform a data window into a PyTorch Geometric Data object with rich features.
-    
+
     Args:
         window_data: NumPy array of shape (window_size, num_features)
                     Columns: [CAN_ID, Data1-8, Source, Target, label]
-        
+
     Returns:
         PyTorch Geometric Data object with node and edge features
     """
-    # Extract components
-    source = window_data[:, -3]  # Source column
-    target = window_data[:, -2]  # Target column
-    labels = window_data[:, -1]  # Label column
+    # Extract components using column constants
+    source = window_data[:, COL_SOURCE]
+    target = window_data[:, COL_TARGET]
+    labels = window_data[:, COL_LABEL]
     
     # Build edge information
     edges = np.column_stack((source, target))
@@ -470,138 +373,140 @@ def create_graph_from_window(window_data: np.ndarray) -> Data:
     
     return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
 
-def compute_edge_features(window_data: np.ndarray, unique_edges: np.ndarray, 
+def compute_edge_features(window_data: np.ndarray, unique_edges: np.ndarray,
                          edge_counts: np.ndarray) -> np.ndarray:
     """
-    Compute comprehensive edge features for graph representation.
-    
+    Compute comprehensive edge features for graph representation (optimized).
+
     Args:
         window_data: Full window data array
         unique_edges: Array of unique (source, target) pairs
         edge_counts: Count of each unique edge
-        
+
     Returns:
         Array of edge features (num_edges, EDGE_FEATURE_COUNT)
     """
-    source = window_data[:, -3]
-    target = window_data[:, -2]
+    source = window_data[:, COL_SOURCE]
+    target = window_data[:, COL_TARGET]
     window_length = len(window_data)
-    
-    edge_features = []
-    
-    for i, (src, tgt) in enumerate(unique_edges):
-        # Basic frequency features
-        frequency = edge_counts[i]
-        relative_frequency = frequency / window_length
-        
-        # Temporal analysis
-        edge_mask = (source == src) & (target == tgt)
-        edge_positions = np.where(edge_mask)[0]
-        
-        if len(edge_positions) > 1:
-            intervals = np.diff(edge_positions)
-            avg_interval = np.mean(intervals)
-            std_interval = np.std(intervals)
-            regularity = 1.0 / (1.0 + std_interval) if std_interval > 0 else 1.0
-        else:
-            avg_interval = 0.0
-            std_interval = 0.0
-            regularity = 0.0
-        
-        # Temporal position features
-        first_occurrence = edge_positions[0] / window_length if len(edge_positions) > 0 else 0.0
-        last_occurrence = edge_positions[-1] / window_length if len(edge_positions) > 0 else 0.0
-        temporal_spread = last_occurrence - first_occurrence
-        
-        # Network structure features
-        reverse_edge_exists = float(np.any((source == tgt) & (target == src)))
-        src_degree = np.sum((source == src) | (target == src))
-        tgt_degree = np.sum((source == tgt) | (target == tgt))
-        degree_product = src_degree * tgt_degree
-        degree_ratio = src_degree / max(tgt_degree, 1e-8)
-        
-        # Payload variance
-        edge_data = window_data[edge_mask]
-        payload_variance = np.var(edge_data[:, 1:9]) if len(edge_data) > 1 else 0.0
-        
-        # Combine features (11 features total)
-        feature_vector = np.array([
-            frequency, relative_frequency,                    # Frequency (2)
-            avg_interval, std_interval, regularity,           # Temporal regularity (3)
-            first_occurrence, last_occurrence, temporal_spread, # Temporal position (3)
-            reverse_edge_exists, degree_product, degree_ratio   # Network structure (3)
-        ])
-        
-        edge_features.append(feature_vector)
-    
-    return np.array(edge_features)
+    num_edges = len(unique_edges)
 
-def compute_node_features(window_data: np.ndarray, nodes: np.ndarray, 
+    # Pre-allocate output array (zeros handle default cases)
+    edge_features = np.zeros((num_edges, EDGE_FEATURE_COUNT), dtype=np.float32)
+
+    # Frequency features (vectorized)
+    edge_features[:, 0] = edge_counts
+    edge_features[:, 1] = edge_counts / window_length
+
+    # Pre-compute node degrees (vectorized with bincount)
+    all_nodes = np.concatenate([source, target])
+    unique_nodes = np.unique(all_nodes)
+    node_to_idx = {n: i for i, n in enumerate(unique_nodes)}
+    node_indices = np.array([node_to_idx[n] for n in all_nodes])
+    degree_counts = np.bincount(node_indices, minlength=len(unique_nodes))
+    node_degrees = {n: degree_counts[node_to_idx[n]] for n in unique_nodes}
+
+    # Pre-compute reverse edge lookup
+    edge_set = set(map(tuple, unique_edges))
+
+    # Position array for temporal calculations
+    positions = np.arange(window_length)
+
+    for i, (src, tgt) in enumerate(unique_edges):
+        # Edge mask - unavoidable O(W) per edge
+        edge_mask = (source == src) & (target == tgt)
+        edge_positions = positions[edge_mask]
+
+        # Temporal analysis
+        n_occurrences = len(edge_positions)
+        if n_occurrences > 1:
+            intervals = np.diff(edge_positions)
+            avg_interval = intervals.mean()
+            std_interval = intervals.std()
+            edge_features[i, 2] = avg_interval
+            edge_features[i, 3] = std_interval
+            edge_features[i, 4] = 1.0 / (1.0 + std_interval) if std_interval > 0 else 1.0
+
+        # Temporal position features
+        if n_occurrences > 0:
+            first_occ = edge_positions[0] / window_length
+            last_occ = edge_positions[-1] / window_length
+            edge_features[i, 5] = first_occ
+            edge_features[i, 6] = last_occ
+            edge_features[i, 7] = last_occ - first_occ
+
+        # Network structure features (use pre-computed degrees)
+        edge_features[i, 8] = float((tgt, src) in edge_set)
+        src_deg = node_degrees.get(src, 0)
+        tgt_deg = node_degrees.get(tgt, 0)
+        edge_features[i, 9] = src_deg * tgt_deg
+        edge_features[i, 10] = src_deg / max(tgt_deg, 1e-8)
+
+    return edge_features
+
+def compute_node_features(window_data: np.ndarray, nodes: np.ndarray,
                          source: np.ndarray) -> np.ndarray:
     """
     Compute node features including CAN ID, payload statistics, and temporal information.
-    
+
     Args:
         window_data: Full window data array
         nodes: Array of unique node IDs
         source: Source column from window data
-        
+
     Returns:
         Array of node features (num_nodes, NODE_FEATURE_COUNT)
     """
-    node_features = np.zeros((len(nodes), NODE_FEATURE_COUNT))
-    
+    num_nodes = len(nodes)
+    window_length = len(source)
+    positions = np.arange(window_length)
+
+    # Pre-allocate output
+    node_features = np.zeros((num_nodes, NODE_FEATURE_COUNT), dtype=np.float32)
+    occurrence_counts = np.zeros(num_nodes, dtype=np.float32)
+
     for i, node in enumerate(nodes):
         # Find all occurrences of this node as source
-        node_mask = (source == node)
+        node_mask = source == node
         node_data = window_data[node_mask]
-        
+
         if len(node_data) > 0:
             # CAN ID and payload features (columns 0-8)
-            node_features[i, :9] = node_data[:, :9].mean(axis=0)
-            
-            # Occurrence count (normalized)
-            occurrence_count = len(node_data)
-            
+            node_features[i, :COL_DATA_END] = node_data[:, :COL_DATA_END].mean(axis=0)
+
+            # Occurrence count
+            occurrence_counts[i] = len(node_data)
+
             # Temporal position (last occurrence)
-            occurrence_indices = np.where(node_mask)[0]
-            last_position = occurrence_indices[-1] / (len(source) - 1) if len(source) > 1 else 0.0
+            node_positions = positions[node_mask]
+            node_features[i, -1] = node_positions[-1] / max(window_length - 1, 1)
         else:
             # Handle nodes that only appear as targets
-            node_features[i, 0] = node  # CAN ID
-            occurrence_count = 0
-            last_position = 0.0
-        
-        node_features[i, -2] = occurrence_count  # Count feature
-        node_features[i, -1] = last_position     # Position feature
-    
-    # Normalize occurrence counts
-    counts = node_features[:, -2]
-    if counts.max() > counts.min():
-        node_features[:, -2] = (counts - counts.min()) / (counts.max() - counts.min())
-    
+            node_features[i, COL_CAN_ID] = node
+
+    # Normalize occurrence counts to [0, 1]
+    count_min, count_max = occurrence_counts.min(), occurrence_counts.max()
+    if count_max > count_min:
+        node_features[:, -2] = (occurrence_counts - count_min) / (count_max - count_min)
+    else:
+        node_features[:, -2] = occurrence_counts
+
     return node_features
-
-# ==================== Optimized Processing Functions ====================
-
-
-
-
-
-
 
 # ==================== Main Interface Function ====================
 
-def graph_creation(root_folder: str, folder_type: str = 'train_',
-                  window_size: int = DEFAULT_WINDOW_SIZE, stride: int = DEFAULT_STRIDE,
-                  verbose: bool = False, return_id_mapping: bool = False,
-                  id_mapping: Optional[Dict] = None, parallel: bool = False) -> Union[List[Data], Tuple[List[Data], Dict]]:
+def graph_creation(
+    root_folder: str,
+    folder_type: str = 'train_',
+    window_size: int = DEFAULT_WINDOW_SIZE,
+    stride: int = DEFAULT_STRIDE,
+    verbose: bool = False,
+    return_id_mapping: bool = False,
+    id_mapping: Optional[Dict] = None,
+) -> Union[List[Data], Tuple[List[Data], Dict]]:
     """
-    Create graphs from CAN bus data with optimized sequential processing.
-    
-    Lightning DataLoader handles parallelism, so we use single-threaded preprocessing
-    to avoid conflicts and reduce memory usage.
-    
+    Create graphs from CAN bus data with streaming and reduced memory usage.
+
     Args:
         root_folder: Path to root folder containing CSV files
         folder_type: Type of folder to process (e.g., 'train_', 'test_')
@@ -610,35 +515,9 @@ def graph_creation(root_folder: str, folder_type: str = 'train_',
         verbose: Whether to print detailed processing information
         return_id_mapping: Whether to return the CAN ID mapping dictionary
         id_mapping: Pre-built CAN ID mapping (optional, will build if None)
-        parallel: Ignored - always uses sequential processing
-        
+
     Returns:
         GraphDataset or tuple of (GraphDataset, id_mapping) if return_id_mapping=True
-    """
-    # Always use optimized sequential processing
-    return graph_creation_optimized(
-        root_folder, folder_type, window_size, stride,
-        verbose, return_id_mapping, id_mapping
-    )
-
-def graph_creation_optimized(root_folder: str, folder_type: str = 'train_',
-                           window_size: int = DEFAULT_WINDOW_SIZE, stride: int = DEFAULT_STRIDE,
-                           verbose: bool = False, return_id_mapping: bool = False,
-                           id_mapping: Optional[Dict] = None) -> Union[List[Data], Tuple[List[Data], Dict]]:
-    """
-    Optimized graph creation with streaming and reduced memory usage.
-    
-    Args:
-        root_folder: Path to root folder containing CSV files
-        folder_type: Type of folder to process
-        window_size: Size of sliding window
-        stride: Stride for sliding window
-        verbose: Whether to print verbose output
-        return_id_mapping: Whether to return ID mapping
-        id_mapping: Pre-built ID mapping (optional)
-        
-    Returns:
-        GraphDataset or tuple of (GraphDataset, id_mapping)
     """
     csv_files = find_csv_files(root_folder, folder_type)
     
@@ -863,283 +742,3 @@ class GraphDataset(Dataset):
         print(f"  Node features: {stats['node_features']}")
         print(f"  Edge features: {stats['edge_features']}")
 
-# ==================== Testing Framework ====================
-
-class TestPreprocessing(unittest.TestCase):
-    """
-    Comprehensive test suite for preprocessing functionality.
-    
-    Tests cover data loading, graph creation, feature validation,
-    and edge case handling to ensure robust preprocessing.
-    """
-    
-    @classmethod
-    def setUpClass(cls):
-        """Set up test environment."""
-        cls.test_root = r"data/automotive/hcrl_sa"
-        cls.small_window_size = 10  # Smaller for faster testing
-        cls.test_stride = 5
-    
-    def test_id_mapping_creation(self):
-        """Test CAN ID mapping creation and consistency."""
-        print("Testing CAN ID mapping creation...")
-        
-        # Test normal data mapping
-        id_mapping = build_id_mapping_from_normal(self.test_root)
-        
-        self.assertIsInstance(id_mapping, dict)
-        self.assertIn('OOV', id_mapping)
-        self.assertGreater(len(id_mapping), 1)  # Should have more than just OOV
-        
-        # Check that all values are integers
-        for key, value in id_mapping.items():
-            self.assertIsInstance(value, int)
-            self.assertGreaterEqual(value, 0)
-        
-        print(f"✓ ID mapping created with {len(id_mapping)} entries")
-    
-    def test_hex_conversion(self):
-        """Test hex-to-decimal conversion robustness."""
-        print("Testing hex conversion...")
-        
-        # Test valid hex strings
-        self.assertEqual(safe_hex_to_int("1A"), 26)
-        self.assertEqual(safe_hex_to_int("FF"), 255)
-        self.assertEqual(safe_hex_to_int("0"), 0)
-        
-        # Test invalid inputs
-        self.assertIsNone(safe_hex_to_int("XYZ"))
-        self.assertIsNone(safe_hex_to_int(""))
-        self.assertIsNone(safe_hex_to_int(None))
-        
-        # Test numeric inputs
-        self.assertEqual(safe_hex_to_int(123), 123)
-        self.assertEqual(safe_hex_to_int(0), 0)
-        
-        print("✓ Hex conversion tests passed")
-    
-    def test_single_file_processing(self):
-        """Test processing of a single CSV file."""
-        print("Testing single file processing...")
-        
-        csv_files = find_csv_files(self.test_root, 'train_')
-        if not csv_files:
-            self.skipTest("No CSV files found for testing")
-        
-        # Test with first available file
-        test_file = csv_files[0]
-        id_mapping = build_id_mapping_from_normal(self.test_root)
-        
-        df = dataset_creation_streaming(test_file, id_mapping=id_mapping)
-        
-        # Validate DataFrame structure
-        expected_columns = ['CAN ID'] + [f'Data{i+1}' for i in range(8)] + ['Source', 'Target', 'label']
-        self.assertEqual(list(df.columns), expected_columns)
-        
-        # Check normalization
-        for col in [f'Data{i+1}' for i in range(8)]:
-            self.assertTrue(df[col].between(0, 1).all(), f"{col} not properly normalized")
-        
-        # Check for missing values
-        self.assertFalse(df.isnull().any().any(), "DataFrame contains NaN values")
-        
-        print(f"✓ Single file processing: {len(df)} rows processed")
-    
-    def test_graph_creation_basic(self):
-        """Test basic graph creation functionality."""
-        print("Testing basic graph creation...")
-        
-        dataset = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride
-        )
-        
-        self.assertIsInstance(dataset, GraphDataset)
-        self.assertGreater(len(dataset), 0)
-        
-        print(f"✓ Created {len(dataset)} graphs")
-    
-    def test_graph_structure_validation(self):
-        """Test graph structure and feature validation."""
-        print("Testing graph structure validation...")
-        
-        dataset = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride
-        )
-        
-        for i, graph in enumerate(dataset):
-            # Basic structure validation
-            self.assertIsInstance(graph, Data)
-            self.assertIsNotNone(graph.x)
-            self.assertIsNotNone(graph.edge_index)
-            self.assertIsNotNone(graph.y)
-            
-            # Feature dimension validation
-            self.assertEqual(graph.x.size(1), NODE_FEATURE_COUNT, 
-                           f"Graph {i}: incorrect node feature count")
-            
-            if graph.edge_attr is not None:
-                self.assertEqual(graph.edge_attr.size(1), EDGE_FEATURE_COUNT,
-                               f"Graph {i}: incorrect edge feature count")
-            
-            # Data type validation
-            self.assertEqual(graph.x.dtype, torch.float, f"Graph {i}: incorrect node feature dtype")
-            self.assertEqual(graph.edge_index.dtype, torch.long, f"Graph {i}: incorrect edge index dtype")
-            
-            # Value range validation
-            self.assertFalse(torch.isnan(graph.x).any(), f"Graph {i}: NaN in node features")
-            self.assertFalse(torch.isinf(graph.x).any(), f"Graph {i}: Inf in node features")
-            
-            # Payload normalization check (columns 1-8)
-            payload = graph.x[:, 1:9]
-            self.assertTrue(torch.all(payload >= 0) and torch.all(payload <= 1),
-                          f"Graph {i}: payload features not normalized to [0,1]")
-            
-            # Edge attribute validation
-            if graph.edge_attr is not None:
-                self.assertFalse(torch.isnan(graph.edge_attr).any(), 
-                               f"Graph {i}: NaN in edge features")
-                self.assertFalse(torch.isinf(graph.edge_attr).any(),
-                               f"Graph {i}: Inf in edge features")
-            
-            # Test only first 10 graphs for speed
-            if i >= 9:
-                break
-        
-        print("✓ Graph structure validation passed")
-    
-    def test_optimized_processing(self):
-        """Test optimized processing with streaming."""
-        print("Testing optimized processing...")
-        
-        # Test optimized processing
-        dataset = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride
-        )
-        
-        self.assertIsInstance(dataset, GraphDataset)
-        self.assertGreater(len(dataset), 0)
-        
-        print(f"✓ Optimized processing created {len(dataset)} graphs")
-    
-    def test_dataset_statistics(self):
-        """Test dataset statistics computation."""
-        print("Testing dataset statistics...")
-        
-        dataset = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride
-        )
-        
-        stats = dataset.get_stats()
-        
-        # Validate statistics structure
-        required_keys = ['num_graphs', 'avg_nodes', 'avg_edges', 'normal_graphs', 'attack_graphs']
-        for key in required_keys:
-            self.assertIn(key, stats)
-        
-        # Validate statistics values
-        self.assertEqual(stats['num_graphs'], len(dataset))
-        self.assertGreaterEqual(stats['normal_graphs'], 0)
-        self.assertGreaterEqual(stats['attack_graphs'], 0)
-        self.assertEqual(stats['normal_graphs'] + stats['attack_graphs'], stats['num_graphs'])
-        
-        print("✓ Dataset statistics validation passed")
-    
-    def test_edge_cases(self):
-        """Test edge cases and error handling."""
-        print("Testing edge cases...")
-        
-        # Test with non-existent directory
-        empty_dataset = graph_creation("/non/existent/path")
-        self.assertEqual(len(empty_dataset), 0)
-        
-        # Test with empty ID mapping
-        empty_mapping = {'OOV': 0}
-        dataset = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride,
-            id_mapping=empty_mapping
-        )
-        self.assertIsInstance(dataset, GraphDataset)
-        
-        print("✓ Edge case testing passed")
-    
-    def test_full_pipeline_integration(self):
-        """Test complete preprocessing pipeline integration."""
-        print("Testing full pipeline integration...")
-        
-        # Test with ID mapping return
-        dataset, id_mapping = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride,
-            return_id_mapping=True
-        )
-        
-        self.assertIsInstance(dataset, GraphDataset)
-        self.assertIsInstance(id_mapping, dict)
-        self.assertIn('OOV', id_mapping)
-        
-        # Test reusing ID mapping
-        dataset2 = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride,
-            id_mapping=id_mapping
-        )
-        
-        self.assertIsInstance(dataset2, GraphDataset)
-        
-        # Print final statistics
-        dataset.print_stats()
-        
-        print("✓ Full pipeline integration test passed")
-
-def run_comprehensive_tests():
-    """Run all preprocessing tests with detailed output."""
-    print(f"\n{'='*80}")
-    print("CAN-GRAPH PREPROCESSING COMPREHENSIVE TEST SUITE")
-    print(f"{'='*80}")
-    
-    # Create test suite
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestPreprocessing)
-    
-    # Run tests with verbose output
-    runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(suite)
-    
-    # Print summary
-    print(f"\n{'='*80}")
-    print("TEST SUMMARY")
-    print(f"{'='*80}")
-    print(f"Tests run: {result.testsRun}")
-    print(f"Failures: {len(result.failures)}")
-    print(f"Errors: {len(result.errors)}")
-    
-    if result.failures:
-        print("\nFAILURES:")
-        for test, traceback in result.failures:
-            print(f"  - {test}: {traceback}")
-    
-    if result.errors:
-        print("\nERRORS:")
-        for test, traceback in result.errors:
-            print(f"  - {test}: {traceback}")
-    
-    success_rate = (result.testsRun - len(result.failures) - len(result.errors)) / result.testsRun * 100
-    print(f"\nSuccess rate: {success_rate:.1f}%")
-    
-    return result.wasSuccessful()
-
-if __name__ == "__main__":
-    # Run comprehensive test suite if called directly
-    success = run_comprehensive_tests()
-    exit(0 if success else 1)

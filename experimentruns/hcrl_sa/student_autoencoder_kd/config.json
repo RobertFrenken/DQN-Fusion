@@ -15,7 +15,7 @@
   "scheduler_t_max": -1,
   "scheduler_step_size": 50,
   "scheduler_gamma": 0.1,
-  "gradient_checkpointing": false,
+  "gradient_checkpointing": true,
   "use_teacher_cache": true,
   "clear_cache_every_n": 100,
   "offload_teacher_to_cpu": false,

@@ -161,19 +161,32 @@ def load_dataset(
 
 def _load_cached_data(cache_file, id_mapping_file, dataset_name):
     """Load cached graphs and ID mapping with robust error handling.
-    
+
     Note: Uses weights_only=False to support PyTorch Geometric Data objects.
     This is safe for our own cached data but should not be used with untrusted files.
-    TODO: Migrate to safetensors format for improved security.
+
+    Memory optimization (PyTorch 2.1+): Uses mmap=True to memory-map the cache file,
+    reducing RAM usage by loading graph data on-demand rather than all at once.
+    This is especially important for large datasets (set_01-04, hcrl_ch).
     """
     if not (cache_file.exists() and id_mapping_file.exists()):
         return None, None
-    
+
     try:
         import pickle
-        # Note: weights_only=False is required for PyG Data objects
-        # This is safe for our own cached data but be cautious with untrusted files
+        # Memory-mapped loading: graphs are loaded on-demand from disk
+        # instead of fully deserializing into RAM. Requires PyTorch 2.1+.
+        # This significantly reduces memory for large datasets.
         try:
+            graphs = torch.load(
+                cache_file,
+                map_location='cpu',
+                weights_only=False,
+                mmap=True,  # Memory-map for reduced RAM usage
+            )
+        except TypeError:
+            # Fallback for older PyTorch versions without mmap support
+            logger.warning("mmap not supported (PyTorch < 2.1), using standard load")
             graphs = torch.load(cache_file, map_location='cpu', weights_only=False)
         except Exception as e:
             logger.warning(f"Cache load failed (possibly corrupted): {e}")
