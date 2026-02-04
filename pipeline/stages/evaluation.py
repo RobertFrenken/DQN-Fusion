@@ -127,6 +127,9 @@ def evaluate(cfg: PipelineConfig) -> dict:
             batch_size=fusion_cfg.dqn_batch_size,
             target_update_freq=fusion_cfg.dqn_target_update,
             device=str(device),
+            alpha_steps=fusion_cfg.alpha_steps,
+            hidden_dim=fusion_cfg.dqn_hidden,
+            num_layers=fusion_cfg.dqn_layers,
         )
         fusion_sd = torch.load(fusion_ckpt, map_location="cpu", weights_only=True)
         agent.q_network.load_state_dict(fusion_sd["q_network"])

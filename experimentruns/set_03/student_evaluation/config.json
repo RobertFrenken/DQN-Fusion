@@ -1,7 +1,7 @@
 {
-  "dataset": "hcrl_sa",
+  "dataset": "set_03",
   "modality": "automotive",
-  "model_size": "teacher",
+  "model_size": "student",
   "seed": 42,
   "lr": 0.003,
   "max_epochs": 300,
@@ -20,7 +20,7 @@
   "clear_cache_every_n": 100,
   "offload_teacher_to_cpu": false,
   "optimize_batch_size": true,
-  "safety_factor": 0.45,
+  "safety_factor": 0.5,
   "batch_size_mode": "binsearch",
   "max_batch_size_trials": 10,
   "memory_estimation": "measured",

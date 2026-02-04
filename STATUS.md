@@ -1,6 +1,6 @@
 # KD-GAT Pipeline Status
 
-Last updated: 2026-02-03
+Last updated: 2026-02-04
 
 ## Bugs Fixed
 
@@ -93,6 +93,25 @@ that `graph_creation` uses internally.
 **Fix:** Single `MMAP_TENSOR_LIMIT` constant in `src/training/datamodules.py`, imported
 by `pipeline/stages/utils.py`.
 
+### 13. Evaluation DQN agent missing `hidden_dim`, `num_layers`, `alpha_steps` (HIGH)
+**File:** `pipeline/stages/evaluation.py`
+**Root cause:** `EnhancedDQNFusionAgent()` in evaluation was not updated when Issue #9
+fixed the same constructor call in `fusion.py`. The evaluation instantiation used
+default `hidden_dim=128, num_layers=3`, causing a `RuntimeError: size mismatch` when
+loading trained checkpoints (teacher: 576/3, student: 160/2).
+**Fix:** Added `alpha_steps=fusion_cfg.alpha_steps`, `hidden_dim=fusion_cfg.dqn_hidden`,
+`num_layers=fusion_cfg.dqn_layers` to match the working call in `fusion.py`.
+
+### 14. Validation rejects `use_kd=True` for evaluation stage (HIGH)
+**File:** `pipeline/validate.py`
+**Symptom:** All `student_evaluation_kd` jobs fail immediately with
+`ValueError: use_kd=True but teacher_path is empty`.
+**Root cause:** The `teacher_path` check at line 40 fired unconditionally for all stages.
+Evaluation doesn't use the teacher — `use_kd` only affects path resolution to find
+`student_*_kd/` directories. The Snakefile passes `--use-kd true` without
+`--teacher-path`, so validation rejected the config before evaluation could start.
+**Fix:** Added `stage != "evaluation"` guard to the `teacher_path` check.
+
 ## Known Limitations (not bugs, but worth knowing)
 
 ### Frozen configs contain irrelevant architecture fields
@@ -118,22 +137,26 @@ The counter is not synced with the trainer's actual epoch.
 
 ## Checkpoint Status
 
-| Dataset  | teacher_auto | teacher_curr | teacher_fusion | student_auto | student_auto_kd |
-|----------|:---:|:---:|:---:|:---:|:---:|
-| hcrl_sa  | ok  | ok  | DELETED* | ok  | ok  |
-| hcrl_ch  | ok  | MISSING | -  | ok  | ok  |
-| set_01   | ok  | MISSING | -  | ok  | ok  |
-| set_02   | ok  | MISSING | -  | ok  | ok  |
-| set_03   | ok  | MISSING | -  | ok  | ok  |
-| set_04   | ok  | MISSING | -  | ok  | ok  |
+### Fusion checkpoint audit (2026-02-04)
 
-"MISSING" = `config.json` exists but `best_model.pt` does not (training not yet completed).
-"-" = depends on a MISSING prerequisite.
-"DELETED*" = old checkpoint deleted because DQN architecture changed (was hardcoded
-128 hidden, now uses config values 576/160). Will retrain automatically.
+All 18 fusion checkpoints were inspected to verify their weights match the config's
+`dqn_hidden` and `dqn_layers`. 17 of 18 are clean. One is stale from before Issue #9:
 
-Snakemake's DAG correctly handles this: it will train the missing stages before
-starting dependent stages.
+| Dataset  | teacher_fusion | student_fusion_kd | student_fusion |
+|----------|:-:|:-:|:-:|
+| hcrl_sa  | ok (576/3) | ok (160/2) | **STALE** (128/4 → needs 160/2) |
+| hcrl_ch  | ok (576/3) | ok (160/2) | ok (160/2) |
+| set_01   | ok (576/3) | ok (160/2) | ok (160/2) |
+| set_02   | ok (576/3) | ok (160/2) | ok (160/2) |
+| set_03   | ok (576/3) | ok (160/2) | ok (160/2) |
+| set_04   | ok (576/3) | ok (160/2) | ok (160/2) |
+
+Format: (hidden_dim/num_layers). "STALE" = checkpoint weights don't match config;
+must be deleted and retrained.
+
+**Action required:** Delete `experimentruns/hcrl_sa/student_fusion/best_model.pt`
+and re-run the fusion training so Snakemake retrains it with correct architecture.
+Evaluation for `hcrl_sa/student_evaluation` will then succeed.
 
 ## Integration Tests
 

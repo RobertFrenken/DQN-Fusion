@@ -1,0 +1,436 @@
+{
+  "gat": {
+    "core": {
+      "accuracy": 0.999466097170315,
+      "precision": 1.0,
+      "recall": 0.9960159362549801,
+      "f1": 0.998003992015968,
+      "specificity": 1.0,
+      "balanced_accuracy": 0.99800796812749,
+      "mcc": 0.9976984755238361,
+      "fpr": 0.0,
+      "fnr": 0.00398406374501992,
+      "n_samples": 1873,
+      "auc": 1.0
+    },
+    "additional": {
+      "kappa": 0.9976958270234095,
+      "tpr": 0.9960159362549801,
+      "tnr": 1.0,
+      "detection_rate": 0.9960159362549801,
+      "miss_rate": 0.00398406374501992,
+      "pr_auc": 1.0,
+      "detection_at_fpr": {
+        "0.05": 1.0,
+        "0.01": 1.0,
+        "0.001": 0.0
+      }
+    }
+  },
+  "vgae": {
+    "core": {
+      "accuracy": 0.8190069407367859,
+      "precision": 0.4126984126984127,
+      "recall": 0.8286852589641435,
+      "f1": 0.5509933774834437,
+      "specificity": 0.8175092478421702,
+      "balanced_accuracy": 0.8230972534031569,
+      "mcc": 0.49637346290895523,
+      "fpr": 0.18249075215782984,
+      "fnr": 0.17131474103585656,
+      "n_samples": 1873,
+      "auc": 0.908577772756078,
+      "optimal_threshold": 0.04039663448929787,
+      "youden_j": 0.6501785705513335
+    },
+    "additional": {
+      "kappa": 0.45315375757789755,
+      "tpr": 0.8286852589641435,
+      "tnr": 0.8175092478421702,
+      "detection_rate": 0.8286852589641435,
+      "miss_rate": 0.17131474103585656,
+      "pr_auc": 0.7384575335714849,
+      "detection_at_fpr": {
+        "0.05": 0.5896414342629482,
+        "0.01": 0.4701195219123506,
+        "0.001": 0.4541832669322709
+      }
+    }
+  },
+  "fusion": {
+    "core": {
+      "accuracy": 1.0,
+      "precision": 1.0,
+      "recall": 1.0,
+      "f1": 1.0,
+      "specificity": 1.0,
+      "balanced_accuracy": 1.0,
+      "mcc": 1.0,
+      "fpr": 0.0,
+      "fnr": 0.0,
+      "n_samples": 1873,
+      "auc": 1.0
+    },
+    "additional": {
+      "kappa": 1.0,
+      "tpr": 1.0,
+      "tnr": 1.0,
+      "detection_rate": 1.0,
+      "miss_rate": 0.0,
+      "pr_auc": 1.0,
+      "detection_at_fpr": {
+        "0.05": 1.0,
+        "0.01": 1.0,
+        "0.001": 0.0
+      }
+    }
+  },
+  "test": {
+    "gat": {
+      "test_01_known_vehicle_known_attack": {
+        "core": {
+          "accuracy": 0.9987481221832749,
+          "precision": 1.0,
+          "recall": 0.9974066390041494,
+          "f1": 0.9987016359387172,
+          "specificity": 1.0,
+          "balanced_accuracy": 0.9987033195020747,
+          "mcc": 0.9974961691776956,
+          "fpr": 0.0,
+          "fnr": 0.0025933609958506223,
+          "n_samples": 3994,
+          "auc": 0.9991519483597305
+        },
+        "additional": {
+          "kappa": 0.9974930346031525,
+          "tpr": 0.9974066390041494,
+          "tnr": 1.0,
+          "detection_rate": 0.9974066390041494,
+          "miss_rate": 0.0025933609958506223,
+          "pr_auc": 0.9994343051149391,
+          "detection_at_fpr": {
+            "0.05": 0.9979253112033195,
+            "0.01": 0.0,
+            "0.001": 0.0
+          }
+        }
+      },
+      "test_02_unknown_vehicle_known_attack": {
+        "core": {
+          "accuracy": 0.40515851692638366,
+          "precision": 0.40515851692638366,
+          "recall": 1.0,
+          "f1": 0.5766730401529637,
+          "specificity": 0.0,
+          "balanced_accuracy": 0.5,
+          "mcc": 0.0,
+          "fpr": 1.0,
+          "fnr": 0.0,
+          "n_samples": 1861,
+          "auc": 0.966576332429991
+        },
+        "additional": {
+          "kappa": 0.0,
+          "tpr": 1.0,
+          "tnr": 0.0,
+          "detection_rate": 1.0,
+          "miss_rate": 0.0,
+          "pr_auc": 0.9553140096618358,
+          "detection_at_fpr": {
+            "0.05": 1.0,
+            "0.01": 0.0,
+            "0.001": 0.0
+          }
+        }
+      },
+      "test_03_known_vehicle_unknown_attack": {
+        "core": {
+          "accuracy": 0.6212418300653595,
+          "precision": 0.0,
+          "recall": 0.0,
+          "f1": 0.0,
+          "specificity": 1.0,
+          "balanced_accuracy": 0.5,
+          "mcc": 0.0,
+          "fpr": 0.0,
+          "fnr": 1.0,
+          "n_samples": 3060,
+          "auc": 0.8158060400524858
+        },
+        "additional": {
+          "kappa": 0.0,
+          "tpr": 0.0,
+          "tnr": 1.0,
+          "detection_rate": 0.0,
+          "miss_rate": 1.0,
+          "pr_auc": 0.74479584987501,
+          "detection_at_fpr": {
+            "0.05": 0.37359792924935287,
+            "0.01": 0.20189818809318377,
+            "0.001": 0.09663503019844694
+          }
+        }
+      },
+      "test_04_unknown_vehicle_unknown_attack": {
+        "core": {
+          "accuracy": 0.39146800501882056,
+          "precision": 0.39146800501882056,
+          "recall": 1.0,
+          "f1": 0.5626690712353472,
+          "specificity": 0.0,
+          "balanced_accuracy": 0.5,
+          "mcc": 0.0,
+          "fpr": 1.0,
+          "fnr": 0.0,
+          "n_samples": 797,
+          "auc": 0.8979084060269628
+        },
+        "additional": {
+          "kappa": 0.0,
+          "tpr": 1.0,
+          "tnr": 0.0,
+          "detection_rate": 1.0,
+          "miss_rate": 0.0,
+          "pr_auc": 0.8323600261292508,
+          "detection_at_fpr": {
+            "0.05": 0.5064102564102564,
+            "0.01": 0.1282051282051282,
+            "0.001": 0.0
+          }
+        }
+      }
+    },
+    "vgae": {
+      "test_01_known_vehicle_known_attack": {
+        "core": {
+          "accuracy": 0.6760140210315473,
+          "precision": 0.5983860955927995,
+          "recall": 1.0,
+          "f1": 0.74873786407767,
+          "specificity": 0.3736689254598258,
+          "balanced_accuracy": 0.6868344627299129,
+          "mcc": 0.4728618078786465,
+          "fpr": 0.6263310745401742,
+          "fnr": 0.0,
+          "n_samples": 3994,
+          "auc": 0.922164525030829,
+          "threshold_from_val": 0.04039663448929787
+        },
+        "additional": {
+          "kappa": 0.36547662953826787,
+          "tpr": 1.0,
+          "tnr": 0.3736689254598258,
+          "detection_rate": 1.0,
+          "miss_rate": 0.0,
+          "pr_auc": 0.926150102074623,
+          "detection_at_fpr": {
+            "0.05": 0.6628630705394191,
+            "0.01": 0.6358921161825726,
+            "0.001": 0.6198132780082988
+          }
+        }
+      },
+      "test_02_unknown_vehicle_known_attack": {
+        "core": {
+          "accuracy": 0.40515851692638366,
+          "precision": 0.40515851692638366,
+          "recall": 1.0,
+          "f1": 0.5766730401529637,
+          "specificity": 0.0,
+          "balanced_accuracy": 0.5,
+          "mcc": 0.0,
+          "fpr": 1.0,
+          "fnr": 0.0,
+          "n_samples": 1861,
+          "auc": 0.36515278945892904,
+          "threshold_from_val": 0.04039663448929787
+        },
+        "additional": {
+          "kappa": 0.0,
+          "tpr": 1.0,
+          "tnr": 0.0,
+          "detection_rate": 1.0,
+          "miss_rate": 0.0,
+          "pr_auc": 0.3265585081200383,
+          "detection_at_fpr": {
+            "0.05": 0.022546419098143235,
+            "0.01": 0.001326259946949602,
+            "0.001": 0.0
+          }
+        }
+      },
+      "test_03_known_vehicle_unknown_attack": {
+        "core": {
+          "accuracy": 0.6104575163398693,
+          "precision": 0.4929817099106763,
+          "recall": 1.0,
+          "f1": 0.6603988603988604,
+          "specificity": 0.3729615991583377,
+          "balanced_accuracy": 0.6864807995791689,
+          "mcc": 0.4287927784887446,
+          "fpr": 0.6270384008416623,
+          "fnr": 0.0,
+          "n_samples": 3060,
+          "auc": 0.9602815647184467,
+          "threshold_from_val": 0.04039663448929787
+        },
+        "additional": {
+          "kappa": 0.31061568533024686,
+          "tpr": 1.0,
+          "tnr": 0.3729615991583377,
+          "detection_rate": 1.0,
+          "miss_rate": 0.0,
+          "pr_auc": 0.9429975212075842,
+          "detection_at_fpr": {
+            "0.05": 0.7842968075927523,
+            "0.01": 0.6082830025884383,
+            "0.001": 0.44348576358930114
+          }
+        }
+      },
+      "test_04_unknown_vehicle_unknown_attack": {
+        "core": {
+          "accuracy": 0.39146800501882056,
+          "precision": 0.39146800501882056,
+          "recall": 1.0,
+          "f1": 0.5626690712353472,
+          "specificity": 0.0,
+          "balanced_accuracy": 0.5,
+          "mcc": 0.0,
+          "fpr": 1.0,
+          "fnr": 0.0,
+          "n_samples": 797,
+          "auc": 0.5345559080095164,
+          "threshold_from_val": 0.04039663448929787
+        },
+        "additional": {
+          "kappa": 0.0,
+          "tpr": 1.0,
+          "tnr": 0.0,
+          "detection_rate": 1.0,
+          "miss_rate": 0.0,
+          "pr_auc": 0.4155116622011469,
+          "detection_at_fpr": {
+            "0.05": 0.060897435897435896,
+            "0.01": 0.009615384615384616,
+            "0.001": 0.0
+          }
+        }
+      }
+    },
+    "fusion": {
+      "test_01_known_vehicle_known_attack": {
+        "core": {
+          "accuracy": 0.99899849774662,
+          "precision": 1.0,
+          "recall": 0.9979253112033195,
+          "f1": 0.9989615784008308,
+          "specificity": 1.0,
+          "balanced_accuracy": 0.9989626556016598,
+          "mcc": 0.9979964694897662,
+          "fpr": 0.0,
+          "fnr": 0.002074688796680498,
+          "n_samples": 3994,
+          "auc": 0.9991967610352155
+        },
+        "additional": {
+          "kappa": 0.9979944624265499,
+          "tpr": 0.9979253112033195,
+          "tnr": 1.0,
+          "detection_rate": 0.9979253112033195,
+          "miss_rate": 0.002074688796680498,
+          "pr_auc": 0.9995712122540295,
+          "detection_at_fpr": {
+            "0.05": 0.9984439834024896,
+            "0.01": 0.9984439834024896,
+            "0.001": 0.0
+          }
+        }
+      },
+      "test_02_unknown_vehicle_known_attack": {
+        "core": {
+          "accuracy": 0.40515851692638366,
+          "precision": 0.40515851692638366,
+          "recall": 1.0,
+          "f1": 0.5766730401529637,
+          "specificity": 0.0,
+          "balanced_accuracy": 0.5,
+          "mcc": 0.0,
+          "fpr": 1.0,
+          "fnr": 0.0,
+          "n_samples": 1861,
+          "auc": 0.5106502148133772
+        },
+        "additional": {
+          "kappa": 0.0,
+          "tpr": 1.0,
+          "tnr": 0.0,
+          "detection_rate": 1.0,
+          "miss_rate": 0.0,
+          "pr_auc": 0.37111304856284805,
+          "detection_at_fpr": {
+            "0.05": 0.003978779840848806,
+            "0.01": 0.003978779840848806,
+            "0.001": 0.001326259946949602
+          }
+        }
+      },
+      "test_03_known_vehicle_unknown_attack": {
+        "core": {
+          "accuracy": 0.642483660130719,
+          "precision": 1.0,
+          "recall": 0.056082830025884385,
+          "f1": 0.10620915032679738,
+          "specificity": 1.0,
+          "balanced_accuracy": 0.5280414150129422,
+          "mcc": 0.1886720661376147,
+          "fpr": 0.0,
+          "fnr": 0.9439171699741156,
+          "n_samples": 3060,
+          "auc": 0.624798537076213
+        },
+        "additional": {
+          "kappa": 0.06874709647626964,
+          "tpr": 0.056082830025884385,
+          "tnr": 1.0,
+          "detection_rate": 0.056082830025884385,
+          "miss_rate": 0.9439171699741156,
+          "pr_auc": 0.7169554905641965,
+          "detection_at_fpr": {
+            "0.05": 0.27351164797238997,
+            "0.01": 0.26488352027610007,
+            "0.001": 0.0
+          }
+        }
+      },
+      "test_04_unknown_vehicle_unknown_attack": {
+        "core": {
+          "accuracy": 0.39146800501882056,
+          "precision": 0.39146800501882056,
+          "recall": 1.0,
+          "f1": 0.5626690712353472,
+          "specificity": 0.0,
+          "balanced_accuracy": 0.5,
+          "mcc": 0.0,
+          "fpr": 1.0,
+          "fnr": 0.0,
+          "n_samples": 797,
+          "auc": 0.4971880782447793
+        },
+        "additional": {
+          "kappa": 0.0,
+          "tpr": 1.0,
+          "tnr": 0.0,
+          "detection_rate": 1.0,
+          "miss_rate": 0.0,
+          "pr_auc": 0.3242774250338808,
+          "detection_at_fpr": {
+            "0.05": 0.003205128205128205,
+            "0.01": 0.003205128205128205,
+            "0.001": 0.0
+          }
+        }
+      }
+    }
+  }
+}

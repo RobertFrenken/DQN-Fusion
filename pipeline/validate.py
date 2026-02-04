@@ -37,7 +37,7 @@ def validate(cfg: PipelineConfig, stage: str) -> None:
     if cfg.model_size == "student" and not cfg.use_kd:
         _log.warning("Student without KD — running as ablation baseline")
 
-    if cfg.use_kd and not cfg.teacher_path:
+    if cfg.use_kd and not cfg.teacher_path and stage != "evaluation":
         errors.append("use_kd=True but teacher_path is empty")
 
     if cfg.use_kd and cfg.teacher_path:
