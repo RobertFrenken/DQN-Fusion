@@ -33,7 +33,7 @@ distillation_modes:
 
 slurm_account: PAS3209
 slurm_partition: gpu
-slurm_email: frugoli.1@osu.edu
+slurm_email: frenken.2@osu.edu
 
 # ============================================================================
 # Resource Defaults (can be overridden per-rule in Snakefile)

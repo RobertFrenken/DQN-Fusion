@@ -189,14 +189,54 @@ def _lightning_tune_batch_size(
 # DataLoader factory
 # ---------------------------------------------------------------------------
 
+from src.training.datamodules import MMAP_TENSOR_LIMIT
+
+
+def _estimate_tensor_count(data) -> int:
+    """Estimate number of tensor storages in a graph dataset."""
+    if not data:
+        return 0
+    sample = data[0]
+    tensors_per_graph = sum(
+        1 for attr in ['x', 'edge_index', 'y', 'edge_attr', 'batch']
+        if hasattr(sample, attr) and getattr(sample, attr) is not None
+    )
+    return len(data) * tensors_per_graph
+
+
+def _safe_num_workers(data, cfg: PipelineConfig) -> int:
+    """Return num_workers, falling back to 0 if dataset exceeds mmap limits.
+
+    With spawn multiprocessing, every tensor storage needs a separate mmap
+    entry.  Calling share_memory_() does NOT help — it also creates one mmap
+    per tensor.  The only safe option for large datasets is num_workers=0.
+    """
+    nw = cfg.num_workers
+    if nw > 0 and cfg.mp_start_method == "spawn":
+        tensor_count = _estimate_tensor_count(data)
+        if tensor_count > MMAP_TENSOR_LIMIT:
+            log.warning(
+                "Dataset has %d tensor storages (limit %d for vm.max_map_count). "
+                "Falling back to num_workers=0 to avoid mmap OOM.",
+                tensor_count, MMAP_TENSOR_LIMIT
+            )
+            return 0
+    return nw
+
+
 def make_dataloader(
     data,
     cfg: PipelineConfig,
     batch_size: int,
     shuffle: bool = True,
 ) -> DataLoader:
-    """Create a DataLoader with consistent settings."""
-    nw = cfg.num_workers
+    """Create a DataLoader with consistent settings.
+
+    Falls back to single-process loading (num_workers=0) when the dataset has
+    too many tensor storages for the kernel mmap limit.
+    """
+    nw = _safe_num_workers(data, cfg)
+
     return DataLoader(
         data,
         batch_size=batch_size,
@@ -238,15 +278,12 @@ def load_teacher(
     sd = _extract_state_dict(checkpoint)
 
     teacher_cfg_path = Path(teacher_path).parent / "config.json"
-    if teacher_cfg_path.exists():
-        try:
-            tcfg = PipelineConfig.load(teacher_cfg_path)
-        except Exception as e:
-            log.warning("Could not load teacher config %s: %s", teacher_cfg_path, e)
-            tcfg = cfg
-    else:
-        log.warning("No teacher config at %s, falling back to current cfg", teacher_cfg_path)
-        tcfg = cfg
+    if not teacher_cfg_path.exists():
+        raise FileNotFoundError(
+            f"Teacher config not found: {teacher_cfg_path}. "
+            f"Cannot load teacher without its frozen config (risk of dimension mismatch)."
+        )
+    tcfg = PipelineConfig.load(teacher_cfg_path)
 
     if model_type == "vgae":
         from src.models.vgae import GraphAutoencoderNeighborhood
@@ -260,7 +297,7 @@ def load_teacher(
             encoder_heads=tcfg.vgae_heads, embedding_dim=tcfg.vgae_embedding_dim,
             dropout=tcfg.vgae_dropout,
         )
-        teacher.load_state_dict(sd, strict=False)
+        teacher.load_state_dict(sd)
         log.info("Loaded VGAE teacher: latent_dim=%d, num_ids=%d",
                  tcfg.vgae_latent_dim, t_num_ids)
 
@@ -276,7 +313,7 @@ def load_teacher(
             num_layers=tcfg.gat_layers, heads=tcfg.gat_heads,
             dropout=tcfg.gat_dropout, embedding_dim=tcfg.gat_embedding_dim,
         )
-        teacher.load_state_dict(sd, strict=False)
+        teacher.load_state_dict(sd)
         log.info("Loaded GAT teacher: hidden=%d, layers=%d, num_ids=%d",
                  tcfg.gat_hidden, tcfg.gat_layers, t_num_ids)
 
@@ -284,15 +321,16 @@ def load_teacher(
         from src.models.dqn import QNetwork
 
         state_dim = 15
-        action_dim = cfg.alpha_steps
-        teacher = QNetwork(state_dim, action_dim)
+        action_dim = tcfg.alpha_steps
+        teacher = QNetwork(state_dim, action_dim,
+                           hidden_dim=tcfg.dqn_hidden, num_layers=tcfg.dqn_layers)
 
         if "q_network" in sd:
             teacher.load_state_dict(sd["q_network"])
         elif "q_network_state_dict" in sd:
             teacher.load_state_dict(sd["q_network_state_dict"])
         else:
-            teacher.load_state_dict(sd, strict=False)
+            teacher.load_state_dict(sd)
         log.info("Loaded DQN teacher: state_dim=%d, action_dim=%d", state_dim, action_dim)
 
     else:
@@ -337,14 +375,22 @@ def make_projection(
 # ---------------------------------------------------------------------------
 
 def load_frozen_cfg(cfg: PipelineConfig, stage: str) -> PipelineConfig:
-    """Load the frozen config.json saved during training for *stage*."""
+    """Load the frozen config.json saved during training for *stage*.
+
+    Raises FileNotFoundError if the frozen config doesn't exist, rather than
+    silently falling back to the current config (which may have wrong dimensions).
+    """
     p = config_path(cfg, stage)
-    if p.exists():
-        try:
-            return PipelineConfig.load(p)
-        except Exception as e:
-            log.warning("Could not load frozen config %s: %s", p, e)
-    return cfg
+    if not p.exists():
+        raise FileNotFoundError(
+            f"Frozen config not found: {p}. "
+            f"The '{stage}' stage must be trained first (with config saved) "
+            f"before dependent stages can load it."
+        )
+    try:
+        return PipelineConfig.load(p)
+    except Exception as e:
+        raise RuntimeError(f"Could not load frozen config {p}: {e}") from e
 
 
 def load_vgae(

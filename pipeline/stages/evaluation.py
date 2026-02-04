@@ -52,9 +52,9 @@ def evaluate(cfg: PipelineConfig) -> dict:
     all_metrics: dict = {}
     test_metrics: dict = {}
 
-    # Determine stage names based on use_kd flag
-    gat_stage = "curriculum_kd" if cfg.use_kd else "curriculum"
-    vgae_stage = "autoencoder_kd" if cfg.use_kd else "autoencoder"
+    # Stage names (run_id() adds _kd suffix automatically based on cfg.use_kd)
+    gat_stage = "curriculum"
+    vgae_stage = "autoencoder"
 
     # ---- GAT evaluation ----
     gat_ckpt = checkpoint_path(cfg, gat_stage)

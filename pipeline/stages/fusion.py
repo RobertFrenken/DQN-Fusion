@@ -23,9 +23,9 @@ def train_fusion(cfg: PipelineConfig) -> Path:
     train_data, val_data, num_ids, in_ch = load_data(cfg)
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
 
-    # Determine prerequisite stage names based on use_kd flag
-    vgae_stage = "autoencoder_kd" if cfg.use_kd else "autoencoder"
-    gat_stage = "curriculum_kd" if cfg.use_kd else "curriculum"
+    # Determine prerequisite stage names (run_id() adds _kd suffix automatically)
+    vgae_stage = "autoencoder"
+    gat_stage = "curriculum"
 
     # Load frozen VGAE + GAT
     vgae = load_vgae(cfg, num_ids, in_ch, device, stage=vgae_stage)
@@ -47,6 +47,7 @@ def train_fusion(cfg: PipelineConfig) -> Path:
         min_epsilon=cfg.dqn_min_epsilon,
         buffer_size=cfg.dqn_buffer_size, batch_size=cfg.dqn_batch_size,
         target_update_freq=cfg.dqn_target_update, device=str(device),
+        hidden_dim=cfg.dqn_hidden, num_layers=cfg.dqn_layers,
     )
 
     out = stage_dir(cfg, "fusion")

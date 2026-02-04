@@ -112,12 +112,18 @@ def end_run(result: dict[str, Any] | None = None, success: bool = True) -> None:
     """End the current MLflow run and log results.
 
     Args:
-        result: Dictionary of metrics to log (e.g., {"val_loss": 0.123, "f1": 0.95})
+        result: Dictionary of metrics to log. Must be a flat {str: numeric} dict.
+                Nested dicts (e.g. from evaluation) are skipped with a warning.
         success: Whether the run completed successfully
     """
     if result:
-        # Log all metrics
-        mlflow.log_metrics(result)
+        # Only log flat numeric metrics; skip nested dicts (e.g. evaluation output)
+        flat = {k: v for k, v in result.items() if isinstance(v, (int, float))}
+        if flat:
+            mlflow.log_metrics(flat)
+        if len(flat) < len(result):
+            log.info("Skipped %d non-numeric metric entries in end_run",
+                     len(result) - len(flat))
 
     # Log completion status
     mlflow.set_tag("status", "complete" if success else "failed")

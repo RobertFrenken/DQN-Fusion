@@ -8,7 +8,6 @@ Components:
 
 import json
 import os
-import glob
 import logging
 from datetime import datetime, timezone
 from pathlib import Path
@@ -33,6 +32,11 @@ logger = logging.getLogger(__name__)
 # crash with "Cannot re-initialize CUDA in forked subprocess".
 DEFAULT_MP_CONTEXT = "spawn"
 
+# vm.max_map_count is typically 65530 on Linux.
+# Both spawn workers and share_memory_() create mmap entries per tensor,
+# so datasets exceeding this limit must use num_workers=0.
+MMAP_TENSOR_LIMIT = 60000
+
 
 # ============================================================================
 # Standard DataModule
@@ -48,22 +52,23 @@ class CANGraphDataModule(pl.LightningDataModule):
 
     def __init__(self, train_dataset, val_dataset, batch_size: int, num_workers: int = 8,
                  mp_start_method: str = DEFAULT_MP_CONTEXT):
-        """
-        Initialize standard datamodule.
-
-        Args:
-            train_dataset: Training dataset
-            val_dataset: Validation dataset
-            batch_size: Batch size for training
-            num_workers: Number of dataloader workers
-            mp_start_method: Multiprocessing start method ('spawn' for CUDA safety)
-        """
         super().__init__()
         self.train_dataset = train_dataset
         self.val_dataset = val_dataset
         self.batch_size = batch_size
-        self.num_workers = num_workers
         self.mp_start_method = mp_start_method
+
+        # Fall back to 0 workers if dataset exceeds mmap limit
+        if num_workers > 0 and mp_start_method == "spawn":
+            total_tensors = (len(train_dataset) + len(val_dataset)) * 3
+            if total_tensors > MMAP_TENSOR_LIMIT:
+                logger.warning(
+                    "Dataset has %d tensor storages (limit %d for vm.max_map_count). "
+                    "Falling back to num_workers=0.",
+                    total_tensors, MMAP_TENSOR_LIMIT
+                )
+                num_workers = 0
+        self.num_workers = num_workers
 
     def train_dataloader(self):
         nw = self.num_workers
@@ -260,36 +265,22 @@ def _process_dataset_from_scratch(
     
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
-    
-    # Find CSV files
-    csv_files = []
-    for train_folder in ['train_01_attack_free', 'train_02_with_attacks', 'train_*']:
-        pattern = os.path.join(dataset_path, train_folder, '*.csv')
-        csv_files.extend(glob.glob(pattern))
-    
+
+    # Use the same file-discovery logic that graph_creation uses internally
+    from src.preprocessing.preprocessing import graph_creation, find_csv_files
+
+    csv_files = find_csv_files(str(dataset_path), 'train_')
+    logger.info("Found %d CSV files in %s", len(csv_files), dataset_path)
+
     if not csv_files:
-        csv_files = glob.glob(
-            os.path.join(dataset_path, '**', '*train*.csv'), 
-            recursive=True
-        )
-    
-    logger.info(f"Found {len(csv_files)} CSV files in {dataset_path}")
-    
-    if len(csv_files) == 0:
-        logger.error(f"🚨 NO CSV FILES FOUND in {dataset_path}!")
-        all_files = glob.glob(os.path.join(dataset_path, '**', '*.csv'), recursive=True)[:20]
-        for f in all_files:
-            logger.error(f"  - {f}")
         raise FileNotFoundError(f"No train CSV files found in {dataset_path}")
-    
-    logger.info("🔄 Starting graph creation from CSV files...")
-    
-    from src.preprocessing.preprocessing import graph_creation
+
+    logger.info("Starting graph creation from CSV files...")
     graphs, id_mapping = graph_creation(
-        dataset_path, 
-        'train_', 
-        return_id_mapping=True, 
-        verbose=True
+        dataset_path,
+        'train_',
+        return_id_mapping=True,
+        verbose=True,
     )
     
     # Save cache atomically

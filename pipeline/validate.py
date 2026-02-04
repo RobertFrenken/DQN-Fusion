@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .config import PipelineConfig
 
-from .paths import STAGES, DATASETS, checkpoint_path, data_dir
+from .paths import STAGES, DATASETS, checkpoint_path, config_path, data_dir
 
 _log = logging.getLogger(__name__)
 
@@ -40,26 +40,35 @@ def validate(cfg: PipelineConfig, stage: str) -> None:
     if cfg.use_kd and not cfg.teacher_path:
         errors.append("use_kd=True but teacher_path is empty")
 
-    # --- prerequisite checkpoints ---
+    if cfg.use_kd and cfg.teacher_path:
+        tp = Path(cfg.teacher_path)
+        if not tp.exists():
+            errors.append(f"Teacher checkpoint not found: {tp}")
+        teacher_cfg = tp.parent / "config.json"
+        if not teacher_cfg.exists():
+            errors.append(f"Teacher config not found: {teacher_cfg}")
+
+    # --- prerequisite checkpoints + frozen configs ---
+    def _check_prereq(prereq_stage: str, needed_by: str) -> None:
+        ckpt = checkpoint_path(cfg, prereq_stage)
+        cfg_file = config_path(cfg, prereq_stage)
+        if not ckpt.exists():
+            errors.append(f"{needed_by} needs {prereq_stage} checkpoint: {ckpt}")
+        if not cfg_file.exists():
+            errors.append(f"{needed_by} needs {prereq_stage} config: {cfg_file}")
+
     if stage == "curriculum":
-        vgae_ckpt = checkpoint_path(cfg, "autoencoder")
-        if not vgae_ckpt.exists():
-            errors.append(f"Curriculum needs VGAE first: {vgae_ckpt}")
+        _check_prereq("autoencoder", "Curriculum")
 
     if stage == "fusion":
-        vgae_ckpt = checkpoint_path(cfg, "autoencoder")
-        gat_ckpt = checkpoint_path(cfg, "curriculum")
-        if not vgae_ckpt.exists():
-            errors.append(f"Fusion needs VGAE first: {vgae_ckpt}")
-        if not gat_ckpt.exists():
-            errors.append(f"Fusion needs GAT first: {gat_ckpt}")
+        _check_prereq("autoencoder", "Fusion")
+        _check_prereq("curriculum", "Fusion")
 
     if stage == "evaluation":
-        # Evaluation can run with any available checkpoint (GAT, VGAE, or fusion)
         gat_ckpt = checkpoint_path(cfg, "curriculum")
         vgae_ckpt = checkpoint_path(cfg, "autoencoder")
         if not gat_ckpt.exists() and not vgae_ckpt.exists():
-            errors.append(f"Evaluation needs at least one checkpoint (GAT or VGAE)")
+            errors.append("Evaluation needs at least one checkpoint (GAT or VGAE)")
 
     # --- numeric sanity ---
     if cfg.lr <= 0:
