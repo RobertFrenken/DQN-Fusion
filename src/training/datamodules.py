@@ -9,6 +9,7 @@ Components:
 import json
 import os
 import logging
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -201,9 +202,18 @@ def _load_cached_data(cache_file, id_mapping_file, dataset_name):
             id_mapping = pickle.load(f)
         
         # Validate loaded data
-        if not isinstance(graphs, list) or not isinstance(id_mapping, dict):
-            logger.warning(f"Invalid cache format. Expected list of graphs and dict mapping.")
+        if not isinstance(id_mapping, dict):
+            logger.warning("Invalid cache format: id_mapping is not a dict.")
             return None, None
+        # Handle GraphDataset objects saved as cache
+        if hasattr(graphs, 'data_list'):
+            graphs = graphs.data_list
+        if not isinstance(graphs, (list, tuple)):
+            try:
+                graphs = list(graphs)
+            except (TypeError, ValueError):
+                logger.warning("Invalid cache format: graphs is not list-like.")
+                return None, None
         
         logger.info(f"Loaded {len(graphs)} cached graphs with {len(id_mapping)} unique IDs")
 
@@ -296,8 +306,23 @@ def _process_dataset_from_scratch(
         with open(temp_mapping, 'wb') as f:
             pickle.dump(id_mapping, f, protocol=4)
 
-        temp_cache.rename(cache_file)
-        temp_mapping.rename(id_mapping_file)
+        # Flush to disk to ensure NFS visibility before rename
+        for tmp in (temp_cache, temp_mapping):
+            with open(tmp, 'rb') as f:
+                os.fsync(f.fileno())
+
+        # Retry rename with backoff (NFS may delay visibility)
+        for tmp, final in ((temp_cache, cache_file), (temp_mapping, id_mapping_file)):
+            for attempt in range(3):
+                try:
+                    tmp.rename(final)
+                    break
+                except OSError as e:
+                    if attempt < 2:
+                        logger.warning("Cache rename attempt %d failed: %s. Retrying...", attempt + 1, e)
+                        time.sleep(1)
+                    else:
+                        raise
         logger.info(f"Cache saved: {len(graphs)} graphs")
 
         # Write cache metadata for validation on future loads

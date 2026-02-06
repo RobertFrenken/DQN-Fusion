@@ -14,6 +14,7 @@ import torch
 
 from src.preprocessing.preprocessing import (
     safe_hex_to_int,
+    apply_dynamic_id_mapping,
     build_id_mapping_from_normal,
     dataset_creation_streaming,
     find_csv_files,
@@ -211,6 +212,39 @@ class TestPreprocessing(unittest.TestCase):
         self.assertEqual(stats['normal_graphs'] + stats['attack_graphs'], stats['num_graphs'])
 
         print("  Dataset statistics validation passed")
+
+    def test_apply_dynamic_id_mapping_no_expansion(self):
+        """Test that apply_dynamic_id_mapping does NOT expand the mapping for unseen IDs."""
+        import pandas as pd
+
+        id_mapping = {100: 0, 200: 1, 'OOV': 2}
+        original_len = len(id_mapping)
+
+        # DataFrame with known ID (100) and unseen ID (999)
+        df = pd.DataFrame({
+            'CAN ID': [100, 999, 100],
+            'Source': [100, 999, 100],
+            'Target': [999, 100, 999],
+            'label': [0, 0, 0],
+        })
+
+        result_df, result_mapping = apply_dynamic_id_mapping(df, id_mapping)
+
+        # Mapping must not grow
+        self.assertEqual(len(result_mapping), original_len,
+                         "Mapping was expanded — unseen IDs should map to OOV, not get new entries")
+
+        # Unseen ID 999 should be mapped to OOV index (2)
+        oov = id_mapping['OOV']
+        self.assertTrue((result_df['CAN ID'] == oov).sum() == 1,
+                        "Unseen CAN ID was not mapped to OOV")
+        self.assertTrue((result_df['Source'] == oov).sum() == 1,
+                        "Unseen Source was not mapped to OOV")
+        self.assertTrue((result_df['Target'] == oov).sum() == 2,
+                        "Unseen Target was not mapped to OOV")
+
+        # Known ID 100 should map to 0
+        self.assertTrue((result_df['CAN ID'] == 0).sum() == 2)
 
     def test_edge_cases(self):
         """Test edge cases and error handling."""

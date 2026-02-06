@@ -70,7 +70,7 @@ _TRAIN_RES = dict(
     slurm_account="PAS3209", slurm_partition="gpu",
 )
 _EVAL_RES = dict(
-    time_min=60, mem_mb=32000, cpus_per_task=8, gpus=1, gpu_type="v100",
+    time_min=120, mem_mb=32000, cpus_per_task=8, gpus=1, gpu_type="v100",
     slurm_account="PAS3209", slurm_partition="gpu",
 )
 

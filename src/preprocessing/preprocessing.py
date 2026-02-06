@@ -80,41 +80,36 @@ def safe_hex_to_int(value: Union[str, int, float]) -> Optional[int]:
 
 def apply_dynamic_id_mapping(df: pd.DataFrame, id_mapping: Dict, verbose: bool = False) -> Tuple[pd.DataFrame, Dict]:
     """
-    Apply ID mapping with dynamic expansion for new IDs encountered during processing.
+    Apply ID mapping to CAN ID columns, mapping unseen IDs to OOV.
 
     Args:
         df: DataFrame to process
-        id_mapping: Existing ID mapping
+        id_mapping: Existing ID mapping (not modified)
         verbose: Whether to print information about new IDs
 
     Returns:
-        Tuple of (processed DataFrame, updated ID mapping)
+        Tuple of (processed DataFrame, original ID mapping)
     """
-    # Make a copy to avoid modifying the original mapping
-    dynamic_mapping = id_mapping.copy()
     new_ids_found = []
 
-    # First pass: collect all new IDs from all columns
+    # First pass: log any unseen IDs (do NOT expand the mapping)
     for col in ['CAN ID', 'Source', 'Target']:
         if col in df.columns:
             unique_vals = df[col].dropna().unique()
             for val in unique_vals:
-                if val not in dynamic_mapping:
-                    new_id_index = len(dynamic_mapping) - 1  # Insert before OOV
-                    dynamic_mapping[val] = new_id_index
-                    dynamic_mapping['OOV'] = len(dynamic_mapping) - 1
+                if val not in id_mapping:
                     new_ids_found.append(val)
 
-    # Second pass: apply mapping using vectorized .map() instead of .apply()
-    oov_index = dynamic_mapping['OOV']
+    # Second pass: apply mapping; unmapped values become NaN then OOV
+    oov_index = id_mapping['OOV']
     for col in ['CAN ID', 'Source', 'Target']:
         if col in df.columns:
-            df[col] = df[col].map(dynamic_mapping).fillna(oov_index).astype(int)
+            df[col] = df[col].map(id_mapping).fillna(oov_index).astype(int)
 
     if new_ids_found and verbose:
-        print(f"  Dynamically added {len(new_ids_found)} new CAN IDs: {new_ids_found[:5]}{'...' if len(new_ids_found) > 5 else ''}")
+        print(f"  Mapped {len(new_ids_found)} unseen CAN IDs to OOV: {new_ids_found[:5]}{'...' if len(new_ids_found) > 5 else ''}")
 
-    return df, dynamic_mapping
+    return df, id_mapping
 
 def build_id_mapping_from_normal(root_folder: str, folder_type: str = 'train_') -> Dict[Union[int, str], int]:
     """

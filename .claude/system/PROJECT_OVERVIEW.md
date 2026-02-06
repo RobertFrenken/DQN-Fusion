@@ -1,6 +1,6 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-02-03
+**Updated**: 2026-02-05
 
 ## What This Is
 
@@ -21,13 +21,18 @@ VGAE (unsupervised reconstruction) → GAT (supervised classification) → DQN (
 Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pydantic.
 
 - `config.py` — `PipelineConfig` frozen dataclass, presets, JSON save/load
-- `stages.py` — All training logic (VGAE, GAT, DQN, eval). Imports from `src/` conditionally (inside functions)
+- `stages/` — Training logic split into modules:
+  - `training.py` — VGAE (autoencoder) and GAT (curriculum) training
+  - `fusion.py` — DQN fusion training
+  - `evaluation.py` — Multi-model evaluation and metrics
+  - `modules.py` — PyTorch Lightning modules
+  - `utils.py` — Shared utilities (teacher loading, config loading)
 - `paths.py` — Canonical directory layout, checkpoint/config paths
 - `validate.py` — Config validation
 - `cli.py` — Arg parser, MLflow run lifecycle, `STAGE_FNS` dispatch
 - `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
 - `query.py` — CLI for querying MLflow experiments
-- `migrate.py` — Migration from 8-level to 2-level paths + MLflow backfill
+- `memory.py` — Memory monitoring and GPU/CPU optimization
 - `Snakefile` — Snakemake workflow (19 rules, 2-level paths, configurable DATASETS, onstart MLflow init)
 - `snakemake_config.yaml` — Pipeline-level Snakemake config
 - `profiles/slurm/config.yaml` — SLURM cluster submission profile for Snakemake
@@ -35,7 +40,7 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 
 ## Supporting Code: `src/`
 
-`pipeline/stages.py` imports from these `src/` modules:
+`pipeline/stages/` imports from these `src/` modules:
 - `src.models.vgae`, `src.models.models`, `src.models.dqn` — model architectures
 - `src.training.datamodules` — `load_dataset()`, `CANGraphDataModule`
 - `src.preprocessing.preprocessing` — `GraphDataset`, graph construction

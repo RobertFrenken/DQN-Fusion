@@ -1,6 +1,6 @@
 # Current State
 
-**Date**: 2026-02-03
+**Date**: 2026-02-05
 
 ## What's Working
 
@@ -10,7 +10,15 @@
 - 2-level experiment paths: `experimentruns/{dataset}/{size}_{stage}[_kd]/`
 - MLflow tracking at `sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db`
 
-### Recent Fixes (2026-02-03)
+### Recent Fixes (2026-02-05)
+- **Bug 3.1 FIXED**: `apply_dynamic_id_mapping()` no longer expands ID mapping for unseen CAN IDs. Unseen IDs map to OOV index, preventing `nn.Embedding` out-of-bounds crashes on set_01/set_03.
+- **Bug 3.2 FIXED**: `_EVAL_RES` time bumped from 60 to 120 minutes for large dataset evaluation.
+- **Bug 3.3 FIXED**: Cache validation in `_load_cached_data()` now accepts `GraphDataset` objects and other list-like containers, not just `list`.
+- **Bug 3.4 VERIFIED**: `validate.py:40` already has `stage != "evaluation"` guard — no change needed.
+- **Bug 3.5 FIXED**: NFS cache race in `_process_dataset_from_scratch()` fixed with `os.fsync()` + retry-with-backoff on rename.
+- **New test**: `test_apply_dynamic_id_mapping_no_expansion` added to `tests/test_preprocessing.py`.
+
+### Previous Fixes (2026-02-03)
 - **Snakefile `--use-kd` bug fixed**: Lines 134, 149, 165 now have `--use-kd true` instead of just `--use-kd`
 - **Gradient checkpointing enabled by default**: `config.py:gradient_checkpointing = True`
 - **Mixed precision already default**: `config.py:precision = "16-mixed"`
@@ -57,15 +65,16 @@ docs/
 
 ## What's Not Working / Incomplete
 
-- **Large dataset jobs failing**: set_01 through set_04 and hcrl_ch have OOM issues on larger graphs
 - **Old experiment checkpoints**: Pre-MLflow runs have no `config.json`
+- **Bug 3.6 (research)**: OOD generalization collapse — not a code bug, requires research
+- **Bug 3.7**: GAT teacher 137x larger than student due to JK cat mode + `num_fc_layers=3` — needs retrain
 
 ## Next Steps
 
-1. **Re-run hcrl_sa with fixed Snakefile** to test `--use-kd true` fix
-2. **Tune memory settings** for larger datasets (safety_factor, batch_size)
-3. **Run remaining 5 datasets** once hcrl_sa confirmed working
-4. **Evaluate and collect results** for thesis
+1. **Re-run evaluation** for all 6 datasets (bugs 3.1-3.5 now fixed)
+2. **Collect student_kd evaluation results** (previously blocked by bug 3.4)
+3. **Investigate OOD threshold calibration** (bug 3.6)
+4. **Consider GAT FC bottleneck** to address bug 3.7
 
 ## Architecture Summary
 

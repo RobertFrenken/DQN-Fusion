@@ -1,18 +1,18 @@
 ---
 name: run-pipeline
 description: Run Snakemake pipeline for a dataset and model configuration
-disable-model-invocation: true
-user-invocable: true
-argument-hint: [dataset] [target]
-allowed-tools: Bash, Read
 ---
 
 Run the KD-GAT Snakemake pipeline.
 
 ## Arguments
 
-- `$0` - Dataset name: `hcrl_sa`, `hcrl_ch`, `set_01`, `set_02`, `set_03`, `set_04`
-- `$1` - Target (optional): `students_nokd`, `teachers`, `students`, or specific path
+`$ARGUMENTS` should contain: `<dataset> [target]`
+
+- **dataset** (required): `hcrl_sa`, `hcrl_ch`, `set_01`, `set_02`, `set_03`, `set_04`
+- **target** (optional): `students_nokd`, `teachers`, `students`, or a specific run like `teacher_fusion`
+
+Parse the dataset and target from `$ARGUMENTS`. If only one word is provided, it is the dataset and no target filter is applied.
 
 ## Usage Examples
 
@@ -24,37 +24,40 @@ Run the KD-GAT Snakemake pipeline.
 
 ## Execution Steps
 
-1. **Verify dataset exists**
+1. **Parse arguments** from `$ARGUMENTS` into dataset and optional target.
+
+2. **Verify dataset exists**
    ```bash
-   ls -la data/automotive/$0/
+   ls data/automotive/<dataset>/
    ```
 
-2. **Dry run first** to see what will be executed
+3. **Dry run first** to see what will be executed. If a target is given, use it as a Snakemake rule name or build the output path `experimentruns/<dataset>/<target>/best_model.pt`. If no target, run the full DAG for that dataset.
    ```bash
-   snakemake -s pipeline/Snakefile experimentruns/$0/$1/best_model.pt --forceall -n 2>&1 | head -50
+   snakemake -s pipeline/Snakefile --config "datasets=[\"<dataset>\"]" -n 2>&1 | head -50
    ```
 
-3. **Submit to SLURM** if dry run looks correct
+4. **Submit to SLURM** if dry run looks correct
    ```bash
    mkdir -p slurm_logs
-   snakemake -s pipeline/Snakefile experimentruns/$0/$1/best_model.pt --profile profiles/slurm --forceall
+   snakemake -s pipeline/Snakefile --config "datasets=[\"<dataset>\"]" --profile profiles/slurm
    ```
 
-4. **Report the submitted job IDs** so the user can monitor
+5. **Report the submitted job IDs** and show how to monitor with `squeue -u $USER`.
 
 ## Common Targets
 
 | Target | Description | Output |
 |--------|-------------|--------|
+| `teacher_fusion` | Full teacher pipeline | 3 stages |
 | `student_fusion` | Full student no-KD pipeline | 3 stages |
 | `student_fusion_kd` | Full student with KD pipeline | 3 stages (needs teacher) |
-| `teacher_fusion` | Full teacher pipeline | 3 stages |
-| `students_nokd` | All datasets, student no-KD | Uses rule target |
-| `teachers` | All datasets, teacher | Uses rule target |
+| `teachers` | All datasets, teacher | Snakemake rule target |
+| `students_nokd` | All datasets, student no-KD | Snakemake rule target |
+| `students` | All datasets, student with KD | Snakemake rule target |
 
 ## Notes
 
 - Pipeline runs on SLURM with GPU resources (V100, 128GB RAM)
-- Each stage takes 5-30 minutes depending on dataset size
-- Logs are written to `experimentruns/{dataset}/{run}/slurm.{out,err}`
+- SLURM logs: `slurm_logs/{jobid}-{rule}.{out,err}`
 - MLflow tracking is automatic
+- Always do a dry run (`-n`) before submitting
