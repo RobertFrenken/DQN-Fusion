@@ -61,6 +61,12 @@ rule students_nokd:
     input:
         expand(_p("{ds}", "student", "fusion"), ds=DATASETS),
 
+rule evaluate_all:
+    input:
+        expand(EXP + "/{ds}/teacher_evaluation/metrics.json", ds=DATASETS),
+        expand(EXP + "/{ds}/student_evaluation_kd/metrics.json", ds=DATASETS),
+        expand(EXP + "/{ds}/student_evaluation/metrics.json", ds=DATASETS),
+
 # ---------------------------------------------------------------------------
 # SLURM resource defaults
 # ---------------------------------------------------------------------------

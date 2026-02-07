@@ -17,3 +17,7 @@ dependencies = [
 
 [project.scripts]
 can-train = "pipeline.cli:main"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = ["slow: marks tests as slow (>30s, deselect with '-m not slow')"]

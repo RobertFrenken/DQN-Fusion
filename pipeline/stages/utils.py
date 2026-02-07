@@ -311,7 +311,9 @@ def load_teacher(
             num_ids=t_num_ids, in_channels=in_channels,
             hidden_channels=tcfg.gat_hidden, out_channels=2,
             num_layers=tcfg.gat_layers, heads=tcfg.gat_heads,
-            dropout=tcfg.gat_dropout, embedding_dim=tcfg.gat_embedding_dim,
+            dropout=tcfg.gat_dropout,
+            num_fc_layers=getattr(tcfg, 'gat_fc_layers', 3),
+            embedding_dim=tcfg.gat_embedding_dim,
         )
         teacher.load_state_dict(sd)
         log.info("Loaded GAT teacher: hidden=%d, layers=%d, num_ids=%d",
@@ -433,7 +435,9 @@ def load_gat(
         num_ids=num_ids, in_channels=in_channels,
         hidden_channels=gat_cfg.gat_hidden, out_channels=2,
         num_layers=gat_cfg.gat_layers, heads=gat_cfg.gat_heads,
-        dropout=gat_cfg.gat_dropout, embedding_dim=gat_cfg.gat_embedding_dim,
+        dropout=gat_cfg.gat_dropout,
+        num_fc_layers=getattr(gat_cfg, 'gat_fc_layers', 3),
+        embedding_dim=gat_cfg.gat_embedding_dim,
     )
     gat.load_state_dict(torch.load(
         checkpoint_path(cfg, stage), map_location="cpu", weights_only=True,

@@ -38,14 +38,15 @@
   "gat_heads": 4,
   "gat_dropout": 0.1,
   "gat_embedding_dim": 8,
+  "gat_fc_layers": 3,
   "vgae_hidden_dims": [
-    1024,
-    512,
-    96
+    480,
+    240,
+    48
   ],
-  "vgae_latent_dim": 96,
+  "vgae_latent_dim": 48,
   "vgae_heads": 4,
-  "vgae_embedding_dim": 64,
+  "vgae_embedding_dim": 32,
   "vgae_dropout": 0.15,
   "dqn_hidden": 576,
   "dqn_layers": 3,

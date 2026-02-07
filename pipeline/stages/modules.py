@@ -145,6 +145,7 @@ class GATModule(pl.LightningModule):
             num_layers=cfg.gat_layers,
             heads=cfg.gat_heads,
             dropout=cfg.gat_dropout,
+            num_fc_layers=getattr(cfg, 'gat_fc_layers', 3),
             embedding_dim=cfg.gat_embedding_dim,
             use_checkpointing=cfg.gradient_checkpointing,
         )

@@ -1,6 +1,6 @@
 """Single source of truth for all pipeline parameters.
 
-One frozen dataclass. One dict of presets. JSON save/load.
+One frozen dataclass. Two preset dicts (architecture + training). JSON save/load.
 No Hydra, no Pydantic, no duplicate DEFAULT_MODEL_ARGS.
 """
 from __future__ import annotations
@@ -11,55 +11,63 @@ from pathlib import Path
 from typing import Tuple
 
 # ---------------------------------------------------------------------------
-# Preset defaults for (model_type, model_size) combinations.
-# Any field can be overridden at construction time.
+# Architecture presets — determines weight shapes (must match checkpoint).
 # ---------------------------------------------------------------------------
 
-PRESETS: dict[tuple[str, str], dict] = {
-    # ---- VGAE (autoencoder) ----
+ARCHITECTURES: dict[tuple[str, str], dict] = {
     ("vgae", "teacher"): dict(
-        lr=0.002, max_epochs=300, patience=100,
-        vgae_hidden_dims=(1024, 512, 96), vgae_latent_dim=96,
-        vgae_heads=4, vgae_embedding_dim=64, vgae_dropout=0.15,
-        safety_factor=0.55,
+        vgae_hidden_dims=(480, 240, 48), vgae_latent_dim=48,
+        vgae_heads=4, vgae_embedding_dim=32, vgae_dropout=0.15,
     ),
     ("vgae", "student"): dict(
-        lr=0.002, max_epochs=300, patience=100,
         vgae_hidden_dims=(80, 40, 16), vgae_latent_dim=16,
         vgae_heads=1, vgae_embedding_dim=4, vgae_dropout=0.1,
-        use_kd=True,
-        safety_factor=0.6,
     ),
-    # ---- GAT (curriculum) ----
     ("gat", "teacher"): dict(
-        lr=0.003, max_epochs=300, patience=100,
-        gat_hidden=64, gat_layers=5, gat_heads=8,
-        gat_dropout=0.2, gat_embedding_dim=32,
-        safety_factor=0.5,
+        gat_hidden=48, gat_layers=3, gat_heads=8,
+        gat_embedding_dim=16, gat_fc_layers=2,
     ),
     ("gat", "student"): dict(
-        lr=0.001, max_epochs=300, patience=50,
         gat_hidden=24, gat_layers=2, gat_heads=4,
-        gat_dropout=0.1, gat_embedding_dim=8,
-        use_kd=True,
-        safety_factor=0.55,
+        gat_embedding_dim=8, gat_fc_layers=3,
     ),
-    # ---- DQN (fusion) ----
     ("dqn", "teacher"): dict(
         dqn_hidden=576, dqn_layers=3,
-        dqn_gamma=0.99, dqn_buffer_size=100_000,
-        dqn_batch_size=128, dqn_target_update=100,
-        fusion_episodes=500,
-        safety_factor=0.45,
+        dqn_buffer_size=100_000, dqn_batch_size=128, dqn_target_update=100,
     ),
     ("dqn", "student"): dict(
         dqn_hidden=160, dqn_layers=2,
-        dqn_gamma=0.99, dqn_buffer_size=50_000,
-        dqn_batch_size=64, dqn_target_update=50,
-        fusion_episodes=500,
-        safety_factor=0.5,
+        dqn_buffer_size=50_000, dqn_batch_size=64, dqn_target_update=50,
     ),
 }
+
+# ---------------------------------------------------------------------------
+# Training hyperparameters — can be tuned without affecting checkpoint compat.
+# ---------------------------------------------------------------------------
+
+TRAINING: dict[str, dict] = {
+    "vgae": dict(lr=0.002, max_epochs=300, patience=100, safety_factor=0.55),
+    "gat":  dict(lr=0.003, max_epochs=300, patience=100, gat_dropout=0.2, safety_factor=0.5),
+    "dqn":  dict(dqn_gamma=0.99, fusion_episodes=500, safety_factor=0.45),
+}
+
+# Size-specific training overrides
+TRAINING_SIZE: dict[tuple[str, str], dict] = {
+    ("vgae", "student"): dict(use_kd=True, safety_factor=0.6),
+    ("gat", "student"):  dict(lr=0.001, patience=50, gat_dropout=0.1, use_kd=True, safety_factor=0.55),
+    ("dqn", "student"):  dict(safety_factor=0.5),
+}
+
+# Backwards-compatible PRESETS view (merged arch + training)
+PRESETS: dict[tuple[str, str], dict] = {}
+for _key in ARCHITECTURES:
+    _model, _size = _key
+    _merged = {}
+    _merged.update(ARCHITECTURES.get(_key, {}))
+    _merged.update(TRAINING.get(_model, {}))
+    _merged.update(TRAINING_SIZE.get(_key, {}))
+    PRESETS[_key] = _merged
+del _key, _model, _size, _merged
 
 
 @dataclass(frozen=True)
@@ -117,17 +125,18 @@ class PipelineConfig:
     cudnn_benchmark: bool = True
 
     # --- GAT architecture ---
-    gat_hidden:        int   = 64
-    gat_layers:        int   = 5
+    gat_hidden:        int   = 48
+    gat_layers:        int   = 3
     gat_heads:         int   = 8
     gat_dropout:       float = 0.2
-    gat_embedding_dim: int   = 32
+    gat_embedding_dim: int   = 16
+    gat_fc_layers:     int   = 3
 
     # --- VGAE architecture ---
-    vgae_hidden_dims:  Tuple[int, ...] = (1024, 512, 96)
-    vgae_latent_dim:   int   = 96
+    vgae_hidden_dims:  Tuple[int, ...] = (480, 240, 48)
+    vgae_latent_dim:   int   = 48
     vgae_heads:        int   = 4
-    vgae_embedding_dim:int   = 64
+    vgae_embedding_dim:int   = 32
     vgae_dropout:      float = 0.15
 
     # --- DQN architecture ---
@@ -189,19 +198,24 @@ class PipelineConfig:
     def load(cls, path: str | Path) -> PipelineConfig:
         """Reconstruct config from a frozen JSON file."""
         raw = json.loads(Path(path).read_text())
+        valid_names = {f.name for f in fields(cls)}
         # JSON turns tuples into lists; convert back
         for f in fields(cls):
             if f.name in raw and "Tuple" in str(f.type):
                 raw[f.name] = tuple(raw[f.name])
-        return cls(**raw)
+        # Drop unknown keys, use defaults for missing fields (forward compat)
+        filtered = {k: v for k, v in raw.items() if k in valid_names}
+        return cls(**filtered)
 
     # ----- factory -----
 
     @classmethod
     def from_preset(cls, model: str, model_size: str, **overrides) -> PipelineConfig:
         """Build config from a (model, model_size) preset plus overrides."""
-        defaults = dict(PRESETS.get((model, model_size), {}))
-        defaults["model_size"] = model_size
+        arch = dict(ARCHITECTURES.get((model, model_size), {}))
+        train_base = dict(TRAINING.get(model, {}))
+        train_size = dict(TRAINING_SIZE.get((model, model_size), {}))
+        defaults = {**arch, **train_base, **train_size, "model_size": model_size}
         defaults.update(overrides)
         return cls(**defaults)
 

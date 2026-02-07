@@ -133,7 +133,9 @@ class TestModelMatchesConfig:
                 num_ids=NUM_IDS, in_channels=IN_CHANNELS,
                 hidden_channels=cfg.gat_hidden, out_channels=2,
                 num_layers=cfg.gat_layers, heads=cfg.gat_heads,
-                dropout=cfg.gat_dropout, embedding_dim=cfg.gat_embedding_dim,
+                dropout=cfg.gat_dropout,
+                num_fc_layers=cfg.gat_fc_layers,
+                embedding_dim=cfg.gat_embedding_dim,
             )
             g = _make_graph()
             g.batch = torch.zeros(g.x.size(0), dtype=torch.long)
@@ -221,7 +223,9 @@ class TestCheckpointRoundTrip:
             num_ids=NUM_IDS, in_channels=IN_CHANNELS,
             hidden_channels=cfg.gat_hidden, out_channels=2,
             num_layers=cfg.gat_layers, heads=cfg.gat_heads,
-            dropout=cfg.gat_dropout, embedding_dim=cfg.gat_embedding_dim,
+            dropout=cfg.gat_dropout,
+            num_fc_layers=cfg.gat_fc_layers,
+            embedding_dim=cfg.gat_embedding_dim,
         )
 
         ckpt = tmp_path / "best_model.pt"
@@ -231,7 +235,9 @@ class TestCheckpointRoundTrip:
             num_ids=NUM_IDS, in_channels=IN_CHANNELS,
             hidden_channels=cfg.gat_hidden, out_channels=2,
             num_layers=cfg.gat_layers, heads=cfg.gat_heads,
-            dropout=cfg.gat_dropout, embedding_dim=cfg.gat_embedding_dim,
+            dropout=cfg.gat_dropout,
+            num_fc_layers=cfg.gat_fc_layers,
+            embedding_dim=cfg.gat_embedding_dim,
         )
         # strict=True (default) — will crash if dims don't match
         model2.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=True))
@@ -321,7 +327,9 @@ class TestTeacherLoading:
                 num_ids=NUM_IDS, in_channels=IN_CHANNELS,
                 hidden_channels=cfg.gat_hidden, out_channels=2,
                 num_layers=cfg.gat_layers, heads=cfg.gat_heads,
-                dropout=cfg.gat_dropout, embedding_dim=cfg.gat_embedding_dim,
+                dropout=cfg.gat_dropout,
+                num_fc_layers=getattr(cfg, 'gat_fc_layers', 3),
+                embedding_dim=cfg.gat_embedding_dim,
             )
             torch.save(model.state_dict(), checkpoint_path(cfg, stage))
         elif model_type == "dqn":
