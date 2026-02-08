@@ -167,11 +167,26 @@ def evaluate(cfg: PipelineConfig) -> dict:
                 if isinstance(v, (int, float)):
                     mlflow.log_metric(f"{model_name}_{k}", v)
 
+    # Log flattened test-scenario metrics to MLflow
+    for model_name, scenarios in test_metrics.items():
+        for scenario, sm in scenarios.items():
+            for section in ("core", "additional"):
+                for name, value in sm.get(section, {}).items():
+                    if isinstance(value, (int, float)):
+                        mlflow.log_metric(
+                            f"test.{model_name}.{scenario}.{name}", value
+                        )
+
     # Save all metrics
     out = stage_dir(cfg, "evaluation")
     out.mkdir(parents=True, exist_ok=True)
-    (out / "metrics.json").write_text(json.dumps(all_metrics, indent=2))
+    metrics_path = out / "metrics.json"
+    metrics_path.write_text(json.dumps(all_metrics, indent=2))
     cfg.save(config_path(cfg, "evaluation"))
+
+    # Log metrics.json as MLflow artifact
+    mlflow.log_artifact(str(metrics_path))
+
     log.info("All metrics saved to %s/metrics.json", out)
     cleanup()
     return all_metrics

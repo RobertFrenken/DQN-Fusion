@@ -36,6 +36,11 @@ def _p(ds, size, stage, kd=False):
 onstart:
     shell("{PY} -c 'from pipeline.tracking import setup_tracking; setup_tracking()'")
 
+# After all rules succeed: backup MLflow DB and populate project DB.
+onsuccess:
+    shell("mkdir -p ~/backups && cp /fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db ~/backups/mlflow_$(date +%Y%m%d).db")
+    shell("{PY} -m pipeline.db populate")
+
 # ---------------------------------------------------------------------------
 # Targets
 # ---------------------------------------------------------------------------

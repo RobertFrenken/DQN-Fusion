@@ -1,6 +1,6 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-02-05
+**Updated**: 2026-02-07
 
 ## What This Is
 
@@ -33,7 +33,9 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 - `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
 - `query.py` — CLI for querying MLflow experiments
 - `memory.py` — Memory monitoring and GPU/CPU optimization
-- `Snakefile` — Snakemake workflow (19 rules, 2-level paths, configurable DATASETS, onstart MLflow init)
+- `ingest.py` — CSV→Parquet ingestion, validation against `data/datasets.yaml`, dataset registration
+- `db.py` — SQLite project DB (`data/project.db`): schema, population from filesystem, CLI queries
+- `Snakefile` — Snakemake workflow (19 rules, 2-level paths, configurable DATASETS, onstart MLflow init, onsuccess DB populate + MLflow backup)
 - `snakemake_config.yaml` — Pipeline-level Snakemake config
 - `profiles/slurm/config.yaml` — SLURM cluster submission profile for Snakemake
 - `profiles/slurm/status.sh` — Job status checker (sacct-based)
@@ -50,15 +52,24 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 ## Data Pipeline
 
 ```
-data/automotive/{dataset}/train_*/  →  data/cache/{dataset}/processed_graphs.pt
-     (raw CSVs, DVC-tracked)              (PyG Data objects, DVC-tracked)
+data/datasets.yaml                  # Dataset catalog (source of truth for dataset metadata)
+     ↓ (python -m pipeline.ingest)
+data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parquet
+     (raw CSVs, DVC-tracked)              (columnar, queryable via DuckDB)
+                                    →  data/cache/{dataset}/processed_graphs.pt
+                                          (PyG Data objects, DVC-tracked)
                                           + id_mapping.pkl
                                           + cache_metadata.json
+                                    →  data/project.db
+                                          (SQLite: datasets, runs, metrics tables)
 ```
 
 - 6 datasets: hcrl_ch, hcrl_sa, set_01-04
 - Cache auto-built on first access, validated via metadata on subsequent loads
 - All data versioned with DVC (remote: `/fs/scratch/PAS1266/can-graph-dvc`)
+- Parquet files: 5-10x smaller than CSV, queryable with DuckDB SQL
+- Project DB: populated from experimentruns/ outputs, queryable with `python -m pipeline.db query "SQL"`
+- DuckDB can query Parquet and SQLite in the same SQL statement via `ATTACH`
 
 ## Models
 
@@ -93,25 +104,30 @@ Memory monitoring logs to MLflow every N epochs:
 
 ## Experiment Management
 
-**Dual-system architecture**: Snakemake owns the filesystem (DAG orchestration), MLflow owns the metadata (tracking/UI).
+**Three-layer architecture**: Snakemake owns the filesystem (DAG orchestration), MLflow owns live tracking (params/metrics/UI), project DB owns structured results (queryable SQL).
 
 **Filesystem** (NFS home, permanent — Snakemake-managed):
 ```
 experimentruns/{dataset}/{model_size}_{stage}[_kd]/
 ├── best_model.pt       # Snakemake DAG trigger
 ├── config.json         # Frozen config (also logged to MLflow)
-├── metrics.json        # Evaluation stage only
+├── metrics.json        # Evaluation stage only (also logged as MLflow artifact)
 ```
 
-**MLflow** (GPFS scratch, 90-day purge — supplementary):
+**MLflow** (GPFS scratch, 90-day purge — auto-backed up to `~/backups/`):
 ```
 /fs/scratch/PAS1266/kd_gat_mlflow/
 ├── mlflow.db           # SQLite tracking DB
 ```
 
+**Project DB** (NFS home, permanent):
+```
+data/project.db         # SQLite: datasets, runs, metrics tables
+```
+
 Snakemake needs deterministic file paths at DAG construction time. MLflow artifact paths contain run UUIDs (not deterministic). So models save to filesystem first (Snakemake), then log to MLflow (tracking). If scratch purges, checkpoints/configs survive on NFS.
 
-**MLflow integration**: Fully wired. `cli.py` wraps stage dispatch with `start_run`/`end_run`. `stages.py` uses `mlflow.pytorch.autolog()` for Lightning stages and manual `log_metrics()` for DQN + evaluation. See `docs/registry_plan.md` for full design history.
+**MLflow integration**: Fully wired. `cli.py` wraps stage dispatch with `start_run`/`end_run`. Evaluation stage logs flattened test-scenario metrics as `test.{model}.{scenario}.{metric}` and logs `metrics.json` as an artifact. Snakefile `onsuccess` hook backs up MLflow DB to `~/backups/` and populates project DB.
 
 ## Environment
 
@@ -120,7 +136,7 @@ Snakemake needs deterministic file paths at DAG construction time. MLflow artifa
 - **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge — safe for concurrent DB writes
 - **Git remote**: `git@github.com:RobertFrenken/DQN-Fusion.git` (SSH)
 - **Python**: conda `gnn-experiments`, PyTorch + PyG + Lightning
-- **Key packages**: SQLite 3.51.1, Pandas 2.3.3, MLflow 3.8.1
+- **Key packages**: SQLite 3.51.1, Pandas 2.3.3, MLflow 3.8.1, DuckDB 1.4.4, PyArrow 14.0.2
 - **SLURM account**: PAS3209, gpu partition, V100 GPUs
 - **tmux**: 3.2a available on login nodes -- use for Snakemake orchestration and Claude Code sessions
 - **Jupyter**: Available via OSC OnDemand portal

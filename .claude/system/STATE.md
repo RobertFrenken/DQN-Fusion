@@ -1,6 +1,6 @@
 # Current State
 
-**Date**: 2026-02-05
+**Date**: 2026-02-07
 
 ## What's Working
 
@@ -10,7 +10,17 @@
 - 2-level experiment paths: `experimentruns/{dataset}/{size}_{stage}[_kd]/`
 - MLflow tracking at `sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db`
 
-### Recent Fixes (2026-02-05)
+### Data Management Layer (2026-02-07)
+- **Dataset catalog**: `data/datasets.yaml` — 6 automotive datasets registered with metadata, CSV schema, train/test subdirs
+- **Ingestion**: `pipeline/ingest.py` — CSV→Parquet conversion with hex ID parsing, validation, statistics
+- **Project DB**: `pipeline/db.py` — SQLite at `data/project.db` with datasets/runs/metrics tables
+  - Populated: 6 datasets, 70 runs, 3,915 metric entries
+  - Queryable via `python -m pipeline.db query "SQL"` or DuckDB ATTACH
+- **DuckDB** (1.4.4) installed — can query Parquet files and SQLite project DB in same SQL statement
+- **MLflow enhancements**: evaluation.py now logs flattened test-scenario metrics + metrics.json artifact
+- **Snakefile hooks**: `onsuccess` backs up MLflow DB to `~/backups/` and populates project DB
+
+### Previous Fixes (2026-02-05)
 - **Bug 3.1 FIXED**: `apply_dynamic_id_mapping()` no longer expands ID mapping for unseen CAN IDs. Unseen IDs map to OOV index, preventing `nn.Embedding` out-of-bounds crashes on set_01/set_03.
 - **Bug 3.2 FIXED**: `_EVAL_RES` time bumped from 60 to 120 minutes for large dataset evaluation.
 - **Bug 3.3 FIXED**: Cache validation in `_load_cached_data()` now accepts `GraphDataset` objects and other list-like containers, not just `list`.
@@ -29,26 +39,12 @@
 - `precision`: `"16-mixed"` (default) - 50% memory reduction
 - Both `GATWithJK` and `GraphAutoencoderNeighborhood` have checkpointing wired from config
 
-### hcrl_sa Pipeline Status
-- **Student curriculum (KD)**: Completed successfully, val_acc 0.999
-- **Student autoencoder (KD)**: Previously failed due to `--use-kd` bug, now fixed
-- **Teacher models**: Completed
-- **Student without KD**: Completed
-
 ## Active `src/` Files
 
 Essential (imported by pipeline):
 - `src/models/` -- GATWithJK, VGAE, DQN (gradient checkpointing support added)
 - `src/preprocessing/preprocessing.py` -- graph construction
 - `src/training/datamodules.py` -- load_dataset(), CANGraphDataModule
-
-### Cleanup (2026-02-03)
-Deleted stale code:
-- `src/utils/plotting_utils.py` -- broken imports, unused legacy plotting functions
-- `src/config/plotting_config.py` -- not imported anywhere
-- `src/utils/` directory -- empty after cleanup
-- Debug print statements in `src/models/vgae.py`
-- Misleading "router top2 experts" comment in `src/models/models.py`
 
 ## Documentation Structure
 
@@ -68,25 +64,31 @@ docs/
 - **Old experiment checkpoints**: Pre-MLflow runs have no `config.json`
 - **Bug 3.6 (research)**: OOD generalization collapse — not a code bug, requires research
 - **Bug 3.7**: GAT teacher 137x larger than student due to JK cat mode + `num_fc_layers=3` — needs retrain
+- **Parquet conversion**: Not yet run for existing 6 datasets (ingest module ready, need to execute)
 
 ## Next Steps
 
-1. **Re-run evaluation** for all 6 datasets (bugs 3.1-3.5 now fixed)
-2. **Collect student_kd evaluation results** (previously blocked by bug 3.4)
-3. **Investigate OOD threshold calibration** (bug 3.6)
-4. **Consider GAT FC bottleneck** to address bug 3.7
+1. **Run Parquet ingestion** for all 6 datasets: `python -m pipeline.ingest --all`
+2. **DVC-track Parquet files**: `dvc add data/parquet/automotive/{dataset}` for each
+3. **Re-run evaluation** for all 6 datasets (bugs 3.1-3.5 now fixed)
+4. **Investigate OOD threshold calibration** (bug 3.6)
+5. **Consider GAT FC bottleneck** to address bug 3.7
+6. **Document DuckDB workflow** for undergrad onboarding
 
 ## Architecture Summary
 
 - **Entry point**: `python -m pipeline.cli <stage> --preset <model>,<size> --dataset <name>`
 - **Orchestration**: Snakemake (`snakemake -s pipeline/Snakefile --profile profiles/slurm`)
 - **Tracking**: MLflow (auto-logged via `mlflow.pytorch.autolog()` + memory callback)
-- **Filesystem**: Snakemake owns paths (DAG trigger), MLflow owns metadata
+- **Data catalog**: `data/datasets.yaml` → `pipeline/ingest.py` → Parquet + project DB
+- **Query layer**: DuckDB (reads Parquet + SQLite in one SQL) or `python -m pipeline.db query`
+- **Filesystem**: Snakemake owns paths (DAG trigger), MLflow owns metadata, project DB owns structured results
 - **SLURM**: Account PAS3209, gpu partition, V100 GPUs
 
 ## OSC Environment
 
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
-- **MLflow DB**: `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db`
-- **Key packages**: PyTorch, PyG, Lightning, MLflow 3.8.1, psutil (for memory monitoring)
+- **MLflow DB**: `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db` (auto-backed up to `~/backups/`)
+- **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics)
+- **Key packages**: PyTorch, PyG, Lightning, MLflow 3.8.1, DuckDB 1.4.4, PyArrow 14.0.2, psutil
