@@ -31,7 +31,6 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 - `validate.py` — Config validation
 - `cli.py` — Arg parser, MLflow run lifecycle, `STAGE_FNS` dispatch
 - `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
-- `query.py` — CLI for querying MLflow experiments
 - `memory.py` — Memory monitoring and GPU/CPU optimization
 - `ingest.py` — CSV→Parquet ingestion, validation against `data/datasets.yaml`, dataset registration
 - `db.py` — SQLite project DB (`data/project.db`): schema, population from filesystem, CLI queries

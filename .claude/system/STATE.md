@@ -58,13 +58,11 @@ Essential (imported by pipeline):
 
 ```
 docs/
-├── user_guides/          # For user reference
-│   ├── snakemake_guide.md
-│   ├── mlflow_usage.md
-│   └── terminal_upgrades.md
-└── save/                 # Context for Claude
-    ├── ARCHITECTURE.md   # Current system architecture
-    └── memory_management_research.md  # Memory optimization research
+└── user_guides/          # For user reference
+    ├── snakemake_guide.md
+    ├── mlflow_usage.md
+    ├── memory_optimization.md
+    └── terminal_upgrades.md
 ```
 
 ## What's Not Working / Incomplete

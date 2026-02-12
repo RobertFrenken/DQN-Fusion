@@ -35,12 +35,12 @@ The MLflow UI provides:
 
 ### Option 2: Jupyter Notebook
 
-Use the provided query notebook for pandas-based analysis:
+Use the provided analytics notebook for pandas-based analysis:
 
 ```bash
 # On OSC OnDemand
 # 1. Launch a Jupyter session
-# 2. Navigate to notebooks/query_mlflow.ipynb
+# 2. Navigate to notebooks/03_analytics.ipynb
 # 3. Run cells to query and analyze experiments
 ```
 
@@ -50,28 +50,28 @@ The notebook includes:
 - Leaderboard generation
 - Export to CSV
 
-### Option 3: CLI Query Tool
+### Option 3: CLI Analytics Tool
 
 Query from the command line:
 
 ```bash
-# Show all runs
-python -m pipeline.query --all
-
-# Filter by dataset and stage
-python -m pipeline.query --dataset hcrl_sa --stage curriculum
-
 # Show leaderboard (top 10 by F1)
-python -m pipeline.query --leaderboard --top 10
+python -m pipeline.analytics leaderboard --metric f1 --top 10
 
-# Compare teacher vs student with KD
-python -m pipeline.query --compare teacher student_kd
+# Compare two runs
+python -m pipeline.analytics compare <run_a> <run_b>
 
-# Show currently running jobs
-python -m pipeline.query --running
+# Config diff between runs
+python -m pipeline.analytics diff <run_a> <run_b>
 
-# Custom columns
-python -m pipeline.query --all --columns "tags.dataset,tags.stage,metrics.f1,metrics.accuracy"
+# Sweep a hyperparameter
+python -m pipeline.analytics sweep --param lr --metric f1
+
+# Dataset summary
+python -m pipeline.analytics dataset hcrl_sa
+
+# Custom SQL query
+python -m pipeline.analytics query "SELECT * FROM runs WHERE dataset = 'hcrl_sa'"
 ```
 
 ## What Gets Tracked

@@ -36,7 +36,7 @@ graphs = torch.load(cache_file, map_location='cpu', mmap=True)
 
 ### 2. Teacher CPU Offloading
 
-**File**: `pipeline/stages.py` (VGAEModule, GATModule)
+**File**: `pipeline/stages/modules.py` (VGAEModule, GATModule)
 
 **Problem**: During Knowledge Distillation, both teacher and student models occupy GPU memory simultaneously, causing GPU OOM.
 
@@ -72,7 +72,7 @@ Or in config:
 
 ### 3. Chunked Difficulty Scoring
 
-**File**: `pipeline/stages.py` (`_score_difficulty`)
+**File**: `pipeline/stages/training.py` (`_score_difficulty`)
 
 **Problem**: Curriculum learning scores every training graph's difficulty, iterating through all graphs sequentially. Memory accumulates from tensor allocations.
 
