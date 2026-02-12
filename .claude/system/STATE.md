@@ -1,6 +1,6 @@
 # Current State
 
-**Date**: 2026-02-07
+**Date**: 2026-02-11
 
 ## What's Working
 
@@ -19,6 +19,14 @@
 - **DuckDB** (1.4.4) installed — can query Parquet files and SQLite project DB in same SQL statement
 - **MLflow enhancements**: evaluation.py now logs flattened test-scenario metrics + metrics.json artifact
 - **Snakefile hooks**: `onsuccess` backs up MLflow DB to `~/backups/` and populates project DB
+
+### Analytics Layer (2026-02-11)
+- **Config storage**: `runs.config_json` column stores raw config JSON; schema migration for existing DBs
+- **`pipeline/analytics.py`**: Post-run analysis module — sweep, leaderboard, compare, config_diff, dataset_summary
+  - CLI: `python -m pipeline.analytics <command>` (sweep, leaderboard, compare, diff, dataset, query)
+  - Uses SQLite `json_extract()` for config queries; param names validated to prevent SQL injection
+- **Notebook**: `notebooks/03_analytics.ipynb` — interactive analysis demos
+- **Deleted**: `experiment_tracking_architecture.md` (superseded by implementation)
 
 ### Previous Fixes (2026-02-05)
 - **Bug 3.1 FIXED**: `apply_dynamic_id_mapping()` no longer expands ID mapping for unseen CAN IDs. Unseen IDs map to OOV index, preventing `nn.Embedding` out-of-bounds crashes on set_01/set_03.
@@ -73,7 +81,7 @@ docs/
 3. **Re-run evaluation** for all 6 datasets (bugs 3.1-3.5 now fixed)
 4. **Investigate OOD threshold calibration** (bug 3.6)
 5. **Consider GAT FC bottleneck** to address bug 3.7
-6. **Document DuckDB workflow** for undergrad onboarding
+6. **Use analytics layer** for hyperparameter sweep analysis across datasets
 
 ## Architecture Summary
 

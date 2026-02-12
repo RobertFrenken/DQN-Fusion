@@ -56,7 +56,8 @@ CREATE TABLE IF NOT EXISTS runs (
     teacher_run    TEXT,
     started_at     TEXT,
     completed_at   TEXT,
-    mlflow_run_id  TEXT
+    mlflow_run_id  TEXT,
+    config_json    TEXT
 );
 
 CREATE TABLE IF NOT EXISTS metrics (
@@ -70,12 +71,21 @@ CREATE TABLE IF NOT EXISTS metrics (
 """
 
 
+def _migrate_schema(conn: sqlite3.Connection) -> None:
+    """Add columns missing from older databases."""
+    cols = {row[1] for row in conn.execute("PRAGMA table_info(runs)").fetchall()}
+    if "config_json" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN config_json TEXT")
+        log.info("Migrated: added config_json column to runs table")
+
+
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     """Open a connection to the project database, creating schema if needed."""
     path = db_path or DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.executescript(SCHEMA)
+    _migrate_schema(conn)
     return conn
 
 
@@ -184,8 +194,8 @@ def _populate_runs(conn: sqlite3.Connection) -> int:
             if not cfg_path.exists():
                 continue
 
-            with open(cfg_path) as f:
-                cfg = json.load(f)
+            config_text = cfg_path.read_text()
+            cfg = json.loads(config_text)
 
             run_name = run_dir.name  # e.g. "teacher_autoencoder"
             dataset = ds_dir.name
@@ -216,12 +226,12 @@ def _populate_runs(conn: sqlite3.Connection) -> int:
             conn.execute(
                 """INSERT OR REPLACE INTO runs
                    (run_id, dataset, model_size, stage, use_kd, status,
-                    teacher_run, started_at, completed_at)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                    teacher_run, started_at, completed_at, config_json)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
                     run_id, dataset, model_size, stage,
                     1 if use_kd else 0, status, teacher_run,
-                    None, None,
+                    None, None, config_text,
                 ),
             )
             count += 1

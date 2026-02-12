@@ -31,6 +31,14 @@ python -m pipeline.db populate          # Populate project DB from existing outp
 python -m pipeline.db summary           # Show dataset/run/metric counts
 python -m pipeline.db query "SQL"       # Run arbitrary SQL on project DB
 
+# Experiment analytics (queries project DB)
+python -m pipeline.analytics sweep --param lr --metric f1
+python -m pipeline.analytics leaderboard --metric f1 --top 10
+python -m pipeline.analytics compare <run_a> <run_b>
+python -m pipeline.analytics diff <run_a> <run_b>
+python -m pipeline.analytics dataset <name>
+python -m pipeline.analytics query "SELECT json_extract(...) FROM ..."
+
 # Run tests
 python -m pytest tests/test_pipeline_integration.py -v
 
@@ -47,7 +55,8 @@ pipeline/           # Main orchestration (frozen dataclasses, no Hydra)
   paths.py          # Canonical 2-level path layout
   stages/           # Stage implementations (training, fusion, evaluation)
   ingest.py         # CSV → Parquet conversion + dataset registration
-  db.py             # SQLite project DB (datasets, runs, metrics tables)
+  db.py             # SQLite project DB (datasets, runs, metrics, config_json)
+  analytics.py      # Post-run analysis: sweeps, leaderboards, comparisons
   Snakefile         # 19 rules, all stages + evaluation + onsuccess hooks
 src/                # Supporting modules
   models/           # VGAE, GATWithJK, DQN architectures
