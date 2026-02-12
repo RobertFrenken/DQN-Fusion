@@ -21,7 +21,27 @@ STAGES = {
     "evaluation":  ("evaluation",   "eval", "evaluation"),
 }
 
-DATASETS = ["hcrl_ch", "hcrl_sa", "set_01", "set_02", "set_03", "set_04"]
+CATALOG_PATH = Path("data/datasets.yaml")
+
+_datasets_cache: list[str] | None = None
+
+
+def get_datasets() -> list[str]:
+    """Read dataset names from data/datasets.yaml (cached after first call)."""
+    global _datasets_cache
+    if _datasets_cache is None:
+        import yaml
+        with open(CATALOG_PATH) as f:
+            catalog = yaml.safe_load(f)
+        _datasets_cache = list(catalog.keys())
+    return _datasets_cache
+
+
+# Backwards-compatible module-level name (lazy property via __getattr__)
+def __getattr__(name: str):
+    if name == "DATASETS":
+        return get_datasets()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
 
 
 def run_id(cfg: PipelineConfig, stage: str) -> str:

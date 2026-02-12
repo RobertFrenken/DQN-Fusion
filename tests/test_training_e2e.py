@@ -108,7 +108,7 @@ class TestCurriculumE2E:
         assert config_path(gat_cfg, "curriculum").exists(), "GAT config not saved"
 
         loaded_cfg = PipelineConfig.load(config_path(gat_cfg, "curriculum"))
-        from src.models.models import GATWithJK
+        from src.models.gat import GATWithJK
         model = GATWithJK(
             num_ids=NUM_IDS, in_channels=IN_CHANNELS,
             hidden_channels=loaded_cfg.gat_hidden, out_channels=2,

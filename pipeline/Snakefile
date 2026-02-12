@@ -19,7 +19,9 @@
 #   snakemake -s pipeline/Snakefile --dag | dot -Tpdf > dag.pdf
 # ===========================================================================
 
-ALL_DATASETS = ["hcrl_ch", "hcrl_sa", "set_01", "set_02", "set_03", "set_04"]
+import yaml as _yaml
+with open("data/datasets.yaml") as _f:
+    ALL_DATASETS = list(_yaml.safe_load(_f).keys())
 DATASETS     = config.get("datasets", ALL_DATASETS)
 EXP       = "experimentruns"
 CLI       = "/users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pipeline.cli"

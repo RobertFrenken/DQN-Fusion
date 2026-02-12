@@ -2,11 +2,8 @@
 from __future__ import annotations
 
 import gc
-import glob
 import logging
-import shutil
 import sys
-import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
@@ -129,60 +126,7 @@ def compute_optimal_batch_size(
     except Exception as e:
         log.warning("Memory estimation failed: %s", e)
 
-    # Fallback to Lightning Tuner if configured
-    if cfg.batch_size_mode in ("binsearch", "power"):
-        log.info("Falling back to Lightning Tuner (mode=%s)", cfg.batch_size_mode)
-        return _lightning_tune_batch_size(model, train_data, cfg)
-
     return effective_batch_size(cfg)
-
-
-def _lightning_tune_batch_size(
-    module: nn.Module,
-    train_data,
-    cfg: PipelineConfig,
-) -> int:
-    """Use Lightning Tuner for batch size (trial-based, slower but accurate)."""
-    from src.training.datamodules import CANGraphDataModule
-    from lightning.pytorch.tuner import Tuner
-
-    val_size = max(1, len(train_data) // 10)
-    val_data = train_data[:val_size]
-
-    if not isinstance(module, pl.LightningModule):
-        log.warning("Lightning Tuner requires LightningModule, using fallback")
-        return effective_batch_size(cfg)
-
-    module.batch_size = cfg.batch_size
-    dm = CANGraphDataModule(train_data, val_data, cfg.batch_size, num_workers=cfg.num_workers)
-    tmp = tempfile.mkdtemp(prefix="tuner_", dir=".")
-
-    trainer = pl.Trainer(
-        accelerator="gpu", devices=1,
-        precision=cfg.precision,
-        max_steps=200, max_epochs=None,
-        enable_checkpointing=False, logger=False,
-        default_root_dir=tmp,
-    )
-
-    try:
-        tuner = Tuner(trainer)
-        tuner.scale_batch_size(module, datamodule=dm,
-                               mode=cfg.batch_size_mode,
-                               steps_per_trial=3,
-                               init_val=cfg.batch_size)
-        tuned = module.batch_size
-        safe = max(8, int(tuned * cfg.safety_factor))
-        log.info("Lightning Tuner: %d -> tuned %d -> safe %d (sf=%.2f)",
-                 cfg.batch_size, tuned, safe, cfg.safety_factor)
-        return safe
-    except Exception as e:
-        log.warning("Lightning Tuner failed: %s. Using safety factor.", e)
-        return effective_batch_size(cfg)
-    finally:
-        for ckpt in glob.glob(".scale_batch_size_*.ckpt"):
-            Path(ckpt).unlink(missing_ok=True)
-        shutil.rmtree(tmp, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------
@@ -302,7 +246,7 @@ def load_teacher(
                  tcfg.vgae_latent_dim, t_num_ids)
 
     elif model_type == "gat":
-        from src.models.models import GATWithJK
+        from src.models.gat import GATWithJK
 
         id_emb = sd.get("id_embedding.weight")
         t_num_ids = id_emb.shape[0] if id_emb is not None else num_ids
@@ -428,7 +372,7 @@ def load_gat(
     stage: str = "curriculum",
 ) -> nn.Module:
     """Load trained GAT model using its frozen config."""
-    from src.models.models import GATWithJK
+    from src.models.gat import GATWithJK
 
     gat_cfg = load_frozen_cfg(cfg, stage)
     gat = GATWithJK(

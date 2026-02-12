@@ -134,7 +134,7 @@ class GATModule(pl.LightningModule):
         teacher: Optional[nn.Module] = None,
     ):
         super().__init__()
-        from src.models.models import GATWithJK
+        from src.models.gat import GATWithJK
 
         self.cfg = cfg
         self.model = GATWithJK(

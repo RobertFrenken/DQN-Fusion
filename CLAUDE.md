@@ -59,8 +59,8 @@ pipeline/           # Main orchestration (frozen dataclasses, no Hydra)
   analytics.py      # Post-run analysis: sweeps, leaderboards, comparisons
   Snakefile         # 19 rules, all stages + evaluation + onsuccess hooks
 src/                # Supporting modules
-  models/           # VGAE, GATWithJK, DQN architectures
-  training/         # CANGraphDataModule, data loading
+  models/           # vgae.py, gat.py, dqn.py
+  training/         # load_dataset(), graph caching
   preprocessing/    # Graph construction from CAN CSVs
 data/
   datasets.yaml     # Dataset catalog (add entries here for new datasets)

@@ -125,7 +125,7 @@ class TestModelMatchesConfig:
 
     def test_gat_dims_from_config(self):
         from pipeline.config import PipelineConfig
-        from src.models.models import GATWithJK
+        from src.models.gat import GATWithJK
 
         for size in ("teacher", "student"):
             cfg = PipelineConfig.from_preset("gat", size)
@@ -216,7 +216,7 @@ class TestCheckpointRoundTrip:
 
     def test_gat_checkpoint_roundtrip(self, tmp_path):
         from pipeline.config import PipelineConfig
-        from src.models.models import GATWithJK
+        from src.models.gat import GATWithJK
 
         cfg = PipelineConfig.from_preset("gat", "teacher")
         model = GATWithJK(
@@ -322,7 +322,7 @@ class TestTeacherLoading:
             )
             torch.save(model.state_dict(), checkpoint_path(cfg, stage))
         elif model_type == "gat":
-            from src.models.models import GATWithJK
+            from src.models.gat import GATWithJK
             model = GATWithJK(
                 num_ids=NUM_IDS, in_channels=IN_CHANNELS,
                 hidden_channels=cfg.gat_hidden, out_channels=2,

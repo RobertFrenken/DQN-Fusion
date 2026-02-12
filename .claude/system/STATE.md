@@ -50,9 +50,9 @@
 ## Active `src/` Files
 
 Essential (imported by pipeline):
-- `src/models/` -- GATWithJK, VGAE, DQN (gradient checkpointing support added)
+- `src/models/` -- vgae.py, gat.py, dqn.py (gradient checkpointing support)
 - `src/preprocessing/preprocessing.py` -- graph construction
-- `src/training/datamodules.py` -- load_dataset(), CANGraphDataModule
+- `src/training/datamodules.py` -- load_dataset()
 
 ## Documentation Structure
 

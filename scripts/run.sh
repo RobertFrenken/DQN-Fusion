@@ -1,65 +1,51 @@
 #!/usr/bin/env bash
-# Run the KD-GAT training pipeline via Snakemake + SLURM.
-# Targets: teachers, students (with KD), students_nokd (ablation), or all.
+# Unified pipeline runner for KD-GAT via Snakemake + SLURM.
+#
+# Usage:
+#   scripts/run.sh [train|evaluate|all] [OPTIONS]
+#
+# Examples:
+#   scripts/run.sh train -d hcrl_sa -t teachers -n   # Dry run teachers only
+#   scripts/run.sh evaluate -d hcrl_sa,set_01 -y      # Evaluate two datasets
+#   scripts/run.sh all -n                              # Dry run full pipeline
 set -euo pipefail
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
-CONDA_ENV="/users/PAS2022/rf15/.conda/envs/gnn-experiments"
+SNAKEMAKE="/users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/snakemake"
 SNAKEFILE="pipeline/Snakefile"
 SLURM_PROFILE="profiles/slurm"
-ALL_DATASETS=(hcrl_ch hcrl_sa set_01 set_02 set_03 set_04)
-SNAKEMAKE="$CONDA_ENV/bin/snakemake"
 
-# ---------------------------------------------------------------------------
-# Colors
-# ---------------------------------------------------------------------------
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-BOLD='\033[1m'
-NC='\033[0m'
-
+RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
+BLUE='\033[0;34m'; BOLD='\033[1m'; NC='\033[0m'
 info()  { echo -e "${BLUE}[INFO]${NC} $*"; }
-warn()  { echo -e "${YELLOW}[WARN]${NC} $*"; }
 error() { echo -e "${RED}[ERROR]${NC} $*" >&2; }
 ok()    { echo -e "${GREEN}[OK]${NC} $*"; }
 
-# ---------------------------------------------------------------------------
-# Usage
-# ---------------------------------------------------------------------------
 usage() {
     cat <<EOF
-${BOLD}Usage:${NC} $(basename "$0") [OPTIONS]
+${BOLD}Usage:${NC} $(basename "$0") <command> [OPTIONS]
 
-Run the KD-GAT training pipeline (teachers, students, or both).
+${BOLD}Commands:${NC}
+  train         Run training pipeline (targets: all, teachers, students, students_nokd)
+  evaluate      Run evaluation on trained models
+  all           Full pipeline: training + evaluation
 
 ${BOLD}Options:${NC}
-  -d, --datasets <csv>    Comma-separated datasets (default: all 6)
-                          Available: ${ALL_DATASETS[*]}
-  -t, --target <name>     Snakemake target rule:
-                            teachers      - teacher models only
-                            students      - student models with KD
-                            students_nokd - student models without KD (ablation)
-                            all           - all three (default)
+  -d, --datasets <csv>    Comma-separated datasets (default: all from datasets.yaml)
+  -t, --target <name>     Training target: all, teachers, students, students_nokd (train only)
   -n, --dry-run           Show what would run without executing
   -y, --yes               Skip confirmation prompt
   -h, --help              Show this help message
-
-${BOLD}Examples:${NC}
-  $(basename "$0") -d hcrl_sa -t teachers -n     # Dry run, one dataset, teachers only
-  $(basename "$0") -d hcrl_sa,set_01 -y          # Train all variants, two datasets
-  $(basename "$0") -n                             # Dry run, all datasets, all targets
 EOF
     exit 0
 }
 
 # ---------------------------------------------------------------------------
-# Argument parsing
+# Parse arguments
 # ---------------------------------------------------------------------------
+[[ $# -eq 0 ]] && usage
+COMMAND="$1"; shift
+
 DATASETS=""
 TARGET="all"
 DRY_RUN=false
@@ -76,39 +62,40 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-# Validate target
-case "$TARGET" in
-    all|teachers|students|students_nokd) ;;
-    *) error "Invalid target: $TARGET"; exit 1 ;;
+# ---------------------------------------------------------------------------
+# Resolve Snakemake target
+# ---------------------------------------------------------------------------
+case "$COMMAND" in
+    train)
+        case "$TARGET" in
+            all)            SNAKE_TARGET="" ;;
+            teachers|students|students_nokd) SNAKE_TARGET="$TARGET" ;;
+            *) error "Invalid target: $TARGET"; exit 1 ;;
+        esac
+        ;;
+    evaluate)   SNAKE_TARGET="evaluate_all" ;;
+    all)        SNAKE_TARGET="evaluate_all" ;;
+    *)          error "Unknown command: $COMMAND"; usage ;;
 esac
 
 # ---------------------------------------------------------------------------
 # Build Snakemake command
 # ---------------------------------------------------------------------------
 cd "$PROJECT_ROOT"
-mkdir -p slurm_logs
 
 SNAKE_ARGS=(-s "$SNAKEFILE" --profile "$SLURM_PROFILE")
+[[ -n "$SNAKE_TARGET" ]] && SNAKE_ARGS+=("$SNAKE_TARGET")
 
-# Target rule (must come before --config for Snakemake)
-if [[ "$TARGET" != "all" ]]; then
-    SNAKE_ARGS+=("$TARGET")
-    info "Target: $TARGET"
-else
-    info "Target: all (teachers + students + students_nokd)"
-fi
-
-# Dataset config
 if [[ -n "$DATASETS" ]]; then
-    # Convert comma-separated to JSON list
     IFS=',' read -ra DS_ARRAY <<< "$DATASETS"
     DS_JSON=$(printf ',"%s"' "${DS_ARRAY[@]}")
     DS_JSON="[${DS_JSON:1}]"
     SNAKE_ARGS+=(--config "datasets=$DS_JSON")
     info "Datasets: ${DS_ARRAY[*]}"
 else
-    info "Datasets: ${ALL_DATASETS[*]} (all)"
+    info "Datasets: all (from datasets.yaml)"
 fi
+info "Command: $COMMAND (target: ${SNAKE_TARGET:-default})"
 
 # ---------------------------------------------------------------------------
 # Dry run
@@ -144,12 +131,11 @@ fi
 # Execute
 # ---------------------------------------------------------------------------
 echo ""
-info "Submitting jobs to SLURM..."
+info "Submitting to SLURM..."
 echo ""
 "$SNAKEMAKE" "${SNAKE_ARGS[@]}" 2>&1
 
 echo ""
-ok "Pipeline submitted. Monitor with:"
+ok "Jobs submitted. Monitor with:"
 echo "  squeue -u \$USER"
 echo "  watch -n 30 squeue -u \$USER"
-echo "  $SNAKEMAKE -s $SNAKEFILE --profile $SLURM_PROFILE --summary"

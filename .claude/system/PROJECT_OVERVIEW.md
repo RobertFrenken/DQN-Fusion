@@ -42,8 +42,8 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 ## Supporting Code: `src/`
 
 `pipeline/stages/` imports from these `src/` modules:
-- `src.models.vgae`, `src.models.models`, `src.models.dqn` — model architectures
-- `src.training.datamodules` — `load_dataset()`, `CANGraphDataModule`
+- `src.models.vgae`, `src.models.gat`, `src.models.dqn` — model architectures
+- `src.training.datamodules` — `load_dataset()`
 - `src.preprocessing.preprocessing` — `GraphDataset`, graph construction
 
 `load_dataset()` accepts direct `Path` arguments from `pipeline/paths.py`. No legacy adapters remain.
@@ -75,7 +75,7 @@ data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parqu
 | Model | File | Teacher | Student |
 |-------|------|---------|---------|
 | `GraphAutoencoderNeighborhood` | `src/models/vgae.py` | (1024,512,96) latent 96 | (80,40,16) latent 16 |
-| `GATWithJK` | `src/models/models.py` | hidden 64, 5 layers, 8 heads | hidden 24, 2 layers, 4 heads |
+| `GATWithJK` | `src/models/gat.py` | hidden 64, 5 layers, 8 heads | hidden 24, 2 layers, 4 heads |
 | `EnhancedDQNFusionAgent` | `src/models/dqn.py` | hidden 576, 3 layers | hidden 160, 2 layers |
 
 DQN state: 15D vector (VGAE 8D: errors + latent stats + confidence; GAT 7D: logits + embedding stats + confidence).

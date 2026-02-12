@@ -107,7 +107,7 @@ class TestGATSmoke:
     def test_kd_trains(self):
         from pipeline.config import PipelineConfig
         from pipeline.stages.modules import GATModule
-        from src.models.models import GATWithJK
+        from src.models.gat import GATWithJK
 
         teacher_cfg = PipelineConfig.from_preset("gat", "teacher", **SMOKE_OVERRIDES)
         student_cfg = PipelineConfig.from_preset(
@@ -141,7 +141,7 @@ class TestGATSmoke:
 
     def test_fc_layers_config(self):
         """GATWithJK should work with different num_fc_layers values."""
-        from src.models.models import GATWithJK
+        from src.models.gat import GATWithJK
 
         g = _make_graph()
         g.batch = torch.zeros(g.x.size(0), dtype=torch.long)

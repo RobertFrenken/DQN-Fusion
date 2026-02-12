@@ -1,9 +1,8 @@
 """
-Data Module System for CAN-Graph Training
+Dataset loading with intelligent caching for CAN-Graph training.
 
-Components:
-- CANGraphDataModule: Standard DataModule for training
-- load_dataset(): Dataset loading with intelligent caching
+Core function:
+    load_dataset(): Load graph data with automatic cache management
 """
 
 import json
@@ -14,8 +13,6 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 import torch
-from torch_geometric.loader import DataLoader
-import lightning.pytorch as pl
 
 from src.preprocessing.preprocessing import (
     GraphDataset,
@@ -27,73 +24,10 @@ from src.preprocessing.preprocessing import (
 
 logger = logging.getLogger(__name__)
 
-# Default multiprocessing start method for DataLoader workers.
-# 'spawn' is required when CUDA is initialized before DataLoader workers
-# are created (e.g. difficulty scoring in curriculum stage). 'fork' will
-# crash with "Cannot re-initialize CUDA in forked subprocess".
-DEFAULT_MP_CONTEXT = "spawn"
-
 # vm.max_map_count is typically 65530 on Linux.
 # Both spawn workers and share_memory_() create mmap entries per tensor,
 # so datasets exceeding this limit must use num_workers=0.
 MMAP_TENSOR_LIMIT = 60000
-
-
-# ============================================================================
-# Standard DataModule
-# ============================================================================
-
-class CANGraphDataModule(pl.LightningDataModule):
-    """
-    Standard Lightning DataModule for CAN graph training.
-
-    Used for normal training modes (GAT, VGAE, DQN).
-    Provides efficient batch loading with PyTorch Geometric DataLoader.
-    """
-
-    def __init__(self, train_dataset, val_dataset, batch_size: int, num_workers: int = 8,
-                 mp_start_method: str = DEFAULT_MP_CONTEXT):
-        super().__init__()
-        self.train_dataset = train_dataset
-        self.val_dataset = val_dataset
-        self.batch_size = batch_size
-        self.mp_start_method = mp_start_method
-
-        # Fall back to 0 workers if dataset exceeds mmap limit
-        if num_workers > 0 and mp_start_method == "spawn":
-            total_tensors = (len(train_dataset) + len(val_dataset)) * 3
-            if total_tensors > MMAP_TENSOR_LIMIT:
-                logger.warning(
-                    "Dataset has %d tensor storages (limit %d for vm.max_map_count). "
-                    "Falling back to num_workers=0.",
-                    total_tensors, MMAP_TENSOR_LIMIT
-                )
-                num_workers = 0
-        self.num_workers = num_workers
-
-    def train_dataloader(self):
-        nw = self.num_workers
-        return DataLoader(
-            self.train_dataset,
-            batch_size=self.batch_size,
-            shuffle=True,
-            num_workers=nw,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=nw > 0,
-            multiprocessing_context=self.mp_start_method if nw > 0 else None,
-        )
-
-    def val_dataloader(self):
-        nw = self.num_workers
-        return DataLoader(
-            self.val_dataset,
-            batch_size=self.batch_size,
-            shuffle=False,
-            num_workers=nw,
-            pin_memory=torch.cuda.is_available(),
-            persistent_workers=nw > 0,
-            multiprocessing_context=self.mp_start_method if nw > 0 else None,
-        )
 
 
 # ============================================================================

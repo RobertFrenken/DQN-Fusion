@@ -105,13 +105,10 @@ class PipelineConfig:
     # --- Batch size ---
     optimize_batch_size:   bool  = True
     safety_factor:         float = 0.5
-    batch_size_mode:       str   = "binsearch"
-    max_batch_size_trials: int   = 10
     memory_estimation:     str   = "measured"  # static | measured
 
     # --- Training dynamics ---
     accumulate_grad_batches: int  = 1
-    find_unused_parameters:  bool = False
 
     # --- Checkpointing & monitoring ---
     save_top_k:          int = 1

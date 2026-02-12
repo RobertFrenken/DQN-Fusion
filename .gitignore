@@ -1,78 +1,32 @@
-# ===== CAN-GRAPH PROJECT GITIGNORE =====
-
 # ===== DATASETS =====
 # Raw CAN data is large - tracked by DVC, not git
-# DVC creates .gitignore entries inside data/ for tracked directories
 datasets/
 *.csv
 *.log
 *.can
 
 # ===== TRAINED MODELS & WEIGHTS =====
-# Model files are too large for git and should be stored in model registries
-saved_models/
-saved_models1/
-output_model_1/
-models/
-checkpoints/
 *.pth
 *.pt
 *.ckpt
 *.safetensors
 *.bin
 
-# Model artifacts
-fusion_checkpoints/
-teacher_models/
-student_models/
-fusion_agents/
-
 # ===== CACHE & TEMPORARY FILES =====
-# Processing cache and temporary files (data/cache/ managed by DVC)
-fusion_cache/
-preprocessing_cache/
-graph_cache/
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 .Python
 build/
-develop-eggs/
 dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
 *.egg-info/
-.installed.cfg
 *.egg
 
 # ===== EXPERIMENT OUTPUTS =====
-# Generated outputs that can be reproduced
-outputs/
-results/
-logs/
-wandb/
 mlruns/
-tensorboard_logs/
-*.log
-
-# Generated figures and publications
-images/
-figures/
-publication_figures/
-*.png
-*.jpg
-*.jpeg
-*.pdf
-*.svg
-!README_assets/  # Keep README images
+slurm_logs/
+results/
 
 # ===== IDE & EDITOR FILES =====
 .vscode/
@@ -87,52 +41,26 @@ publication_figures/
 
 # ===== SYSTEM FILES =====
 .DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
 Thumbs.db
 
 # NFS silly-rename artifacts (HPC filesystem)
 .nfs*
 
-# ===== ENVIRONMENT & CONFIG =====
-# Virtual environments
+# ===== ENVIRONMENT =====
 venv/
 env/
-ENV/
-env.bak/
-venv.bak/
-
-# Environment variables
 .env
 .env.local
 .env.*.local
 
-# Personal configuration overrides
-config/personal/
-conf/personal/
-*.local.yaml
-
-# ===== HYDRA OUTPUTS =====
-# Hydra experiment outputs
-outputs/
-multirun/
-.hydra/
-
-# ===== GPU & PERFORMANCE PROFILING =====
-# NVIDIA profiler outputs
+# ===== PROFILING =====
 *.nvprof
 *.prof
-prof/
-profiling/
 
-# ===== SPECIFIC TO CAN-GRAPH =====
-# Large intermediate files
+# ===== DATA ARTIFACTS =====
+# Large intermediate files (data/cache/ managed by DVC)
 *.pkl
 *.pickle
-*.joblib
 temp_*
 tmp_*
 
@@ -140,7 +68,13 @@ tmp_*
 *.out
 *.err
 slurm-*.out
-slurm_logs/
 
 # Snakemake working directory
 .snakemake/
+
+# Generated figures
+*.png
+*.jpg
+*.jpeg
+*.pdf
+*.svg
