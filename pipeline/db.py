@@ -92,33 +92,118 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
 def register_datasets(stats_list: list[dict], db_path: Path | None = None) -> None:
     """Insert or update dataset entries from ingestion stats."""
     conn = get_connection(db_path)
-    now = datetime.now(timezone.utc).isoformat()
-    for stats in stats_list:
-        attack_types = json.dumps(stats.get("attack_types", []))
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        for stats in stats_list:
+            attack_types = json.dumps(stats.get("attack_types", []))
+            conn.execute(
+                """INSERT OR REPLACE INTO datasets
+                   (name, domain, protocol, source, description,
+                    num_files, num_samples, num_graphs, num_unique_ids,
+                    attack_types, added_by, added_date, parquet_path)
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                (
+                    stats["name"],
+                    stats.get("domain", ""),
+                    stats.get("protocol", ""),
+                    stats.get("source", ""),
+                    stats.get("description", ""),
+                    stats.get("num_files"),
+                    stats.get("num_samples"),
+                    stats.get("num_graphs"),
+                    stats.get("num_unique_ids"),
+                    attack_types,
+                    stats.get("added_by", ""),
+                    now,
+                    stats.get("parquet_path", ""),
+                ),
+            )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_run_start(
+    run_id: str,
+    dataset: str,
+    model_size: str,
+    stage: str,
+    use_kd: bool,
+    config_json: str,
+    teacher_run: str = "",
+    db_path: Path | None = None,
+) -> None:
+    """Record the start of a run. Called from cli.py before stage dispatch."""
+    conn = get_connection(db_path)
+    try:
+        now = datetime.now(timezone.utc).isoformat()
         conn.execute(
-            """INSERT OR REPLACE INTO datasets
-               (name, domain, protocol, source, description,
-                num_files, num_samples, num_graphs, num_unique_ids,
-                attack_types, added_by, added_date, parquet_path)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-            (
-                stats["name"],
-                stats.get("domain", ""),
-                stats.get("protocol", ""),
-                stats.get("source", ""),
-                stats.get("description", ""),
-                stats.get("num_files"),
-                stats.get("num_samples"),
-                stats.get("num_graphs"),
-                stats.get("num_unique_ids"),
-                attack_types,
-                stats.get("added_by", ""),
-                now,
-                stats.get("parquet_path", ""),
-            ),
+            """INSERT OR REPLACE INTO runs
+               (run_id, dataset, model_size, stage, use_kd, status,
+                teacher_run, started_at, completed_at, config_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+            (run_id, dataset, model_size, stage,
+             1 if use_kd else 0, "running", teacher_run, now, config_json),
         )
-    conn.commit()
-    conn.close()
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_run_end(
+    run_id: str,
+    success: bool,
+    metrics: dict | None = None,
+    db_path: Path | None = None,
+) -> None:
+    """Record run completion. Called from cli.py after stage dispatch."""
+    conn = get_connection(db_path)
+    try:
+        now = datetime.now(timezone.utc).isoformat()
+        status = "complete" if success else "failed"
+        conn.execute(
+            "UPDATE runs SET status = ?, completed_at = ? WHERE run_id = ?",
+            (status, now, run_id),
+        )
+
+        if metrics and success:
+            _insert_metrics_from_dict(conn, run_id, metrics)
+
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def _insert_metrics_from_dict(
+    conn: sqlite3.Connection, run_id: str, metrics: dict
+) -> None:
+    """Insert metrics from a result dict (flat or nested eval format)."""
+    for model_name, model_data in metrics.items():
+        if model_name == "test":
+            # Test scenario metrics
+            for sub_model, scenarios in model_data.items():
+                if not isinstance(scenarios, dict):
+                    continue
+                for scenario, scenario_data in scenarios.items():
+                    for section in ("core", "additional"):
+                        for name, value in scenario_data.get(section, {}).items():
+                            if isinstance(value, (int, float)):
+                                conn.execute(
+                                    """INSERT OR REPLACE INTO metrics
+                                       (run_id, model, scenario, metric_name, value)
+                                       VALUES (?, ?, ?, ?, ?)""",
+                                    (run_id, sub_model, scenario, name, value),
+                                )
+        elif isinstance(model_data, dict):
+            for section in ("core", "additional"):
+                for name, value in model_data.get(section, {}).items():
+                    if isinstance(value, (int, float)):
+                        conn.execute(
+                            """INSERT OR REPLACE INTO metrics
+                               (run_id, model, scenario, metric_name, value)
+                               VALUES (?, ?, ?, ?, ?)""",
+                            (run_id, model_name, "val", name, value),
+                        )
 
 
 def _populate_datasets_from_cache(conn: sqlite3.Connection) -> int:
@@ -306,61 +391,66 @@ def _populate_metrics(conn: sqlite3.Connection) -> int:
 def populate(db_path: Path | None = None) -> dict[str, int]:
     """Populate the project DB from existing filesystem outputs."""
     conn = get_connection(db_path)
-    counts = {
-        "datasets": _populate_datasets_from_cache(conn),
-        "runs": _populate_runs(conn),
-        "metrics": _populate_metrics(conn),
-    }
-    conn.commit()
-    conn.close()
+    try:
+        counts = {
+            "datasets": _populate_datasets_from_cache(conn),
+            "runs": _populate_runs(conn),
+            "metrics": _populate_metrics(conn),
+        }
+        conn.commit()
+    finally:
+        conn.close()
     return counts
 
 
-def query(sql: str, db_path: Path | None = None) -> list[tuple]:
+def query(sql: str, db_path: Path | None = None) -> tuple[list[str], list[tuple]]:
     """Execute a SQL query and return results."""
     conn = get_connection(db_path)
-    conn.row_factory = sqlite3.Row
-    cursor = conn.execute(sql)
-    rows = cursor.fetchall()
-    columns = [d[0] for d in cursor.description] if cursor.description else []
-    conn.close()
-    return columns, [tuple(r) for r in rows]
+    try:
+        conn.row_factory = sqlite3.Row
+        cursor = conn.execute(sql)
+        rows = cursor.fetchall()
+        columns = [d[0] for d in cursor.description] if cursor.description else []
+        return columns, [tuple(r) for r in rows]
+    finally:
+        conn.close()
 
 
 def summary(db_path: Path | None = None) -> str:
     """Print a summary of the project database."""
     conn = get_connection(db_path)
+    try:
+        ds_count = conn.execute("SELECT COUNT(*) FROM datasets").fetchone()[0]
+        run_count = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+        metric_count = conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
 
-    ds_count = conn.execute("SELECT COUNT(*) FROM datasets").fetchone()[0]
-    run_count = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
-    metric_count = conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
+        lines = [
+            f"Project DB: {db_path or DB_PATH}",
+            f"  Datasets: {ds_count}",
+            f"  Runs:     {run_count}",
+            f"  Metrics:  {metric_count}",
+        ]
 
-    lines = [
-        f"Project DB: {db_path or DB_PATH}",
-        f"  Datasets: {ds_count}",
-        f"  Runs:     {run_count}",
-        f"  Metrics:  {metric_count}",
-    ]
+        if ds_count > 0:
+            lines.append("\n  Datasets:")
+            for row in conn.execute(
+                "SELECT name, domain, num_graphs, num_unique_ids FROM datasets ORDER BY name"
+            ):
+                lines.append(
+                    f"    {row[0]:12s}  {row[1]:12s}  "
+                    f"graphs={row[2] or '?':>8}  ids={row[3] or '?':>6}"
+                )
 
-    if ds_count > 0:
-        lines.append("\n  Datasets:")
-        for row in conn.execute(
-            "SELECT name, domain, num_graphs, num_unique_ids FROM datasets ORDER BY name"
-        ):
-            lines.append(
-                f"    {row[0]:12s}  {row[1]:12s}  "
-                f"graphs={row[2] or '?':>8}  ids={row[3] or '?':>6}"
-            )
+        if run_count > 0:
+            lines.append("\n  Runs by stage:")
+            for row in conn.execute(
+                "SELECT stage, COUNT(*) FROM runs GROUP BY stage ORDER BY stage"
+            ):
+                lines.append(f"    {row[0]:15s}  {row[1]}")
 
-    if run_count > 0:
-        lines.append("\n  Runs by stage:")
-        for row in conn.execute(
-            "SELECT stage, COUNT(*) FROM runs GROUP BY stage ORDER BY stage"
-        ):
-            lines.append(f"    {row[0]:15s}  {row[1]}")
-
-    conn.close()
-    return "\n".join(lines)
+        return "\n".join(lines)
+    finally:
+        conn.close()
 
 
 def main(argv: list[str] | None = None) -> None:

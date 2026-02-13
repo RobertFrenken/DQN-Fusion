@@ -4,6 +4,8 @@
 
 - Pipeline system uses frozen dataclasses + JSON. No Hydra, no Pydantic, no OmegaConf in new code.
 - All config is `PipelineConfig` — one object, one file. Presets for model/size combos.
+- **Sub-config views**: Use `cfg.vgae.latent_dim` (not `cfg.vgae_latent_dim`) in new/modified code. Flat fields remain for serialization; sub-config properties are computed views.
+- **Write-through DB**: `cli.py` records runs directly to project DB. Don't rely on `populate()` as the primary data path.
 - Imports from `src/` are conditional (inside functions) to avoid top-level coupling.
 
 ## Code Style

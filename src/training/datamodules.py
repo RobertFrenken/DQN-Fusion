@@ -39,6 +39,7 @@ def load_dataset(
     dataset_path: Path,
     cache_dir_path: Path,
     force_rebuild_cache: bool = False,
+    seed: int = 42,
 ):
     """
     Load and prepare dataset with intelligent caching.
@@ -74,19 +75,24 @@ def load_dataset(
             force_rebuild_cache,
         )
     
+    # Unwrap GraphDataset to plain list if needed (avoid double-wrapping)
+    if hasattr(graphs, 'data_list'):
+        graphs = graphs.data_list
+
     # Create dataset and split
     dataset = GraphDataset(graphs)
-    logger.info(f"📊 Created dataset with {len(dataset)} total graphs")
-    
+    logger.info(f"Created dataset with {len(dataset)} total graphs")
+
     train_size = int(0.8 * len(dataset))
     val_size = len(dataset) - train_size
     train_dataset, val_dataset = torch.utils.data.random_split(
-        dataset, 
-        [train_size, val_size]
+        dataset,
+        [train_size, val_size],
+        generator=torch.Generator().manual_seed(seed),
     )
     
     logger.info(
-        f"📊 Dataset split: {len(train_dataset)} training, "
+        f"Dataset split: {len(train_dataset)} training, "
         f"{len(val_dataset)} validation"
     )
     
@@ -185,7 +191,7 @@ def _load_cached_data(cache_file, id_mapping_file, dataset_name):
         try:
             cache_file.unlink(missing_ok=True)
             id_mapping_file.unlink(missing_ok=True)
-        except:
+        except OSError:
             pass
         return None, None
     except Exception as e:

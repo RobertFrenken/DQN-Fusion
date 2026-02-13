@@ -24,8 +24,9 @@ with open("data/datasets.yaml") as _f:
     ALL_DATASETS = list(_yaml.safe_load(_f).keys())
 DATASETS     = config.get("datasets", ALL_DATASETS)
 EXP       = "experimentruns"
-CLI       = "/users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pipeline.cli"
-PY        = "/users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python"
+import os as _os, sys as _sys
+PY        = _os.environ.get("KD_GAT_PYTHON", _sys.executable)
+CLI       = f"{PY} -m pipeline.cli"
 
 # Helper: build canonical checkpoint path (2-level structure)
 # {EXP}/{ds}/{size}_{stage}[_kd]/best_model.pt

@@ -21,6 +21,7 @@ from .utils import (
     load_frozen_cfg,
     cache_predictions,
     cleanup,
+    graph_label,
 )
 
 log = logging.getLogger(__name__)
@@ -115,21 +116,21 @@ def evaluate(cfg: PipelineConfig) -> dict:
         vgae = load_vgae(cfg, num_ids, in_ch, device, stage=vgae_stage)
         gat = load_gat(cfg, num_ids, in_ch, device, stage=gat_stage)
 
-        val_cache = cache_predictions(vgae, gat, val_data, device, cfg.max_val_samples)
+        val_cache = cache_predictions(vgae, gat, val_data, device, cfg.fusion.max_val_samples)
 
         from src.models.dqn import EnhancedDQNFusionAgent
 
         fusion_cfg = load_frozen_cfg(cfg, "fusion")
         agent = EnhancedDQNFusionAgent(
-            lr=fusion_cfg.fusion_lr, gamma=fusion_cfg.dqn_gamma,
+            lr=fusion_cfg.fusion.lr, gamma=fusion_cfg.dqn.gamma,
             epsilon=0.0, epsilon_decay=1.0, min_epsilon=0.0,
-            buffer_size=fusion_cfg.dqn_buffer_size,
-            batch_size=fusion_cfg.dqn_batch_size,
-            target_update_freq=fusion_cfg.dqn_target_update,
+            buffer_size=fusion_cfg.dqn.buffer_size,
+            batch_size=fusion_cfg.dqn.batch_size,
+            target_update_freq=fusion_cfg.dqn.target_update,
             device=str(device),
-            alpha_steps=fusion_cfg.alpha_steps,
-            hidden_dim=fusion_cfg.dqn_hidden,
-            num_layers=fusion_cfg.dqn_layers,
+            alpha_steps=fusion_cfg.fusion.alpha_steps,
+            hidden_dim=fusion_cfg.dqn.hidden,
+            num_layers=fusion_cfg.dqn.layers,
         )
         fusion_sd = torch.load(fusion_ckpt, map_location="cpu", weights_only=True)
         agent.q_network.load_state_dict(fusion_sd["q_network"])
@@ -144,7 +145,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
         if test_scenarios:
             test_metrics["fusion"] = {}
             for scenario, tdata in test_scenarios.items():
-                tc = cache_predictions(vgae, gat, tdata, device, cfg.max_val_samples)
+                tc = cache_predictions(vgae, gat, tdata, device, cfg.fusion.max_val_samples)
                 tp, tl, ts = _run_fusion_inference(agent, tc)
                 test_metrics["fusion"][scenario] = _compute_metrics(tl, tp, ts)
                 log.info("Fusion %s  acc=%.4f f1=%.4f",
@@ -194,8 +195,12 @@ def evaluate(cfg: PipelineConfig) -> dict:
 # ---------------------------------------------------------------------------
 
 def _graph_label(g) -> int:
-    """Extract scalar graph-level label consistently."""
-    return g.y.item() if g.y.dim() == 0 else int(g.y[0].item())
+    """Extract scalar graph-level label consistently.
+
+    Deprecated: use graph_label() from utils.py instead.
+    Kept as thin wrapper to avoid changing all local call sites.
+    """
+    return graph_label(g)
 
 
 def _load_test_data(cfg: PipelineConfig) -> dict:

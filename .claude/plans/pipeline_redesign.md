@@ -320,7 +320,7 @@ class CompositeTracker(ExperimentTracker):
 Alternatives considered:
 - **Nextflow**: Better container support, but Snakemake's Python integration is superior for this project
 - **Prefect/Airflow**: Overkill for batch HPC, designed for long-running services
-- **Plain Makefile**: Too primitive for 19 rules with wildcards
+- **Plain Makefile**: Too primitive for 20 rules with wildcards
 - **Metaflow**: Good for ML but weak SLURM support
 
 **Improvement: Separate Snakefile from pipeline package**
@@ -582,7 +582,7 @@ Package merge (`src/` + `pipeline/` → `kd_gat/`) is **deferred** — the condi
 
 ---
 
-### Phase 1: Per-Model Sub-Configs (LOW RISK)
+### Phase 1: Per-Model Sub-Configs (LOW RISK) — COMPLETED 2026-02-12
 
 **Goal**: Add typed sub-config views without breaking anything.
 
@@ -633,7 +633,7 @@ Package merge (`src/` + `pipeline/` → `kd_gat/`) is **deferred** — the condi
 
 ---
 
-### Phase 4: Write-Through DB (LOW RISK)
+### Phase 4: Write-Through DB (LOW RISK) — COMPLETED 2026-02-12
 
 **Goal**: `cli.py` writes to project DB directly instead of post-hoc `populate()` scanning.
 

@@ -1,6 +1,6 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-02-07
+**Updated**: 2026-02-12
 
 ## What This Is
 
@@ -20,22 +20,21 @@ VGAE (unsupervised reconstruction) → GAT (supervised classification) → DQN (
 
 Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pydantic.
 
-- `config.py` — `PipelineConfig` frozen dataclass, presets, JSON save/load
+- `config.py` — `PipelineConfig` frozen dataclass + typed sub-config views (`VGAEConfig`, `GATConfig`, `DQNConfig`, `KDConfig`, `FusionConfig`) + presets, JSON save/load
 - `stages/` — Training logic split into modules:
   - `training.py` — VGAE (autoencoder) and GAT (curriculum) training
-  - `fusion.py` — DQN fusion training
+  - `fusion.py` — DQN fusion training (uses `cfg.dqn.*`, `cfg.fusion.*`)
   - `evaluation.py` — Multi-model evaluation and metrics
-  - `modules.py` — PyTorch Lightning modules
-  - `utils.py` — Shared utilities (teacher loading, config loading)
+  - `modules.py` — PyTorch Lightning modules (uses `cfg.vgae.*`, `cfg.gat.*`)
+  - `utils.py` — Shared utilities (teacher/model loading uses sub-config views)
 - `paths.py` — Canonical directory layout, checkpoint/config paths
 - `validate.py` — Config validation
-- `cli.py` — Arg parser, MLflow run lifecycle, `STAGE_FNS` dispatch
+- `cli.py` — Arg parser, MLflow run lifecycle, write-through DB recording, `STAGE_FNS` dispatch
 - `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
 - `memory.py` — Memory monitoring and GPU/CPU optimization
 - `ingest.py` — CSV→Parquet ingestion, validation against `data/datasets.yaml`, dataset registration
-- `db.py` — SQLite project DB (`data/project.db`): schema, population from filesystem, CLI queries
-- `Snakefile` — Snakemake workflow (19 rules, 2-level paths, configurable DATASETS, onstart MLflow init, onsuccess DB populate + MLflow backup)
-- `snakemake_config.yaml` — Pipeline-level Snakemake config
+- `db.py` — SQLite project DB (`data/project.db`): schema, write-through `record_run_start()`/`record_run_end()`, backfill `populate()`, CLI queries
+- `Snakefile` — Snakemake workflow (20 rules, 2-level paths, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup)
 - `profiles/slurm/config.yaml` — SLURM cluster submission profile for Snakemake
 - `profiles/slurm/status.sh` — Job status checker (sacct-based)
 
@@ -67,7 +66,7 @@ data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parqu
 - Cache auto-built on first access, validated via metadata on subsequent loads
 - All data versioned with DVC (remote: `/fs/scratch/PAS1266/can-graph-dvc`)
 - Parquet files: 5-10x smaller than CSV, queryable via SQL
-- Project DB: populated from experimentruns/ outputs, queryable with `python -m pipeline.db query "SQL"` or Datasette
+- Project DB: write-through from `cli.py` (primary), backfill via `populate()` (recovery). Queryable with `python -m pipeline.db query "SQL"` or Datasette
 
 ## Models
 
@@ -125,7 +124,7 @@ data/project.db         # SQLite: datasets, runs, metrics tables
 
 Snakemake needs deterministic file paths at DAG construction time. MLflow artifact paths contain run UUIDs (not deterministic). So models save to filesystem first (Snakemake), then log to MLflow (tracking). If scratch purges, checkpoints/configs survive on NFS.
 
-**MLflow integration**: Fully wired. `cli.py` wraps stage dispatch with `start_run`/`end_run`. Evaluation stage logs flattened test-scenario metrics as `test.{model}.{scenario}.{metric}` and logs `metrics.json` as an artifact. Snakefile `onsuccess` hook backs up MLflow DB to `~/backups/` and populates project DB.
+**MLflow integration**: Fully wired. `cli.py` wraps stage dispatch with `start_run`/`end_run` and records to project DB via `record_run_start()`/`record_run_end()`. Evaluation stage logs flattened test-scenario metrics as `test.{model}.{scenario}.{metric}` and logs `metrics.json` as an artifact. Snakefile `onsuccess` hook backs up MLflow DB to `~/backups/` and runs `populate()` as a safety net backfill.
 
 ## Environment
 

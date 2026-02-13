@@ -38,7 +38,6 @@ Parse the dataset and target from `$ARGUMENTS`. If only one word is provided, it
 
 4. **Submit to SLURM** if dry run looks correct
    ```bash
-   mkdir -p slurm_logs
    snakemake -s pipeline/Snakefile --config "datasets=[\"<dataset>\"]" --profile profiles/slurm
    ```
 
@@ -58,6 +57,8 @@ Parse the dataset and target from `$ARGUMENTS`. If only one word is provided, it
 ## Notes
 
 - Pipeline runs on SLURM with GPU resources (V100, 128GB RAM)
-- SLURM logs: `slurm_logs/{jobid}-{rule}.{out,err}`
+- SLURM logs: `experimentruns/{ds}/{run}/slurm.{out,err}`
 - MLflow tracking is automatic
+- Write-through DB: runs are recorded in `data/project.db` before/after each stage
+- Snakefile uses `sys.executable` for Python path (override with `KD_GAT_PYTHON` env var)
 - Always do a dry run (`-n`) before submitting

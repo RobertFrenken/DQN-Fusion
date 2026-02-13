@@ -45,7 +45,7 @@ SMOKE_OVERRIDES = dict(
     gradient_checkpointing=False,
     log_every_n_steps=1,
     safety_factor=1.0,
-    mp_start_method="fork",
+    mp_start_method="spawn",
 )
 
 # E2E tests need tiny architectures to finish in reasonable time on CPU

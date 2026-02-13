@@ -75,10 +75,7 @@ class EnhancedDQNFusionAgent:
         self.training_step = 0
         self.update_counter = 0
         self.reward_history = []
-        self.accuracy_history = []
         self.loss_history = []
-        self.episode_rewards = []
-        self.current_episode_reward = 0
         
         # Validation tracking
         self.validation_scores = []
@@ -112,6 +109,9 @@ class EnhancedDQNFusionAgent:
         if len(state_features) != 15:
             raise ValueError(f"Expected 15D state, got {len(state_features)}D")
 
+        # Avoid mutating caller's array
+        state_features = state_features.copy()
+
         # Clip confidence values to [0, 1]
         state_features[7] = np.clip(state_features[7], 0.0, 1.0)  # VGAE confidence
         state_features[14] = np.clip(state_features[14], 0.0, 1.0)  # GAT confidence
@@ -143,6 +143,26 @@ class EnhancedDQNFusionAgent:
         alpha_value = self.alpha_values[action_idx]
         return alpha_value, action_idx, state
 
+    @staticmethod
+    def _derive_scores(state_features: np.ndarray) -> Tuple[float, float]:
+        """Derive anomaly_score and gat_prob from 15D state features.
+
+        Returns:
+            (anomaly_score, gat_prob) tuple
+        """
+        # VGAE errors: [0:3] - use weighted combination
+        vgae_errors = state_features[0:3]
+        vgae_weights = np.array([0.4, 0.35, 0.25])
+        anomaly_score = float(np.clip(np.sum(vgae_errors * vgae_weights), 0.0, 1.0))
+
+        # GAT logits: [8:10] - numerically stable softmax
+        gat_logits = state_features[8:10]
+        shifted = gat_logits - np.max(gat_logits)
+        gat_probs = np.exp(shifted) / np.sum(np.exp(shifted))
+        gat_prob = float(gat_probs[1])  # Probability of attack class
+
+        return anomaly_score, gat_prob
+
     def compute_fusion_reward(self, prediction: int, true_label: int,
                              state_features: np.ndarray,
                              alpha: float) -> float:
@@ -158,16 +178,7 @@ class EnhancedDQNFusionAgent:
         Returns:
             Reward scalar
         """
-        # Extract derived scores from 15D state
-        # VGAE errors: [0:3] - use weighted combination
-        vgae_errors = state_features[0:3]
-        vgae_weights = np.array([0.4, 0.35, 0.25])
-        anomaly_score = float(np.clip(np.sum(vgae_errors * vgae_weights), 0.0, 1.0))
-
-        # GAT logits: [8:10] - convert to probability
-        gat_logits = state_features[8:10]
-        gat_probs = np.exp(gat_logits) / np.sum(np.exp(gat_logits))  # Softmax
-        gat_prob = float(gat_probs[1])  # Probability of attack class
+        anomaly_score, gat_prob = self._derive_scores(state_features)
 
         # Confidence scores
         vgae_confidence = float(state_features[7])
@@ -219,7 +230,6 @@ class EnhancedDQNFusionAgent:
         
         experience = (state, action_idx, reward, next_state, done)
         self.replay_buffer.append(experience)
-        self.current_episode_reward += reward
 
     def train_step(self) -> Optional[float]:
         """Enhanced training step with Double DQN."""
@@ -291,21 +301,17 @@ class EnhancedDQNFusionAgent:
 
         sample_data = validation_data[:num_samples] if len(validation_data) >= num_samples else validation_data
 
+        if not sample_data:
+            self.q_network.train()
+            return {'accuracy': 0.0, 'avg_reward': 0.0, 'avg_alpha': 0.0, 'alpha_std': 0.0}
+
         for state_features, true_label in sample_data:
             # Select action with 15D state
             alpha, _, _ = self.select_action(state_features, training=False)
             alpha_values_used.append(alpha)
 
             # Derive scalar scores for fusion from 15D state
-            # VGAE errors: weighted combination
-            vgae_errors = state_features[0:3]
-            vgae_weights = np.array([0.4, 0.35, 0.25])
-            anomaly_score = float(np.clip(np.sum(vgae_errors * vgae_weights), 0.0, 1.0))
-
-            # GAT logits: softmax to probability
-            gat_logits = state_features[8:10]
-            gat_probs = np.exp(gat_logits) / np.sum(np.exp(gat_logits))
-            gat_prob = float(gat_probs[1])
+            anomaly_score, gat_prob = self._derive_scores(state_features)
 
             # Make fusion prediction
             fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob

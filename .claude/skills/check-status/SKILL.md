@@ -25,16 +25,22 @@ Check the status of experiments and running jobs.
    done
    ```
 
-3. **Check for recent SLURM errors** in log directory
+3. **Check for recent SLURM errors** in experiment output directories
    ```bash
-   ls -lt slurm_logs/*.err 2>/dev/null | head -10
+   ls -lt experimentruns/*/*/slurm.err 2>/dev/null | head -10
    ```
 
-4. **If dataset specified via `$ARGUMENTS`**, show detailed status:
+4. **Check project DB for run status** (write-through records from cli.py)
+   ```bash
+   python -m pipeline.db query "SELECT run_id, stage, status, started_at FROM runs ORDER BY started_at DESC LIMIT 10"
+   ```
+
+5. **If dataset specified via `$ARGUMENTS`**, show detailed status:
    ```bash
    ls -la experimentruns/$ARGUMENTS/*/best_model.pt 2>/dev/null
    ls -la experimentruns/$ARGUMENTS/*/config.json 2>/dev/null
    ls -la experimentruns/$ARGUMENTS/*/metrics.json 2>/dev/null
+   python -m pipeline.db query "SELECT run_id, stage, status FROM runs WHERE dataset='$ARGUMENTS'"
    ```
 
 ## Output Summary
@@ -55,7 +61,7 @@ Provide a concise status report:
 watch -n 5 'squeue -u $USER'
 
 # Follow specific SLURM log
-tail -f slurm_logs/<jobid>-<rule>.err
+tail -f experimentruns/<dataset>/<run>/slurm.err
 
 # Check Snakemake DAG status
 snakemake -s pipeline/Snakefile --summary

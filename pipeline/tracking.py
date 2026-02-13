@@ -177,8 +177,8 @@ def _extract_teacher_id(teacher_path: str) -> str | None:
             dataset = path.parts[-3]
             run_name = path.parts[-2]
             return f"{dataset}/{run_name}"
-    except Exception:
-        pass
+    except Exception as e:
+        log.debug("Could not extract teacher ID from %s: %s", teacher_path, e)
     return None
 
 

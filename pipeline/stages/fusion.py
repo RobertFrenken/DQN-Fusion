@@ -33,8 +33,8 @@ def train_fusion(cfg: PipelineConfig) -> Path:
 
     # Cache predictions
     log.info("Caching VGAE + GAT predictions ...")
-    train_cache = cache_predictions(vgae, gat, train_data, device, cfg.fusion_max_samples)
-    val_cache = cache_predictions(vgae, gat, val_data, device, cfg.max_val_samples)
+    train_cache = cache_predictions(vgae, gat, train_data, device, cfg.fusion.max_samples)
+    val_cache = cache_predictions(vgae, gat, val_data, device, cfg.fusion.max_val_samples)
     del vgae, gat
     cleanup()
 
@@ -42,21 +42,21 @@ def train_fusion(cfg: PipelineConfig) -> Path:
     from src.models.dqn import EnhancedDQNFusionAgent
 
     agent = EnhancedDQNFusionAgent(
-        lr=cfg.fusion_lr, gamma=cfg.dqn_gamma,
-        epsilon=cfg.dqn_epsilon, epsilon_decay=cfg.dqn_epsilon_decay,
-        min_epsilon=cfg.dqn_min_epsilon,
-        buffer_size=cfg.dqn_buffer_size, batch_size=cfg.dqn_batch_size,
-        target_update_freq=cfg.dqn_target_update, device=str(device),
-        hidden_dim=cfg.dqn_hidden, num_layers=cfg.dqn_layers,
+        lr=cfg.fusion.lr, gamma=cfg.dqn.gamma,
+        epsilon=cfg.dqn.epsilon, epsilon_decay=cfg.dqn.epsilon_decay,
+        min_epsilon=cfg.dqn.min_epsilon,
+        buffer_size=cfg.dqn.buffer_size, batch_size=cfg.dqn.batch_size,
+        target_update_freq=cfg.dqn.target_update, device=str(device),
+        hidden_dim=cfg.dqn.hidden, num_layers=cfg.dqn.layers,
     )
 
     out = stage_dir(cfg, "fusion")
     out.mkdir(parents=True, exist_ok=True)
     best_acc = 0.0
 
-    for ep in range(cfg.fusion_episodes):
+    for ep in range(cfg.fusion.episodes):
         # Sample a batch of cached states
-        idx = torch.randperm(len(train_cache["states"]))[:cfg.episode_sample_size]
+        idx = torch.randperm(len(train_cache["states"]))[:cfg.fusion.episode_sample_size]
         batch_states = train_cache["states"][idx]
         batch_labels = train_cache["labels"][idx]
 
@@ -70,8 +70,8 @@ def train_fusion(cfg: PipelineConfig) -> Path:
             total_reward += reward
 
         # DQN training steps
-        if len(agent.replay_buffer) >= cfg.dqn_batch_size:
-            for _ in range(cfg.gpu_training_steps):
+        if len(agent.replay_buffer) >= cfg.dqn.batch_size:
+            for _ in range(cfg.fusion.gpu_training_steps):
                 agent.train_step()
 
         # Periodic validation
@@ -83,7 +83,7 @@ def train_fusion(cfg: PipelineConfig) -> Path:
             metrics = agent.validate_agent(val_pairs, num_samples=len(val_pairs))
             acc = metrics.get("accuracy", 0)
             log.info("Episode %d/%d  reward=%.1f  val_acc=%.4f",
-                     ep + 1, cfg.fusion_episodes, total_reward, acc)
+                     ep + 1, cfg.fusion.episodes, total_reward, acc)
 
             mlflow.log_metrics({
                 "total_reward": total_reward,

@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import gc
 import logging
+import math
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -25,6 +26,12 @@ if TYPE_CHECKING:
     from torch_geometric.data import Data
 
 log = logging.getLogger(__name__)
+
+
+def graph_label(g) -> int:
+    """Extract scalar graph-level label consistently."""
+    return g.y.item() if g.y.dim() == 0 else int(g.y[0].item())
+
 
 # Ensure project root is importable
 _ROOT = Path(__file__).resolve().parent.parent.parent
@@ -69,6 +76,7 @@ def load_data(cfg: PipelineConfig):
         cfg.dataset,
         dataset_path=data_dir(cfg),
         cache_dir_path=cache_dir(cfg),
+        seed=cfg.seed,
     )
     in_channels = train_data[0].x.shape[1] if train_data else 11
     return train_data, val_data, num_ids, in_channels
@@ -133,9 +141,6 @@ def compute_optimal_batch_size(
 # DataLoader factory
 # ---------------------------------------------------------------------------
 
-from src.training.datamodules import MMAP_TENSOR_LIMIT
-
-
 def _estimate_tensor_count(data) -> int:
     """Estimate number of tensor storages in a graph dataset."""
     if not data:
@@ -155,6 +160,8 @@ def _safe_num_workers(data, cfg: PipelineConfig) -> int:
     entry.  Calling share_memory_() does NOT help — it also creates one mmap
     per tensor.  The only safe option for large datasets is num_workers=0.
     """
+    from src.training.datamodules import MMAP_TENSOR_LIMIT
+
     nw = cfg.num_workers
     if nw > 0 and cfg.mp_start_method == "spawn":
         tensor_count = _estimate_tensor_count(data)
@@ -237,13 +244,13 @@ def load_teacher(
 
         teacher = GraphAutoencoderNeighborhood(
             num_ids=t_num_ids, in_channels=in_channels,
-            hidden_dims=list(tcfg.vgae_hidden_dims), latent_dim=tcfg.vgae_latent_dim,
-            encoder_heads=tcfg.vgae_heads, embedding_dim=tcfg.vgae_embedding_dim,
-            dropout=tcfg.vgae_dropout,
+            hidden_dims=list(tcfg.vgae.hidden_dims), latent_dim=tcfg.vgae.latent_dim,
+            encoder_heads=tcfg.vgae.heads, embedding_dim=tcfg.vgae.embedding_dim,
+            dropout=tcfg.vgae.dropout,
         )
         teacher.load_state_dict(sd)
         log.info("Loaded VGAE teacher: latent_dim=%d, num_ids=%d",
-                 tcfg.vgae_latent_dim, t_num_ids)
+                 tcfg.vgae.latent_dim, t_num_ids)
 
     elif model_type == "gat":
         from src.models.gat import GATWithJK
@@ -253,23 +260,23 @@ def load_teacher(
 
         teacher = GATWithJK(
             num_ids=t_num_ids, in_channels=in_channels,
-            hidden_channels=tcfg.gat_hidden, out_channels=2,
-            num_layers=tcfg.gat_layers, heads=tcfg.gat_heads,
-            dropout=tcfg.gat_dropout,
-            num_fc_layers=getattr(tcfg, 'gat_fc_layers', 3),
-            embedding_dim=tcfg.gat_embedding_dim,
+            hidden_channels=tcfg.gat.hidden, out_channels=2,
+            num_layers=tcfg.gat.layers, heads=tcfg.gat.heads,
+            dropout=tcfg.gat.dropout,
+            num_fc_layers=tcfg.gat.fc_layers,
+            embedding_dim=tcfg.gat.embedding_dim,
         )
         teacher.load_state_dict(sd)
         log.info("Loaded GAT teacher: hidden=%d, layers=%d, num_ids=%d",
-                 tcfg.gat_hidden, tcfg.gat_layers, t_num_ids)
+                 tcfg.gat.hidden, tcfg.gat.layers, t_num_ids)
 
     elif model_type == "dqn":
         from src.models.dqn import QNetwork
 
         state_dim = 15
-        action_dim = tcfg.alpha_steps
+        action_dim = tcfg.fusion.alpha_steps
         teacher = QNetwork(state_dim, action_dim,
-                           hidden_dim=tcfg.dqn_hidden, num_layers=tcfg.dqn_layers)
+                           hidden_dim=tcfg.dqn.hidden, num_layers=tcfg.dqn.layers)
 
         if "q_network" in sd:
             teacher.load_state_dict(sd["q_network"])
@@ -352,9 +359,9 @@ def load_vgae(
     vgae_cfg = load_frozen_cfg(cfg, stage)
     vgae = GraphAutoencoderNeighborhood(
         num_ids=num_ids, in_channels=in_channels,
-        hidden_dims=list(vgae_cfg.vgae_hidden_dims), latent_dim=vgae_cfg.vgae_latent_dim,
-        encoder_heads=vgae_cfg.vgae_heads, embedding_dim=vgae_cfg.vgae_embedding_dim,
-        dropout=vgae_cfg.vgae_dropout,
+        hidden_dims=list(vgae_cfg.vgae.hidden_dims), latent_dim=vgae_cfg.vgae.latent_dim,
+        encoder_heads=vgae_cfg.vgae.heads, embedding_dim=vgae_cfg.vgae.embedding_dim,
+        dropout=vgae_cfg.vgae.dropout,
     )
     vgae.load_state_dict(torch.load(
         checkpoint_path(cfg, stage), map_location="cpu", weights_only=True,
@@ -377,11 +384,11 @@ def load_gat(
     gat_cfg = load_frozen_cfg(cfg, stage)
     gat = GATWithJK(
         num_ids=num_ids, in_channels=in_channels,
-        hidden_channels=gat_cfg.gat_hidden, out_channels=2,
-        num_layers=gat_cfg.gat_layers, heads=gat_cfg.gat_heads,
-        dropout=gat_cfg.gat_dropout,
-        num_fc_layers=getattr(gat_cfg, 'gat_fc_layers', 3),
-        embedding_dim=gat_cfg.gat_embedding_dim,
+        hidden_channels=gat_cfg.gat.hidden, out_channels=2,
+        num_layers=gat_cfg.gat.layers, heads=gat_cfg.gat.heads,
+        dropout=gat_cfg.gat.dropout,
+        num_fc_layers=gat_cfg.gat.fc_layers,
+        embedding_dim=gat_cfg.gat.embedding_dim,
     )
     gat.load_state_dict(torch.load(
         checkpoint_path(cfg, stage), map_location="cpu", weights_only=True,
@@ -517,7 +524,7 @@ def cache_predictions(vgae, gat, data, device, max_samples: int = 150_000):
             probs = F.softmax(x, dim=1)
             p0, p1 = probs[0, 0].item(), probs[0, 1].item()
             entropy = -(probs * (probs + 1e-8).log()).sum().item()
-            gat_conf = max(0.0, min(1.0, 1.0 - entropy / 0.693))
+            gat_conf = max(0.0, min(1.0, 1.0 - entropy / math.log(2)))
 
             state = torch.tensor([
                 recon_err, nbr_err, canid_err,

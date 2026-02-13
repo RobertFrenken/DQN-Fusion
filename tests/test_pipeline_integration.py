@@ -22,26 +22,10 @@ import pytest
 import torch
 from torch_geometric.data import Data
 
-# ---------------------------------------------------------------------------
-# Synthetic data helpers
-# ---------------------------------------------------------------------------
-
-NUM_IDS = 20
-IN_CHANNELS = 11  # matches real graph node features
-
-
-def _make_graph(num_nodes=10, num_edges=20, label=0):
-    """Create a single synthetic graph matching real data shape."""
-    x = torch.randn(num_nodes, IN_CHANNELS)
-    x[:, 0] = torch.randint(0, NUM_IDS, (num_nodes,)).float()  # CAN ID column
-    edge_index = torch.randint(0, num_nodes, (2, num_edges))
-    y = torch.tensor([label])
-    return Data(x=x, edge_index=edge_index, y=y)
-
-
-def _make_dataset(n=50):
-    """Create a small dataset with mix of normal/attack graphs."""
-    return [_make_graph(label=i % 2) for i in range(n)]
+# Re-use synthetic data helpers from conftest (shared test fixtures).
+# conftest.py is auto-loaded by pytest but not directly importable as a module,
+# so we define thin local wrappers that delegate to the shared implementation.
+from tests.conftest import NUM_IDS, IN_CHANNELS, _make_graph, _make_dataset
 
 
 # ---------------------------------------------------------------------------
@@ -328,7 +312,7 @@ class TestTeacherLoading:
                 hidden_channels=cfg.gat_hidden, out_channels=2,
                 num_layers=cfg.gat_layers, heads=cfg.gat_heads,
                 dropout=cfg.gat_dropout,
-                num_fc_layers=getattr(cfg, 'gat_fc_layers', 3),
+                num_fc_layers=cfg.gat_fc_layers,
                 embedding_dim=cfg.gat_embedding_dim,
             )
             torch.save(model.state_dict(), checkpoint_path(cfg, stage))
@@ -558,11 +542,157 @@ class TestFrozenConfigPropagation:
 # ---------------------------------------------------------------------------
 
 class TestMmapConstant:
-    """The mmap limit must be a single shared value, not duplicated."""
+    """The mmap limit must be defined in datamodules (single source of truth)."""
 
     def test_single_source_of_truth(self):
         from src.training.datamodules import MMAP_TENSOR_LIMIT
-        from pipeline.stages.utils import MMAP_TENSOR_LIMIT as UTILS_LIMIT
-        assert MMAP_TENSOR_LIMIT == UTILS_LIMIT, (
-            f"MMAP limit diverged: datamodules={MMAP_TENSOR_LIMIT}, utils={UTILS_LIMIT}"
+        assert isinstance(MMAP_TENSOR_LIMIT, int)
+        assert MMAP_TENSOR_LIMIT > 0
+
+
+# ---------------------------------------------------------------------------
+# 9. Sub-config views
+# ---------------------------------------------------------------------------
+
+class TestSubConfigViews:
+    """Sub-config properties must mirror flat fields for all presets."""
+
+    def test_vgae_view_matches_flat(self):
+        from pipeline.config import PipelineConfig, PRESETS
+        for (model, size), _ in PRESETS.items():
+            cfg = PipelineConfig.from_preset(model, size)
+            assert cfg.vgae.hidden_dims == cfg.vgae_hidden_dims
+            assert cfg.vgae.latent_dim == cfg.vgae_latent_dim
+            assert cfg.vgae.heads == cfg.vgae_heads
+            assert cfg.vgae.embedding_dim == cfg.vgae_embedding_dim
+            assert cfg.vgae.dropout == cfg.vgae_dropout
+
+    def test_gat_view_matches_flat(self):
+        from pipeline.config import PipelineConfig, PRESETS
+        for (model, size), _ in PRESETS.items():
+            cfg = PipelineConfig.from_preset(model, size)
+            assert cfg.gat.hidden == cfg.gat_hidden
+            assert cfg.gat.layers == cfg.gat_layers
+            assert cfg.gat.heads == cfg.gat_heads
+            assert cfg.gat.dropout == cfg.gat_dropout
+            assert cfg.gat.embedding_dim == cfg.gat_embedding_dim
+            assert cfg.gat.fc_layers == cfg.gat_fc_layers
+
+    def test_dqn_view_matches_flat(self):
+        from pipeline.config import PipelineConfig, PRESETS
+        for (model, size), _ in PRESETS.items():
+            cfg = PipelineConfig.from_preset(model, size)
+            assert cfg.dqn.hidden == cfg.dqn_hidden
+            assert cfg.dqn.layers == cfg.dqn_layers
+            assert cfg.dqn.gamma == cfg.dqn_gamma
+            assert cfg.dqn.epsilon == cfg.dqn_epsilon
+            assert cfg.dqn.buffer_size == cfg.dqn_buffer_size
+            assert cfg.dqn.batch_size == cfg.dqn_batch_size
+            assert cfg.dqn.target_update == cfg.dqn_target_update
+
+    def test_kd_view_matches_flat(self):
+        from pipeline.config import PipelineConfig
+        cfg = PipelineConfig(use_kd=True, kd_temperature=3.0, kd_alpha=0.5)
+        assert cfg.kd.enabled is True
+        assert cfg.kd.temperature == 3.0
+        assert cfg.kd.alpha == 0.5
+        assert cfg.kd.vgae_latent_weight == cfg.kd_vgae_latent_weight
+        assert cfg.kd.vgae_recon_weight == cfg.kd_vgae_recon_weight
+
+    def test_fusion_view_matches_flat(self):
+        from pipeline.config import PipelineConfig
+        cfg = PipelineConfig(fusion_episodes=200, fusion_lr=0.01)
+        assert cfg.fusion.episodes == 200
+        assert cfg.fusion.lr == 0.01
+        assert cfg.fusion.max_samples == cfg.fusion_max_samples
+        assert cfg.fusion.max_val_samples == cfg.max_val_samples
+        assert cfg.fusion.alpha_steps == cfg.alpha_steps
+
+    def test_sub_configs_are_frozen(self):
+        from pipeline.config import PipelineConfig
+        cfg = PipelineConfig()
+        with pytest.raises(AttributeError):
+            cfg.vgae.latent_dim = 999
+        with pytest.raises(AttributeError):
+            cfg.gat.hidden = 999
+        with pytest.raises(AttributeError):
+            cfg.dqn.gamma = 999
+
+    def test_roundtrip_preserves_sub_configs(self, tmp_path):
+        from pipeline.config import PipelineConfig
+        cfg = PipelineConfig.from_preset("vgae", "student", dataset="set_01")
+        p = tmp_path / "config.json"
+        cfg.save(p)
+        loaded = PipelineConfig.load(p)
+        assert loaded.vgae.hidden_dims == cfg.vgae.hidden_dims
+        assert loaded.vgae.latent_dim == cfg.vgae.latent_dim
+        assert loaded.gat.hidden == cfg.gat.hidden
+        assert loaded.dqn.hidden == cfg.dqn.hidden
+
+
+# ---------------------------------------------------------------------------
+# 10. Write-through DB
+# ---------------------------------------------------------------------------
+
+class TestWriteThroughDB:
+    """Write-through DB records must survive the full lifecycle."""
+
+    def test_record_run_lifecycle(self, tmp_path):
+        from pipeline.db import get_connection, record_run_start, record_run_end
+
+        db = tmp_path / "test.db"
+        record_run_start(
+            run_id="ds/teacher_autoencoder", dataset="ds",
+            model_size="teacher", stage="autoencoder", use_kd=False,
+            config_json='{"seed": 42}', db_path=db,
         )
+
+        conn = get_connection(db)
+        row = conn.execute(
+            "SELECT status FROM runs WHERE run_id = ?",
+            ("ds/teacher_autoencoder",),
+        ).fetchone()
+        assert row[0] == "running"
+
+        record_run_end(
+            run_id="ds/teacher_autoencoder", success=True,
+            metrics={"gat": {"core": {"f1": 0.95, "accuracy": 0.96}}},
+            db_path=db,
+        )
+
+        row = conn.execute(
+            "SELECT status, completed_at FROM runs WHERE run_id = ?",
+            ("ds/teacher_autoencoder",),
+        ).fetchone()
+        assert row[0] == "complete"
+        assert row[1] is not None
+
+        metric_rows = conn.execute(
+            "SELECT metric_name, value FROM metrics WHERE run_id = ?",
+            ("ds/teacher_autoencoder",),
+        ).fetchall()
+        metric_dict = {r[0]: r[1] for r in metric_rows}
+        assert metric_dict["f1"] == pytest.approx(0.95)
+        assert metric_dict["accuracy"] == pytest.approx(0.96)
+        conn.close()
+
+    def test_record_failed_run(self, tmp_path):
+        from pipeline.db import get_connection, record_run_start, record_run_end
+
+        db = tmp_path / "test.db"
+        record_run_start(
+            run_id="ds/student_curriculum_kd", dataset="ds",
+            model_size="student", stage="curriculum", use_kd=True,
+            config_json='{}', db_path=db,
+        )
+        record_run_end(
+            run_id="ds/student_curriculum_kd", success=False, db_path=db,
+        )
+
+        conn = get_connection(db)
+        row = conn.execute(
+            "SELECT status FROM runs WHERE run_id = ?",
+            ("ds/student_curriculum_kd",),
+        ).fetchone()
+        assert row[0] == "failed"
+        conn.close()

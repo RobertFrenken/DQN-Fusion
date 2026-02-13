@@ -16,17 +16,12 @@ Key Features:
 
 import logging
 import os
-import warnings
 from typing import Dict, List, Optional, Tuple, Union
 
 import numpy as np
 import pandas as pd
 import torch
-from torch_geometric.data import Data, Dataset
-
-# Suppress pandas warnings for cleaner output
-warnings.filterwarnings('ignore', category=pd.errors.SettingWithCopyWarning)
-warnings.filterwarnings('ignore', category=pd.errors.PerformanceWarning)
+from torch_geometric.data import Data
 
 logger = logging.getLogger(__name__)
 
@@ -106,8 +101,10 @@ def apply_dynamic_id_mapping(df: pd.DataFrame, id_mapping: Dict, verbose: bool =
         if col in df.columns:
             df[col] = df[col].map(id_mapping).fillna(oov_index).astype(int)
 
-    if new_ids_found and verbose:
-        print(f"  Mapped {len(new_ids_found)} unseen CAN IDs to OOV: {new_ids_found[:5]}{'...' if len(new_ids_found) > 5 else ''}")
+    if new_ids_found:
+        logger.info("Mapped %d unseen CAN IDs to OOV: %s%s",
+                     len(new_ids_found), new_ids_found[:5],
+                     "..." if len(new_ids_found) > 5 else "")
 
     return df, id_mapping
 
@@ -235,13 +232,14 @@ def dataset_creation_streaming(csv_path: str, id_mapping: Optional[Dict] = None,
 
     except Exception as e:
         # As a last resort, try reading the entire file with engine='python' and no chunks
+        logger.debug("Chunked reading failed for %s: %s", csv_path, e)
         try:
             full = pd.read_csv(csv_path, engine='python', dtype=str)
             full.columns = ['Timestamp', 'arbitration_id', 'data_field', 'attack']
             full.rename(columns={'arbitration_id': 'CAN ID'}, inplace=True)
             processed_full = _process_dataframe_chunk(full, id_mapping)
             processed_chunks.append(processed_full)
-        except Exception as e2:
+        except (pd.errors.ParserError, ValueError, KeyError) as e2:
             logger.warning(f"Error processing {csv_path} (also failed full-read fallback): {e2}")
             return pd.DataFrame()  # Return empty DataFrame on error
     
@@ -517,13 +515,11 @@ def graph_creation(
     csv_files = find_csv_files(root_folder, folder_type)
     
     if not csv_files:
-        if verbose:
-            print(f"No CSV files found in {root_folder}")
+        logger.warning("No CSV files found in %s", root_folder)
         dataset = GraphDataset([])
         return (dataset, {'OOV': 0}) if return_id_mapping else dataset
-    
-    if verbose:
-        print(f"Found {len(csv_files)} CSV files to process")
+
+    logger.info("Found %d CSV files to process", len(csv_files))
     
     # Build ID mapping if not provided
     if id_mapping is None:
@@ -536,34 +532,29 @@ def graph_creation(
     all_graphs = []
     
     for i, csv_file in enumerate(csv_files):
-        if verbose:
-            print(f"Processing file {i+1}/{len(csv_files)}: {os.path.basename(csv_file)}")
-        
+        logger.info("Processing file %d/%d: %s", i + 1, len(csv_files), os.path.basename(csv_file))
+
         try:
             # Use streaming processing to reduce memory usage
             df = dataset_creation_streaming(csv_file, id_mapping=global_id_mapping, chunk_size=5000)
-            
+
             if df.empty:
                 continue
-                
+
             if df.isnull().values.any():
-                if verbose:
-                    print(f"  Warning: NaN values found, filling with 0")
+                logger.warning("NaN values found in %s, filling with 0", os.path.basename(csv_file))
                 df.fillna(0, inplace=True)
-            
+
             # Create graphs from processed DataFrame
             graphs = create_graphs_numpy(df, window_size=window_size, stride=stride)
             all_graphs.extend(graphs)
-            
-            if verbose:
-                print(f"  Created {len(graphs)} graphs ({len(all_graphs)} total so far)")
-            
+
+            logger.info("  Created %d graphs (%d total so far)", len(graphs), len(all_graphs))
+
         except Exception as e:
-            if verbose:
-                print(f"  Error processing {csv_file}: {e}")
-    
-    if verbose:
-        print(f"Total graphs created: {len(all_graphs)}")
+            logger.warning("Error processing %s: %s", csv_file, e)
+
+    logger.info("Total graphs created: %d", len(all_graphs))
     
     dataset = GraphDataset(all_graphs)
     
@@ -584,69 +575,67 @@ def build_lightweight_id_mapping(csv_files: List[str], verbose: bool = False) ->
     """
     unique_ids = set()
     
-    if verbose:
-        print(f"Building lightweight ID mapping from {len(csv_files)} files...")
-    
+    logger.info("Building lightweight ID mapping from %d files...", len(csv_files))
+
     for i, csv_file in enumerate(csv_files):
-        if verbose and i % 10 == 0:
-            print(f"  Scanning file {i+1}/{len(csv_files)} for CAN IDs...")
-        
+        if i % 10 == 0:
+            logger.info("  Scanning file %d/%d for CAN IDs...", i + 1, len(csv_files))
+
         try:
             # Only read the CAN ID column to minimize memory usage
             df_ids = pd.read_csv(csv_file, usecols=[1])  # arbitration_id is column 1
             df_ids.columns = ['arbitration_id']
-            
+
             # Extract unique CAN IDs
             can_ids = df_ids['arbitration_id'].dropna().unique()
             file_ids = set()
-            
+
             for can_id in can_ids:
                 converted_id = safe_hex_to_int(can_id)
                 if converted_id is not None:
                     file_ids.add(converted_id)
-            
+
             unique_ids.update(file_ids)
             del df_ids  # Free memory immediately
-            
+
         except Exception as e:
-            if verbose:
-                print(f"    Warning: Could not scan {csv_file}: {e}")
+            logger.warning("Could not scan %s: %s", csv_file, e)
             continue
-    
+
     # Create mapping
     sorted_ids = sorted(list(unique_ids))
     id_mapping = {can_id: idx for idx, can_id in enumerate(sorted_ids)}
     id_mapping['OOV'] = len(id_mapping)
-    
-    if verbose:
-        print(f"✅ Built ID mapping with {len(id_mapping)} entries")
+
+    logger.info("Built ID mapping with %d entries", len(id_mapping))
     
     return id_mapping
 
-class GraphDataset(Dataset):
+class GraphDataset(torch.utils.data.Dataset):
     """
-    PyTorch Geometric Dataset wrapper for CAN bus graph data.
-    
+    Dataset wrapper for CAN bus graph data.
+
     This class provides a convenient interface for handling collections of
     graph objects with PyTorch Geometric DataLoader compatibility.
-    
+
     Args:
         data_list: List of PyTorch Geometric Data objects
-        
+
     Examples:
         >>> graphs = [Data(x=..., edge_index=...), ...]
         >>> dataset = GraphDataset(graphs)
         >>> print(f"Dataset size: {len(dataset)}")
         >>> first_graph = dataset[0]
     """
-    
+
     def __init__(self, data_list: List[Data]):
         """
         Initialize dataset with list of graph objects.
-        
+
         Args:
             data_list: List of PyTorch Geometric Data objects
         """
+        super().__init__()
         self.data_list = data_list
         
         # Validate data consistency
@@ -721,19 +710,23 @@ class GraphDataset(Dataset):
         return stats
     
     def print_stats(self) -> None:
-        """Print comprehensive dataset statistics."""
+        """Log comprehensive dataset statistics."""
         stats = self.get_stats()
-        
-        print(f"\n{'='*60}")
-        print("DATASET STATISTICS")
-        print(f"{'='*60}")
-        print(f"Total graphs: {stats['num_graphs']:,}")
-        print(f"Normal graphs: {stats['normal_graphs']:,} ({stats['normal_graphs']/stats['num_graphs']*100:.1f}%)")
-        print(f"Attack graphs: {stats['attack_graphs']:,} ({stats['attack_graphs']/stats['num_graphs']*100:.1f}%)")
-        print(f"\nGraph Structure:")
-        print(f"  Nodes per graph: {stats['avg_nodes']:.1f} ± {stats['std_nodes']:.1f} [{stats['min_nodes']}-{stats['max_nodes']}]")
-        print(f"  Edges per graph: {stats['avg_edges']:.1f} ± {stats['std_edges']:.1f} [{stats['min_edges']}-{stats['max_edges']}]")
-        print(f"\nFeature Dimensions:")
-        print(f"  Node features: {stats['node_features']}")
-        print(f"  Edge features: {stats['edge_features']}")
+
+        logger.info("=" * 60)
+        logger.info("DATASET STATISTICS")
+        logger.info("=" * 60)
+        logger.info("Total graphs: %d", stats['num_graphs'])
+        logger.info("Normal graphs: %d (%.1f%%)", stats['normal_graphs'],
+                     stats['normal_graphs'] / stats['num_graphs'] * 100)
+        logger.info("Attack graphs: %d (%.1f%%)", stats['attack_graphs'],
+                     stats['attack_graphs'] / stats['num_graphs'] * 100)
+        logger.info("Graph Structure:")
+        logger.info("  Nodes per graph: %.1f +/- %.1f [%d-%d]",
+                     stats['avg_nodes'], stats['std_nodes'], stats['min_nodes'], stats['max_nodes'])
+        logger.info("  Edges per graph: %.1f +/- %.1f [%d-%d]",
+                     stats['avg_edges'], stats['std_edges'], stats['min_edges'], stats['max_edges'])
+        logger.info("Feature Dimensions:")
+        logger.info("  Node features: %d", stats['node_features'])
+        logger.info("  Edge features: %d", stats['edge_features'])
 

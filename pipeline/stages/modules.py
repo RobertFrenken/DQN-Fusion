@@ -8,7 +8,6 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
-from torch_geometric.loader import DataLoader
 
 from ..config import PipelineConfig
 from .utils import build_optimizer_dict, effective_batch_size, make_dataloader
@@ -42,11 +41,11 @@ class VGAEModule(pl.LightningModule):
         self.model = GraphAutoencoderNeighborhood(
             num_ids=num_ids,
             in_channels=in_channels,
-            hidden_dims=list(cfg.vgae_hidden_dims),
-            latent_dim=cfg.vgae_latent_dim,
-            encoder_heads=cfg.vgae_heads,
-            embedding_dim=cfg.vgae_embedding_dim,
-            dropout=cfg.vgae_dropout,
+            hidden_dims=list(cfg.vgae.hidden_dims),
+            latent_dim=cfg.vgae.latent_dim,
+            encoder_heads=cfg.vgae.heads,
+            embedding_dim=cfg.vgae.embedding_dim,
+            dropout=cfg.vgae.dropout,
             use_checkpointing=cfg.gradient_checkpointing,
         )
         self.teacher = teacher
@@ -91,9 +90,9 @@ class VGAEModule(pl.LightningModule):
             min_r = min(cont_out.size(0), t_cont.size(0))
             recon_kd = F.mse_loss(cont_out[:min_r], t_cont[:min_r])
 
-            kd_loss = (self.cfg.kd_vgae_latent_weight * latent_kd
-                       + self.cfg.kd_vgae_recon_weight * recon_kd)
-            return self.cfg.kd_alpha * kd_loss + (1 - self.cfg.kd_alpha) * task_loss
+            kd_loss = (self.cfg.kd.vgae_latent_weight * latent_kd
+                       + self.cfg.kd.vgae_recon_weight * recon_kd)
+            return self.cfg.kd.alpha * kd_loss + (1 - self.cfg.kd.alpha) * task_loss
 
         return task_loss
 
@@ -140,13 +139,13 @@ class GATModule(pl.LightningModule):
         self.model = GATWithJK(
             num_ids=num_ids,
             in_channels=in_channels,
-            hidden_channels=cfg.gat_hidden,
+            hidden_channels=cfg.gat.hidden,
             out_channels=num_classes,
-            num_layers=cfg.gat_layers,
-            heads=cfg.gat_heads,
-            dropout=cfg.gat_dropout,
-            num_fc_layers=getattr(cfg, 'gat_fc_layers', 3),
-            embedding_dim=cfg.gat_embedding_dim,
+            num_layers=cfg.gat.layers,
+            heads=cfg.gat.heads,
+            dropout=cfg.gat.dropout,
+            num_fc_layers=cfg.gat.fc_layers,
+            embedding_dim=cfg.gat.embedding_dim,
             use_checkpointing=cfg.gradient_checkpointing,
         )
         self.teacher = teacher
@@ -173,13 +172,13 @@ class GATModule(pl.LightningModule):
                 torch.cuda.empty_cache()
                 self._teacher_on_cpu = True
 
-            T = self.cfg.kd_temperature
+            T = self.cfg.kd.temperature
             kd_loss = F.kl_div(
                 F.log_softmax(logits / T, dim=-1),
                 F.softmax(t_logits / T, dim=-1),
                 reduction="batchmean",
             ) * (T ** 2)
-            loss = self.cfg.kd_alpha * kd_loss + (1 - self.cfg.kd_alpha) * task_loss
+            loss = self.cfg.kd.alpha * kd_loss + (1 - self.cfg.kd.alpha) * task_loss
         else:
             loss = task_loss
 

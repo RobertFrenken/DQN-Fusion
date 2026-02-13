@@ -22,6 +22,7 @@ from .utils import (
     load_vgae,
     load_frozen_cfg,
     cleanup,
+    graph_label,
 )
 from .modules import VGAEModule, GATModule, CurriculumDataModule
 
@@ -43,9 +44,9 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
         from src.models.vgae import GraphAutoencoderNeighborhood
         _tmp_student = GraphAutoencoderNeighborhood(
             num_ids=num_ids, in_channels=in_ch,
-            hidden_dims=list(cfg.vgae_hidden_dims), latent_dim=cfg.vgae_latent_dim,
-            encoder_heads=cfg.vgae_heads, embedding_dim=cfg.vgae_embedding_dim,
-            dropout=cfg.vgae_dropout,
+            hidden_dims=list(cfg.vgae.hidden_dims), latent_dim=cfg.vgae.latent_dim,
+            encoder_heads=cfg.vgae.heads, embedding_dim=cfg.vgae.embedding_dim,
+            dropout=cfg.vgae.dropout,
         )
         projection = make_projection(_tmp_student, teacher, "vgae", device)
         del _tmp_student
@@ -85,8 +86,8 @@ def train_curriculum(cfg: PipelineConfig) -> Path:
     vgae = load_vgae(cfg, num_ids, in_ch, device, stage="autoencoder")
 
     # Split and score
-    normals = [g for g in train_data if g.y.item() == 0]
-    attacks = [g for g in train_data if g.y.item() == 1]
+    normals = [g for g in train_data if graph_label(g) == 0]
+    attacks = [g for g in train_data if graph_label(g) == 1]
     scores = _score_difficulty(vgae, normals, device)
     del vgae
     cleanup()

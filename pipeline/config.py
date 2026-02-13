@@ -71,6 +71,60 @@ del _key, _model, _size, _merged
 
 
 @dataclass(frozen=True)
+class VGAEConfig:
+    hidden_dims: Tuple[int, ...] = (480, 240, 48)
+    latent_dim: int = 48
+    heads: int = 4
+    embedding_dim: int = 32
+    dropout: float = 0.15
+
+
+@dataclass(frozen=True)
+class GATConfig:
+    hidden: int = 48
+    layers: int = 3
+    heads: int = 8
+    dropout: float = 0.2
+    embedding_dim: int = 16
+    fc_layers: int = 3
+
+
+@dataclass(frozen=True)
+class DQNConfig:
+    hidden: int = 576
+    layers: int = 3
+    gamma: float = 0.99
+    epsilon: float = 0.1
+    epsilon_decay: float = 0.995
+    min_epsilon: float = 0.01
+    buffer_size: int = 100_000
+    batch_size: int = 128
+    target_update: int = 100
+
+
+@dataclass(frozen=True)
+class KDConfig:
+    enabled: bool = False
+    teacher_path: str = ""
+    temperature: float = 4.0
+    alpha: float = 0.7
+    vgae_latent_weight: float = 0.5
+    vgae_recon_weight: float = 0.5
+
+
+@dataclass(frozen=True)
+class FusionConfig:
+    episodes: int = 500
+    max_samples: int = 150_000
+    max_val_samples: int = 30_000
+    episode_sample_size: int = 20_000
+    training_step_interval: int = 32
+    gpu_training_steps: int = 16
+    lr: float = 0.001
+    alpha_steps: int = 21
+
+
+@dataclass(frozen=True)
 class PipelineConfig:
     """Every tunable parameter lives here. Nowhere else."""
 
@@ -198,7 +252,8 @@ class PipelineConfig:
         valid_names = {f.name for f in fields(cls)}
         # JSON turns tuples into lists; convert back
         for f in fields(cls):
-            if f.name in raw and "Tuple" in str(f.type):
+            type_str = str(f.type)
+            if f.name in raw and ("Tuple" in type_str or "tuple" in type_str):
                 raw[f.name] = tuple(raw[f.name])
         # Drop unknown keys, use defaults for missing fields (forward compat)
         filtered = {k: v for k, v in raw.items() if k in valid_names}
@@ -219,3 +274,64 @@ class PipelineConfig:
     def with_overrides(self, **kw) -> PipelineConfig:
         """Return a new config with selected fields changed."""
         return replace(self, **kw)
+
+    # ----- typed sub-config views -----
+
+    @property
+    def vgae(self) -> VGAEConfig:
+        return VGAEConfig(
+            hidden_dims=self.vgae_hidden_dims,
+            latent_dim=self.vgae_latent_dim,
+            heads=self.vgae_heads,
+            embedding_dim=self.vgae_embedding_dim,
+            dropout=self.vgae_dropout,
+        )
+
+    @property
+    def gat(self) -> GATConfig:
+        return GATConfig(
+            hidden=self.gat_hidden,
+            layers=self.gat_layers,
+            heads=self.gat_heads,
+            dropout=self.gat_dropout,
+            embedding_dim=self.gat_embedding_dim,
+            fc_layers=self.gat_fc_layers,
+        )
+
+    @property
+    def dqn(self) -> DQNConfig:
+        return DQNConfig(
+            hidden=self.dqn_hidden,
+            layers=self.dqn_layers,
+            gamma=self.dqn_gamma,
+            epsilon=self.dqn_epsilon,
+            epsilon_decay=self.dqn_epsilon_decay,
+            min_epsilon=self.dqn_min_epsilon,
+            buffer_size=self.dqn_buffer_size,
+            batch_size=self.dqn_batch_size,
+            target_update=self.dqn_target_update,
+        )
+
+    @property
+    def kd(self) -> KDConfig:
+        return KDConfig(
+            enabled=self.use_kd,
+            teacher_path=self.teacher_path,
+            temperature=self.kd_temperature,
+            alpha=self.kd_alpha,
+            vgae_latent_weight=self.kd_vgae_latent_weight,
+            vgae_recon_weight=self.kd_vgae_recon_weight,
+        )
+
+    @property
+    def fusion(self) -> FusionConfig:
+        return FusionConfig(
+            episodes=self.fusion_episodes,
+            max_samples=self.fusion_max_samples,
+            max_val_samples=self.max_val_samples,
+            episode_sample_size=self.episode_sample_size,
+            training_step_interval=self.training_step_interval,
+            gpu_training_steps=self.gpu_training_steps,
+            lr=self.fusion_lr,
+            alpha_steps=self.alpha_steps,
+        )

@@ -33,20 +33,6 @@ class GraphAutoencoderNeighborhood(nn.Module):
                  encoder_heads=4, decoder_heads=4,
                  embedding_dim=8, dropout=0.35, batch_norm=True, mlp_hidden=None,
                  use_checkpointing=False):
-        """
-        Args:
-            num_ids: Number of unique CAN IDs for embedding.
-            in_channels: Number of input channels.
-            hidden_dims: Progressive compression schedule, e.g., [256, 128, 96, 48].
-            latent_dim: Latent dimension size.
-            encoder_heads: Number of attention heads in first encoder layer.
-            decoder_heads: Number of attention heads in decoder intermediate layers.
-            embedding_dim: Dimension of CAN ID embeddings.
-            dropout: Dropout rate.
-            batch_norm: Whether to use batch normalization.
-            mlp_hidden: Hidden dim for neighborhood decoder MLP.
-            use_checkpointing: Enable gradient checkpointing for memory efficiency.
-        """
         super().__init__()
         # ID embedding: expect real torch.nn.Embedding to be available in test env
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
@@ -158,7 +144,7 @@ class GraphAutoencoderNeighborhood(nn.Module):
             else:
                 x = self.dropout(F.relu(x))
         mu = self.z_mean(x)
-        logvar = self.z_logvar(x)
+        logvar = self.z_logvar(x).clamp(-20, 20)
         std = torch.exp(0.5 * logvar)
         eps = torch.randn_like(std)
         z = mu + eps * std
@@ -167,7 +153,6 @@ class GraphAutoencoderNeighborhood(nn.Module):
 
     def decode_node(self, z, edge_index):
         x = z
-        hidden_rep = None
 
         # Runtime shape validation
         if x.size(-1) != self.latent_dim:

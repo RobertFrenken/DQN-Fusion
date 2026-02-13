@@ -20,9 +20,10 @@ import pyarrow.csv as pcsv
 import pyarrow.parquet as pq
 import yaml
 
+from .paths import CATALOG_PATH
+
 log = logging.getLogger(__name__)
 
-CATALOG_PATH = Path("data/datasets.yaml")
 PARQUET_ROOT = Path("data/parquet")
 ROW_GROUP_SIZE = 500_000
 
@@ -123,7 +124,6 @@ def ingest_dataset(name: str, catalog: dict | None = None) -> dict:
     total_rows = 0
     total_files = 0
     unique_ids: set[int] = set()
-    label_counts: dict[int, int] = {}
 
     # Process all subdirs that contain CSVs
     subdirs = [d for d in sorted(csv_dir.iterdir()) if d.is_dir()]
@@ -140,10 +140,8 @@ def ingest_dataset(name: str, catalog: dict | None = None) -> dict:
             total_files += 1
 
             # Compute stats from the written Parquet
-            pf = pq.read_table(out_path, columns=["id", "label"])
+            pf = pq.read_table(out_path, columns=["id"])
             unique_ids.update(pf.column("id").to_pylist())
-            for lbl in pf.column("label").to_pylist():
-                label_counts[lbl] = label_counts.get(lbl, 0) + 1
 
     # Determine attack types from test subdirs
     test_subdirs = entry.get("test_subdirs", [])

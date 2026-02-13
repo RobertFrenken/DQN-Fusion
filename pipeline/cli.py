@@ -16,14 +16,16 @@ import torch.multiprocessing as mp
 mp.set_start_method('spawn', force=True)
 
 import argparse
+import json
 import logging
-from dataclasses import fields as dc_fields, replace
+from dataclasses import fields as dc_fields, asdict, replace
 from pathlib import Path
 
-from .config import PipelineConfig, PRESETS
+from .config import PipelineConfig
 from .paths import STAGES, config_path, run_id
 from .validate import validate
 from .tracking import start_run, end_run, log_failure, log_run_artifacts
+from .db import record_run_start, record_run_end
 
 
 def _parse_bool(v: str) -> bool:
@@ -116,6 +118,13 @@ def main(argv: list[str] | None = None) -> None:
     start_run(cfg, args.stage, run_name)
     log.info("MLflow run started: %s", run_name)
 
+    # ---- Record run start in project DB ----
+    record_run_start(
+        run_id=run_name, dataset=cfg.dataset, model_size=cfg.model_size,
+        stage=args.stage, use_kd=cfg.use_kd,
+        config_json=json.dumps(asdict(cfg), indent=2),
+    )
+
     # ---- Dispatch ----
     try:
         from .stages import STAGE_FNS
@@ -126,11 +135,14 @@ def main(argv: list[str] | None = None) -> None:
         from .paths import stage_dir
         log_run_artifacts(stage_dir(cfg, args.stage))
         end_run(result if isinstance(result, dict) else None, success=True)
+        record_run_end(run_name, success=True,
+                       metrics=result if isinstance(result, dict) else None)
         log.info("MLflow run completed successfully")
 
     except Exception as e:
         # ---- Log failure to MLflow ----
         log_failure(str(e))
+        record_run_end(run_name, success=False)
         log.error("MLflow run failed: %s", str(e))
         raise
 

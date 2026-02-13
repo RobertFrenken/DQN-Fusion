@@ -45,10 +45,7 @@ class GATWithJK(nn.Module):
 
         # Fully connected layers
         self.fc_layers = nn.ModuleList()
-        if self.jk.mode == "cat":
-            fc_input_dim = hidden_channels * heads * num_layers
-        else:
-            fc_input_dim = hidden_channels * heads
+        fc_input_dim = hidden_channels * heads * num_layers
         
         for _ in range(num_fc_layers - 1):
             self.fc_layers.append(nn.Linear(fc_input_dim, fc_input_dim))

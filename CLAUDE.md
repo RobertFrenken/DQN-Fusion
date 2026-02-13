@@ -51,7 +51,7 @@ datasette data/project.db --port 8001
 snakemake -s pipeline/Snakefile --report report.html
 
 # Run tests
-python -m pytest tests/test_pipeline_integration.py -v
+python -m pytest tests/ -v
 
 # Check SLURM jobs
 squeue -u $USER
@@ -61,14 +61,14 @@ squeue -u $USER
 
 ```
 pipeline/           # Main orchestration (frozen dataclasses, no Hydra)
-  cli.py            # Entry point: python -m pipeline.cli <stage>
-  config.py         # PipelineConfig frozen dataclass + PRESETS
+  cli.py            # Entry point + write-through DB recording
+  config.py         # PipelineConfig + typed sub-configs (VGAEConfig, GATConfig, etc.)
   paths.py          # Canonical 2-level path layout
   stages/           # Stage implementations (training, fusion, evaluation)
   ingest.py         # CSV → Parquet conversion + dataset registration
-  db.py             # SQLite project DB (datasets, runs, metrics, config_json)
+  db.py             # SQLite project DB + write-through record_run_start/end
   analytics.py      # Post-run analysis: sweeps, leaderboards, comparisons
-  Snakefile         # 19 rules, all stages + evaluation + onsuccess hooks
+  Snakefile         # 20 rules, all stages + evaluation + onsuccess hooks
 src/                # Supporting modules
   models/           # vgae.py, gat.py, dqn.py
   training/         # load_dataset(), graph caching
@@ -95,8 +95,10 @@ These fix real crashes -- do not violate:
 ## Architecture Decisions
 
 - Config: frozen dataclasses + JSON. No Hydra, no Pydantic, no OmegaConf.
+- Sub-configs: `cfg.vgae`, `cfg.gat`, `cfg.dqn`, `cfg.kd`, `cfg.fusion` — typed views over flat fields. Use sub-config access (`cfg.vgae.latent_dim`) in new code, not flat access (`cfg.vgae_latent_dim`).
+- Write-through DB: `cli.py` records run start/end directly to project DB. `populate()` is a backfill/recovery tool only.
 - Imports from `src/` are conditional (inside functions) to avoid top-level coupling.
-- Dual storage: Snakemake owns filesystem paths (DAG triggers), MLflow owns metadata (tracking/UI).
+- Triple storage: Snakemake owns filesystem paths (DAG triggers), MLflow owns metadata (tracking/UI), project DB owns structured results (write-through from cli.py).
 - Data layer: Parquet (columnar storage) + SQLite (project DB) + Datasette (interactive browsing). All serverless.
 - Dataset catalog: `data/datasets.yaml` — single place to register new datasets.
 - Delete unused code completely. No compatibility shims or `# removed` comments.
@@ -116,4 +118,4 @@ These fix real crashes -- do not violate:
 - `.claude/system/PROJECT_OVERVIEW.md` -- Full architecture, models, memory optimization
 - `.claude/system/CONVENTIONS.md` -- Code style, iteration hygiene, git rules
 - `.claude/system/STATE.md` -- Current session state (updated each session)
-- `docs/user_guides/` -- Snakemake guide, MLflow usage, terminal setup
+- `docs/user_guides/` -- Snakemake guide, MLflow usage, Datasette usage, terminal setup

@@ -40,6 +40,11 @@ class TestPreprocessing(unittest.TestCase):
         cls.test_root = r"data/automotive/hcrl_sa"
         cls.small_window_size = 10  # Smaller for faster testing
         cls.test_stride = 5
+        import os
+        if not os.path.isdir(cls.test_root):
+            raise unittest.SkipTest(
+                f"Test data not available at {cls.test_root}"
+            )
 
     def test_id_mapping_creation(self):
         """Test CAN ID mapping creation and consistency."""

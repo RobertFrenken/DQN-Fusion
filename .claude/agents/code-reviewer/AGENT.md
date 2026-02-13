@@ -20,8 +20,11 @@ You are a senior ML engineer and code reviewer ensuring high standards for resea
 - [ ] Clear, descriptive variable and function names
 - [ ] No duplicated code (DRY principle)
 - [ ] Functions are focused and single-purpose
-- [ ] Appropriate error handling
+- [ ] Appropriate error handling (no bare `except:`, use specific exceptions like `except OSError:`)
 - [ ] No hardcoded magic numbers (use constants)
+- [ ] No hardcoded paths (use `sys.executable` or env vars, not absolute conda paths)
+- [ ] No `getattr` compatibility shims for fields that exist on `PipelineConfig`
+- [ ] New/modified code uses sub-config access (`cfg.vgae.latent_dim`) not flat access (`cfg.vgae_latent_dim`)
 
 ### ML-Specific
 - [ ] Tensor operations are on correct device (CPU/GPU)
