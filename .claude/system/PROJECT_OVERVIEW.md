@@ -47,7 +47,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 - `ingest.py` — CSV→Parquet ingestion, validation against `config/datasets.yaml`, dataset registration
 - `db.py` — SQLite project DB (`data/project.db`): schema (model_type/scale/has_kd), write-through `record_run_start()`/`record_run_end()`, backfill `populate()`, CLI queries
 - `analytics.py` — Post-run analysis: sweep, leaderboard, compare, config_diff, dataset_summary
-- `Snakefile` — Snakemake workflow (20 rules, `--model`/`--scale`/`--auxiliaries` CLI, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup)
+- `Snakefile` — Snakemake workflow (`--model`/`--scale`/`--auxiliaries` CLI, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup, preprocessing cache rule, retries with resource scaling, evaluation group jobs)
 
 ### Layer 3: `src/` (domain — imports config.constants, never imports pipeline/)
 
@@ -101,11 +101,11 @@ data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parqu
 
 ## Models
 
-| Model | File | Large | Small |
-|-------|------|-------|-------|
-| `GraphAutoencoderNeighborhood` | `src/models/vgae.py` | (480,240,48) latent 48 | (80,40,16) latent 16 |
-| `GATWithJK` | `src/models/gat.py` | hidden 48, 3 layers, 8 heads | hidden 24, 2 layers, 4 heads |
-| `EnhancedDQNFusionAgent` | `src/models/dqn.py` | hidden 576, 3 layers | hidden 160, 2 layers |
+| Model | File | Large | Small | Ratio |
+|-------|------|-------|-------|-------|
+| `GraphAutoencoderNeighborhood` | `src/models/vgae.py` | (480,240,48) latent 48 | (80,40,16) latent 16 | ~4x |
+| `GATWithJK` | `src/models/gat.py` | hidden 48, 3 layers, 8 heads, fc_layers 1 (343k) | hidden 24, 2 layers, 4 heads, fc_layers 2 (65k) | 5.3x |
+| `EnhancedDQNFusionAgent` | `src/models/dqn.py` | hidden 576, 3 layers | hidden 160, 2 layers | ~13x |
 
 DQN state: 15D vector (VGAE 8D: errors + latent stats + confidence; GAT 7D: logits + embedding stats + confidence).
 
@@ -155,6 +155,6 @@ data/project.db         # SQLite: datasets, runs, metrics tables
 - **Home**: `/users/PAS2022/rf15/` — NFS v4, 1.7TB — permanent, safe for checkpoints
 - **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge
 - **Git remote**: `git@github.com:RobertFrenken/DQN-Fusion.git` (SSH)
-- **Python**: venv at `/users/PAS2022/rf15/CAN-Graph-Test/.venv/` (PyTorch + PyG + Lightning + Pydantic v2)
+- **Python**: conda env `gnn-experiments` (`module load miniconda3/24.1.2-py310 && conda activate gnn-experiments`)
 - **Key packages**: SQLite, Pandas, MLflow, PyArrow, Datasette, Pandera, Pydantic v2
 - **SLURM account**: PAS3209, gpu partition, V100 GPUs

@@ -21,11 +21,13 @@ You are an expert ML debugger specializing in PyTorch, PyTorch Lightning, and GN
 - `src/models/` - Model definitions (GATWithJK, VGAE, DQN)
 - `src/training/` - Training loops and data modules
 - `src/preprocessing/` - Graph construction from CAN bus data
-- `pipeline/config.py` - `PipelineConfig` frozen dataclass + typed sub-configs (`VGAEConfig`, `GATConfig`, `DQNConfig`, `KDConfig`, `FusionConfig`)
-- `pipeline/stages/` - Training, fusion, evaluation modules (use sub-config access: `cfg.vgae.latent_dim`, `cfg.gat.hidden`, etc.)
+- `config/schema.py` - Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`
+- `config/resolver.py` - YAML composition: `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`
+- `config/paths.py` - Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
+- `pipeline/stages/` - Training, fusion, evaluation modules (use nested config access: `cfg.vgae.latent_dim`, `cfg.gat.hidden`, etc.)
 - `pipeline/cli.py` - Entry point, MLflow lifecycle, write-through DB recording
 - `pipeline/db.py` - SQLite project DB with `record_run_start()`/`record_run_end()` + backfill `populate()`
-- `pipeline/Snakefile` - Snakemake workflow (uses `sys.executable` for Python path, not hardcoded)
+- `pipeline/Snakefile` - Snakemake workflow (retries with resource scaling, preprocessing cache, evaluation group jobs)
 - `experimentruns/` - Experiment outputs and logs
 
 ## Common Issues to Check
@@ -34,7 +36,7 @@ You are an expert ML debugger specializing in PyTorch, PyTorch Lightning, and GN
 - NaN/Inf in loss → Check learning rate, gradient clipping, input normalization
 - CUDA OOM → Check batch size, model size, gradient checkpointing
 - Shape mismatch → Check node/edge feature dimensions (11 each)
-- Config mismatch → Verify sub-config views match flat fields (`cfg.vgae.latent_dim` == `cfg.vgae_latent_dim`)
+- Config mismatch → Verify config resolution: `from config import resolve; cfg = resolve("vgae", "large", dataset="hcrl_sa")`
 
 ### Data Issues
 - Empty graphs → Check preprocessing window size and stride
@@ -42,7 +44,7 @@ You are an expert ML debugger specializing in PyTorch, PyTorch Lightning, and GN
 - ID mapping errors → Check OOV handling in apply_dynamic_id_mapping
 
 ### Pipeline Issues
-- Snakemake failures → Check SLURM logs in experimentruns/{ds}/{run}/slurm.{out,err}
+- Snakemake failures → Check SLURM logs in `slurm_logs/<jobid>-<rule>.{out,err}` and per-rule logs in `experimentruns/{ds}/{run}/log.{out,err}`
 - Missing checkpoints → Verify best_model.pt exists in run directory
 - MLflow errors → Check MLflow DB at `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db`
 - DB recording errors → Check `data/project.db` via `python -m pipeline.db summary`

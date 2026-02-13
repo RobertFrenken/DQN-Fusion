@@ -91,7 +91,7 @@ pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from
   ingest.py         # CSV → Parquet conversion + dataset registration
   db.py             # SQLite project DB + write-through record_run_start/end
   analytics.py      # Post-run analysis: sweeps, leaderboards, comparisons
-  Snakefile         # 20 rules, all stages + evaluation + onsuccess hooks
+  Snakefile         # All stages + evaluation + preprocessing cache + retries + group jobs
 src/                # Layer 3: Domain (models, training, preprocessing; imports config/)
   models/           # vgae.py, gat.py, dqn.py
   training/         # load_dataset(), graph caching

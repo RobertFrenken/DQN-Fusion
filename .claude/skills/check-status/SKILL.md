@@ -25,9 +25,9 @@ Check the status of experiments and running jobs.
    done
    ```
 
-3. **Check for recent SLURM errors** in experiment output directories
+3. **Check for recent SLURM errors** in slurm_logs directory
    ```bash
-   ls -lt experimentruns/*/*/slurm.err 2>/dev/null | head -10
+   ls -lt slurm_logs/*.err 2>/dev/null | head -10
    ```
 
 4. **Check project DB for run status** (write-through records from cli.py)
@@ -49,9 +49,10 @@ Provide a concise status report:
 
 | Dataset | Stage | Status | Last Updated |
 |---------|-------|--------|--------------|
-| hcrl_sa | teacher_autoencoder | complete/missing | timestamp |
-| hcrl_sa | teacher_curriculum | complete/missing | timestamp |
-| hcrl_sa | teacher_fusion | complete/missing | timestamp |
+| hcrl_sa | vgae_large_autoencoder | complete/missing | timestamp |
+| hcrl_sa | gat_large_curriculum | complete/missing | timestamp |
+| hcrl_sa | dqn_large_fusion | complete/missing | timestamp |
+| hcrl_sa | vgae_small_autoencoder_kd | complete/missing | timestamp |
 | ... | ... | ... | ... |
 
 ## Useful Follow-up Commands
@@ -61,8 +62,8 @@ Provide a concise status report:
 watch -n 5 'squeue -u $USER'
 
 # Follow specific SLURM log
-tail -f experimentruns/<dataset>/<run>/slurm.err
+tail -f slurm_logs/<jobid>-<rule>.err
 
 # Check Snakemake DAG status
-snakemake -s pipeline/Snakefile --summary
+PYTHONPATH=. snakemake -s pipeline/Snakefile --summary
 ```

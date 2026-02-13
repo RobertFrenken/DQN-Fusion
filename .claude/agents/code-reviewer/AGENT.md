@@ -24,7 +24,8 @@ You are a senior ML engineer and code reviewer ensuring high standards for resea
 - [ ] No hardcoded magic numbers (use constants)
 - [ ] No hardcoded paths (use `sys.executable` or env vars, not absolute conda paths)
 - [ ] No `getattr` compatibility shims for fields that exist on `PipelineConfig`
-- [ ] New/modified code uses sub-config access (`cfg.vgae.latent_dim`) not flat access (`cfg.vgae_latent_dim`)
+- [ ] Config access uses Pydantic nested models (`cfg.vgae.latent_dim`), never flat keys
+- [ ] Config resolved via `from config import resolve; cfg = resolve(model_type, scale, ...)`
 
 ### ML-Specific
 - [ ] Tensor operations are on correct device (CPU/GPU)

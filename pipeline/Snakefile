@@ -83,19 +83,39 @@ rule evaluate_all:
 # ---------------------------------------------------------------------------
 
 _SLURM = dict(slurm_account=SLURM_ACCOUNT, slurm_partition=SLURM_PARTITION, gpu_type=SLURM_GPU_TYPE)
-_TRAIN_RES = dict(time_min=360, mem_mb=128000, cpus_per_task=16, gpus=1, **_SLURM)
+_TRAIN_RES = dict(time_min=360, mem_mb=lambda wc, attempt: 128000 * attempt, cpus_per_task=16, gpus=1, **_SLURM)
 _EVAL_RES = dict(time_min=120, mem_mb=32000, cpus_per_task=8, gpus=1, **_SLURM)
+
+# ===========================================================================
+# Preprocessing  (deterministic graph cache, shared by all training rules)
+# ===========================================================================
+
+rule preprocess:
+    output:
+        directory("data/cache/{ds}"),
+    resources:
+        time_min=120, mem_mb=64000, cpus_per_task=8, gpus=0,
+        slurm_account=SLURM_ACCOUNT, slurm_partition="serial",
+    cache: True
+    shell:
+        PY + " -c \""
+        "from src.training.datamodules import load_dataset; from pathlib import Path; "
+        "load_dataset('{wildcards.ds}', Path('data/automotive/{wildcards.ds}'), Path('data/cache/{wildcards.ds}'))"
+        "\""
 
 # ===========================================================================
 # Large pipeline  (no KD dependencies, runs first)
 # ===========================================================================
 
 rule vgae_large:
+    input:
+        cache=rules.preprocess.output[0],
     output:
         _ckpt("{ds}", "vgae", "large", "autoencoder"),
     benchmark:
         _bench("{ds}", "vgae", "large", "autoencoder")
     resources: **_TRAIN_RES,
+    retries: 2
     log:
         out=_log("{ds}", "vgae", "large", "autoencoder"),
         err=_log("{ds}", "vgae", "large", "autoencoder", stream="err"),
@@ -111,6 +131,7 @@ rule gat_large:
     benchmark:
         _bench("{ds}", "gat", "large", "curriculum")
     resources: **_TRAIN_RES,
+    retries: 2
     log:
         out=_log("{ds}", "gat", "large", "curriculum"),
         err=_log("{ds}", "gat", "large", "curriculum", stream="err"),
@@ -127,6 +148,7 @@ rule dqn_large:
     benchmark:
         _bench("{ds}", "dqn", "large", "fusion")
     resources: **_TRAIN_RES,
+    retries: 2
     log:
         out=_log("{ds}", "dqn", "large", "fusion"),
         err=_log("{ds}", "dqn", "large", "fusion", stream="err"),
@@ -141,11 +163,13 @@ rule dqn_large:
 rule vgae_small_kd:
     input:
         teacher=_ckpt("{ds}", "vgae", "large", "autoencoder"),
+        cache=rules.preprocess.output[0],
     output:
         _ckpt("{ds}", "vgae", "small", "autoencoder", aux="kd"),
     benchmark:
         _bench("{ds}", "vgae", "small", "autoencoder", aux="kd")
     resources: **_TRAIN_RES,
+    retries: 2
     log:
         out=_log("{ds}", "vgae", "small", "autoencoder", aux="kd"),
         err=_log("{ds}", "vgae", "small", "autoencoder", aux="kd", stream="err"),
@@ -163,6 +187,7 @@ rule gat_small_kd:
     benchmark:
         _bench("{ds}", "gat", "small", "curriculum", aux="kd")
     resources: **_TRAIN_RES,
+    retries: 2
     log:
         out=_log("{ds}", "gat", "small", "curriculum", aux="kd"),
         err=_log("{ds}", "gat", "small", "curriculum", aux="kd", stream="err"),
@@ -181,6 +206,7 @@ rule dqn_small_kd:
     benchmark:
         _bench("{ds}", "dqn", "small", "fusion", aux="kd")
     resources: **_TRAIN_RES,
+    retries: 2
     log:
         out=_log("{ds}", "dqn", "small", "fusion", aux="kd"),
         err=_log("{ds}", "dqn", "small", "fusion", aux="kd", stream="err"),
@@ -194,11 +220,14 @@ rule dqn_small_kd:
 # ===========================================================================
 
 rule vgae_small_nokd:
+    input:
+        cache=rules.preprocess.output[0],
     output:
         _ckpt("{ds}", "vgae", "small", "autoencoder"),
     benchmark:
         _bench("{ds}", "vgae", "small", "autoencoder")
     resources: **_TRAIN_RES,
+    retries: 2
     log:
         out=_log("{ds}", "vgae", "small", "autoencoder"),
         err=_log("{ds}", "vgae", "small", "autoencoder", stream="err"),
@@ -214,6 +243,7 @@ rule gat_small_nokd:
     benchmark:
         _bench("{ds}", "gat", "small", "curriculum")
     resources: **_TRAIN_RES,
+    retries: 2
     log:
         out=_log("{ds}", "gat", "small", "curriculum"),
         err=_log("{ds}", "gat", "small", "curriculum", stream="err"),
@@ -230,6 +260,7 @@ rule dqn_small_nokd:
     benchmark:
         _bench("{ds}", "dqn", "small", "fusion")
     resources: **_TRAIN_RES,
+    retries: 2
     log:
         out=_log("{ds}", "dqn", "small", "fusion"),
         err=_log("{ds}", "dqn", "small", "fusion", stream="err"),
@@ -246,6 +277,7 @@ rule eval_large:
         vgae=_ckpt("{ds}", "vgae", "large", "autoencoder"),
         gat=_ckpt("{ds}", "gat", "large", "curriculum"),
         dqn=_ckpt("{ds}", "dqn", "large", "fusion"),
+    group: "evaluation"
     output:
         report(
             _metrics("{ds}", "vgae", "large", "evaluation"),
@@ -267,6 +299,7 @@ rule eval_small_kd:
         vgae=_ckpt("{ds}", "vgae", "small", "autoencoder", aux="kd"),
         gat=_ckpt("{ds}", "gat", "small", "curriculum", aux="kd"),
         dqn=_ckpt("{ds}", "dqn", "small", "fusion", aux="kd"),
+    group: "evaluation"
     output:
         report(
             _metrics("{ds}", "vgae", "small", "evaluation", aux="kd"),
@@ -288,6 +321,7 @@ rule eval_small_nokd:
         vgae=_ckpt("{ds}", "vgae", "small", "autoencoder"),
         gat=_ckpt("{ds}", "gat", "small", "curriculum"),
         dqn=_ckpt("{ds}", "dqn", "small", "fusion"),
+    group: "evaluation"
     output:
         report(
             _metrics("{ds}", "vgae", "small", "evaluation"),

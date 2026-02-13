@@ -1,10 +1,13 @@
-# GAT large (was: teacher preset)
+# GAT large (teacher)
+# JK cat → fc_input_dim = hidden * heads * layers = 48 * 8 * 3 = 1152
+# fc_layers: 1 means just the output projection (1152 → 2), no hidden FC.
+# This avoids a 1.3M-param hidden FC layer that dominated the parameter count.
 gat:
   hidden: 48
   layers: 3
   heads: 8
   embedding_dim: 16
-  fc_layers: 2
+  fc_layers: 1
   dropout: 0.2
 training:
   lr: 0.003
