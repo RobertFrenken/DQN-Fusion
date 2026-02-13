@@ -23,7 +23,7 @@ from pathlib import Path
 from .config import PipelineConfig, PRESETS
 from .paths import STAGES, config_path, run_id
 from .validate import validate
-from .tracking import start_run, end_run, log_failure
+from .tracking import start_run, end_run, log_failure, log_run_artifacts
 
 
 def _parse_bool(v: str) -> bool:
@@ -122,7 +122,9 @@ def main(argv: list[str] | None = None) -> None:
         result = STAGE_FNS[args.stage](cfg)
         log.info("Stage '%s' complete. Result: %s", args.stage, result)
 
-        # ---- Log results to MLflow ----
+        # ---- Log artifacts and results to MLflow ----
+        from .paths import stage_dir
+        log_run_artifacts(stage_dir(cfg, args.stage))
         end_run(result if isinstance(result, dict) else None, success=True)
         log.info("MLflow run completed successfully")
 

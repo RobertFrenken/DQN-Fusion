@@ -133,6 +133,17 @@ def end_run(result: dict[str, Any] | None = None, success: bool = True) -> None:
     mlflow.end_run()
 
 
+def log_run_artifacts(run_dir: Path) -> None:
+    """Log key files as MLflow artifacts for UI browsing."""
+    for name in ("config.json", "best_model.pt", "metrics.json"):
+        artifact = run_dir / name
+        if artifact.exists():
+            try:
+                mlflow.log_artifact(str(artifact))
+            except Exception as e:
+                log.warning("Failed to log artifact %s: %s", artifact, e)
+
+
 def log_failure(error_msg: str) -> None:
     """Log a failed run with error message.
 

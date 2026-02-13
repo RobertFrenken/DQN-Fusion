@@ -1,8 +1,20 @@
 # Current State
 
-**Date**: 2026-02-11
+**Date**: 2026-02-12
 
 ## What's Working
+
+### Tooling Audit & Upgrade (2026-02-12)
+- **Snakemake `benchmark:`**: All 12 non-utility rules now emit `benchmark.tsv` (wall time, RSS, I/O, CPU)
+- **Snakemake `report()`**: 3 eval rules wrapped with `report()` for `snakemake --report report.html`
+- **MLflow artifact logging**: Centralized `log_run_artifacts()` in `tracking.py`; called from `cli.py` before `end_run()`
+- **MLflow UI docs**: SSH tunnel instructions added to `mlflow_usage.md` + `CLAUDE.md`
+- **Datasette**: Installed, docs at `docs/user_guides/datasette_usage.md`, command in `CLAUDE.md`
+- **Pandera validation**: `pipeline/schemas.py` validates Parquet output at ingest time (optional dependency)
+- **Quarto reports**: `reports/pipeline_report.qmd` queries project DB + benchmark TSVs
+- **Papermill**: `notebook_report` Snakemake rule + parameterized `03_analytics.ipynb`
+- **DuckDB removed**: All references cleaned from CLAUDE.md, STATE.md, PROJECT_OVERVIEW.md
+- **Analytics clarified**: Docstring + "When to Use What" table in mlflow_usage.md
 
 ### Pipeline System
 - Pipeline system (`pipeline/`) fully operational with Snakemake + MLflow
@@ -15,8 +27,7 @@
 - **Ingestion**: `pipeline/ingest.py` — CSV→Parquet conversion with hex ID parsing, validation, statistics
 - **Project DB**: `pipeline/db.py` — SQLite at `data/project.db` with datasets/runs/metrics tables
   - Populated: 6 datasets, 70 runs, 3,915 metric entries
-  - Queryable via `python -m pipeline.db query "SQL"` or DuckDB ATTACH
-- **DuckDB** (1.4.4) installed — can query Parquet files and SQLite project DB in same SQL statement
+  - Queryable via `python -m pipeline.db query "SQL"` or Datasette
 - **MLflow enhancements**: evaluation.py now logs flattened test-scenario metrics + metrics.json artifact
 - **Snakefile hooks**: `onsuccess` backs up MLflow DB to `~/backups/` and populates project DB
 
@@ -87,7 +98,7 @@ docs/
 - **Orchestration**: Snakemake (`snakemake -s pipeline/Snakefile --profile profiles/slurm`)
 - **Tracking**: MLflow (auto-logged via `mlflow.pytorch.autolog()` + memory callback)
 - **Data catalog**: `data/datasets.yaml` → `pipeline/ingest.py` → Parquet + project DB
-- **Query layer**: DuckDB (reads Parquet + SQLite in one SQL) or `python -m pipeline.db query`
+- **Query layer**: `python -m pipeline.db query` or Datasette (interactive DB browsing)
 - **Filesystem**: Snakemake owns paths (DAG trigger), MLflow owns metadata, project DB owns structured results
 - **SLURM**: Account PAS3209, gpu partition, V100 GPUs
 
@@ -97,4 +108,4 @@ docs/
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
 - **MLflow DB**: `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db` (auto-backed up to `~/backups/`)
 - **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics)
-- **Key packages**: PyTorch, PyG, Lightning, MLflow 3.8.1, DuckDB 1.4.4, PyArrow 14.0.2, psutil
+- **Key packages**: PyTorch, PyG, Lightning, MLflow 3.8.1, PyArrow 14.0.2, Datasette, Pandera, psutil

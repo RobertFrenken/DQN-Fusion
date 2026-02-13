@@ -94,6 +94,8 @@ _EVAL_RES = dict(
 rule vgae_teacher:
     output:
         _p("{ds}", "teacher", "autoencoder"),
+    benchmark:
+        EXP + "/{ds}/teacher_autoencoder/benchmark.tsv"
     resources: **_TRAIN_RES,
     log:
         out=EXP + "/{ds}/teacher_autoencoder/slurm.out",
@@ -107,6 +109,8 @@ rule gat_teacher:
         vgae=_p("{ds}", "teacher", "autoencoder"),
     output:
         _p("{ds}", "teacher", "curriculum"),
+    benchmark:
+        EXP + "/{ds}/teacher_curriculum/benchmark.tsv"
     resources: **_TRAIN_RES,
     log:
         out=EXP + "/{ds}/teacher_curriculum/slurm.out",
@@ -121,6 +125,8 @@ rule dqn_teacher:
         gat=_p("{ds}", "teacher", "curriculum"),
     output:
         _p("{ds}", "teacher", "fusion"),
+    benchmark:
+        EXP + "/{ds}/teacher_fusion/benchmark.tsv"
     resources: **_TRAIN_RES,
     log:
         out=EXP + "/{ds}/teacher_fusion/slurm.out",
@@ -138,6 +144,8 @@ rule vgae_student:
         teacher=_p("{ds}", "teacher", "autoencoder"),
     output:
         _p("{ds}", "student", "autoencoder", kd=True),
+    benchmark:
+        EXP + "/{ds}/student_autoencoder_kd/benchmark.tsv"
     resources: **_TRAIN_RES,
     log:
         out=EXP + "/{ds}/student_autoencoder_kd/slurm.out",
@@ -153,6 +161,8 @@ rule gat_student:
         vgae=_p("{ds}", "student", "autoencoder", kd=True),
     output:
         _p("{ds}", "student", "curriculum", kd=True),
+    benchmark:
+        EXP + "/{ds}/student_curriculum_kd/benchmark.tsv"
     resources: **_TRAIN_RES,
     log:
         out=EXP + "/{ds}/student_curriculum_kd/slurm.out",
@@ -169,6 +179,8 @@ rule dqn_student:
         gat=_p("{ds}", "student", "curriculum", kd=True),
     output:
         _p("{ds}", "student", "fusion", kd=True),
+    benchmark:
+        EXP + "/{ds}/student_fusion_kd/benchmark.tsv"
     resources: **_TRAIN_RES,
     log:
         out=EXP + "/{ds}/student_fusion_kd/slurm.out",
@@ -185,6 +197,8 @@ rule dqn_student:
 rule vgae_student_nokd:
     output:
         _p("{ds}", "student", "autoencoder"),
+    benchmark:
+        EXP + "/{ds}/student_autoencoder/benchmark.tsv"
     resources: **_TRAIN_RES,
     log:
         out=EXP + "/{ds}/student_autoencoder/slurm.out",
@@ -199,6 +213,8 @@ rule gat_student_nokd:
         vgae=_p("{ds}", "student", "autoencoder"),
     output:
         _p("{ds}", "student", "curriculum"),
+    benchmark:
+        EXP + "/{ds}/student_curriculum/benchmark.tsv"
     resources: **_TRAIN_RES,
     log:
         out=EXP + "/{ds}/student_curriculum/slurm.out",
@@ -214,6 +230,8 @@ rule dqn_student_nokd:
         gat=_p("{ds}", "student", "curriculum"),
     output:
         _p("{ds}", "student", "fusion"),
+    benchmark:
+        EXP + "/{ds}/student_fusion/benchmark.tsv"
     resources: **_TRAIN_RES,
     log:
         out=EXP + "/{ds}/student_fusion/slurm.out",
@@ -233,7 +251,13 @@ rule eval_teacher:
         gat=_p("{ds}", "teacher", "curriculum"),
         dqn=_p("{ds}", "teacher", "fusion"),
     output:
-        EXP + "/{ds}/teacher_evaluation/metrics.json",
+        report(
+            EXP + "/{ds}/teacher_evaluation/metrics.json",
+            category="Evaluation",
+            caption="Teacher evaluation metrics for dataset {ds}",
+        ),
+    benchmark:
+        EXP + "/{ds}/teacher_evaluation/benchmark.tsv"
     resources: **_EVAL_RES,
     log:
         out=EXP + "/{ds}/teacher_evaluation/slurm.out",
@@ -248,7 +272,13 @@ rule eval_student:
         gat=_p("{ds}", "student", "curriculum", kd=True),
         dqn=_p("{ds}", "student", "fusion", kd=True),
     output:
-        EXP + "/{ds}/student_evaluation_kd/metrics.json",
+        report(
+            EXP + "/{ds}/student_evaluation_kd/metrics.json",
+            category="Evaluation",
+            caption="Student+KD evaluation metrics for dataset {ds}",
+        ),
+    benchmark:
+        EXP + "/{ds}/student_evaluation_kd/benchmark.tsv"
     resources: **_EVAL_RES,
     log:
         out=EXP + "/{ds}/student_evaluation_kd/slurm.out",
@@ -263,7 +293,13 @@ rule eval_student_nokd:
         gat=_p("{ds}", "student", "curriculum"),
         dqn=_p("{ds}", "student", "fusion"),
     output:
-        EXP + "/{ds}/student_evaluation/metrics.json",
+        report(
+            EXP + "/{ds}/student_evaluation/metrics.json",
+            category="Evaluation",
+            caption="Student (no KD) evaluation metrics for dataset {ds}",
+        ),
+    benchmark:
+        EXP + "/{ds}/student_evaluation/benchmark.tsv"
     resources: **_EVAL_RES,
     log:
         out=EXP + "/{ds}/student_evaluation/slurm.out",
@@ -271,6 +307,21 @@ rule eval_student_nokd:
     shell:
         CLI + " evaluation --dataset {wildcards.ds} --model-size student"
         " > {log.out} 2> {log.err}"
+
+# ---------------------------------------------------------------------------
+# Reports (parameterized notebooks via Papermill)
+# ---------------------------------------------------------------------------
+
+rule notebook_report:
+    input:
+        EXP + "/{ds}/teacher_evaluation/metrics.json",
+    output:
+        EXP + "/{ds}/report/analysis.ipynb",
+    resources:
+        time_min=30, mem_mb=8000, cpus_per_task=4, gpus=0,
+        slurm_account="PAS3209", slurm_partition="serial",
+    shell:
+        PY + " -m papermill notebooks/03_analytics.ipynb {output} -p dataset {wildcards.ds}"
 
 # ---------------------------------------------------------------------------
 # Utilities

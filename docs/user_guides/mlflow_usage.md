@@ -16,7 +16,20 @@ This location is configured via:
 
 ## Viewing Experiments
 
-### Option 1: OSC OnDemand MLflow UI (Recommended)
+### Option 1: SSH Tunnel (Fastest)
+
+Start the MLflow UI on a login node and tunnel to your local machine:
+
+```bash
+# On login node (inside tmux):
+mlflow ui --backend-store-uri sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db --host 0.0.0.0 --port 5000
+
+# Local machine:
+ssh -L 5000:localhost:5000 rf15@pitzer.osc.edu
+# Open http://localhost:5000
+```
+
+### Option 2: OSC OnDemand MLflow UI
 
 1. Go to https://ondemand.osc.edu
 2. Navigate to **Interactive Apps** → **MLflow**
@@ -33,7 +46,7 @@ The MLflow UI provides:
 - Parameter search and filtering
 - Model artifact browsing
 
-### Option 2: Jupyter Notebook
+### Option 3: Jupyter Notebook
 
 Use the provided analytics notebook for pandas-based analysis:
 
@@ -50,7 +63,7 @@ The notebook includes:
 - Leaderboard generation
 - Export to CSV
 
-### Option 3: CLI Analytics Tool
+### Option 4: CLI Analytics Tool
 
 Query from the command line:
 
@@ -73,6 +86,16 @@ python -m pipeline.analytics dataset hcrl_sa
 # Custom SQL query
 python -m pipeline.analytics query "SELECT * FROM runs WHERE dataset = 'hcrl_sa'"
 ```
+
+## When to Use What
+
+| Task | Tool |
+|------|------|
+| Visual metric comparison, artifact browsing | MLflow UI |
+| Hyperparameter sweep analysis | `pipeline.analytics sweep` |
+| Arbitrary SQL on results | `pipeline.analytics query` or Datasette |
+| Per-dataset summary | `pipeline.analytics dataset` |
+| Interactive DB exploration | Datasette (`datasette data/project.db`) |
 
 ## What Gets Tracked
 

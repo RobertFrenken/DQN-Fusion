@@ -84,6 +84,18 @@ def _convert_csv_to_parquet(
 
     out_path.parent.mkdir(parents=True, exist_ok=True)
     pq.write_table(out_table, out_path, row_group_size=ROW_GROUP_SIZE)
+
+    # Validate schema on a sample (pandera is optional)
+    try:
+        from .schemas import CAN_PARQUET_SCHEMA
+        sample = pq.read_table(out_path).to_pandas().head(1000)
+        CAN_PARQUET_SCHEMA.validate(sample)
+    except ImportError:
+        pass  # pandera not installed
+    except Exception as e:
+        log.error("Schema validation failed for %s: %s", out_path, e)
+        raise
+
     return len(out_table)
 
 

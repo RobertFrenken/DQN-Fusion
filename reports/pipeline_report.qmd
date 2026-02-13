@@ -1,0 +1,109 @@
+---
+title: "KD-GAT Pipeline Report"
+author: "Auto-generated"
+date: today
+format:
+  html:
+    code-fold: true
+  pdf:
+    documentclass: article
+---
+
+## Overview
+
+Automated report from the KD-GAT intrusion detection pipeline. Queries the
+project database and Snakemake benchmark TSVs.
+
+```{python}
+#| label: setup
+import json
+import sqlite3
+from pathlib import Path
+
+import pandas as pd
+
+DB_PATH = Path("../data/project.db")
+EXP = Path("../experimentruns")
+
+conn = sqlite3.connect(DB_PATH)
+conn.row_factory = sqlite3.Row
+```
+
+## Dataset Summary
+
+```{python}
+#| label: datasets
+datasets = pd.read_sql("SELECT name, domain, num_samples, num_unique_ids FROM datasets", conn)
+datasets
+```
+
+## Leaderboard (F1)
+
+```{python}
+#| label: leaderboard
+leaderboard = pd.read_sql("""
+    SELECT r.dataset, r.stage, m.model, m.scenario,
+           ROUND(m.value, 4) AS f1
+    FROM metrics m
+    JOIN runs r ON r.run_id = m.run_id
+    WHERE m.metric_name = 'f1'
+    ORDER BY m.value DESC
+    LIMIT 20
+""", conn)
+leaderboard
+```
+
+## Benchmark Summary
+
+Wall time, peak RSS, and CPU time from Snakemake `benchmark:` TSVs.
+
+```{python}
+#| label: benchmarks
+benchmarks = []
+for tsv in EXP.rglob("benchmark.tsv"):
+    try:
+        df = pd.read_csv(tsv, sep="\t")
+        parts = tsv.relative_to(EXP).parts
+        df["dataset"] = parts[0]
+        df["run"] = parts[1]
+        benchmarks.append(df)
+    except Exception:
+        pass
+
+if benchmarks:
+    bench_df = pd.concat(benchmarks, ignore_index=True)
+    bench_df[["dataset", "run", "s", "max_rss", "cpu_time"]].round(1)
+else:
+    print("No benchmark TSVs found yet. Run the pipeline first.")
+```
+
+## Teacher vs Student Comparison
+
+```{python}
+#| label: comparison
+comparison = pd.read_sql("""
+    SELECT r.dataset,
+           r.model_size,
+           r.use_kd,
+           m.metric_name,
+           ROUND(m.value, 4) AS value
+    FROM metrics m
+    JOIN runs r ON r.run_id = m.run_id
+    WHERE m.metric_name IN ('f1', 'accuracy', 'auc', 'mcc')
+      AND r.stage = 'evaluation'
+    ORDER BY r.dataset, m.metric_name, r.model_size
+""", conn)
+if not comparison.empty:
+    comparison.pivot_table(
+        index=["dataset", "metric_name"],
+        columns=["model_size", "use_kd"],
+        values="value",
+    )
+else:
+    print("No evaluation runs found yet.")
+```
+
+```{python}
+#| label: cleanup
+conn.close()
+```

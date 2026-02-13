@@ -184,9 +184,6 @@ def evaluate(cfg: PipelineConfig) -> dict:
     metrics_path.write_text(json.dumps(all_metrics, indent=2))
     cfg.save(config_path(cfg, "evaluation"))
 
-    # Log metrics.json as MLflow artifact
-    mlflow.log_artifact(str(metrics_path))
-
     log.info("All metrics saved to %s/metrics.json", out)
     cleanup()
     return all_metrics

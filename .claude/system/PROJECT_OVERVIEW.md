@@ -54,7 +54,7 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 data/datasets.yaml                  # Dataset catalog (source of truth for dataset metadata)
      ↓ (python -m pipeline.ingest)
 data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parquet
-     (raw CSVs, DVC-tracked)              (columnar, queryable via DuckDB)
+     (raw CSVs, DVC-tracked)              (columnar, queryable via SQL)
                                     →  data/cache/{dataset}/processed_graphs.pt
                                           (PyG Data objects, DVC-tracked)
                                           + id_mapping.pkl
@@ -66,9 +66,8 @@ data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parqu
 - 6 datasets: hcrl_ch, hcrl_sa, set_01-04
 - Cache auto-built on first access, validated via metadata on subsequent loads
 - All data versioned with DVC (remote: `/fs/scratch/PAS1266/can-graph-dvc`)
-- Parquet files: 5-10x smaller than CSV, queryable with DuckDB SQL
-- Project DB: populated from experimentruns/ outputs, queryable with `python -m pipeline.db query "SQL"`
-- DuckDB can query Parquet and SQLite in the same SQL statement via `ATTACH`
+- Parquet files: 5-10x smaller than CSV, queryable via SQL
+- Project DB: populated from experimentruns/ outputs, queryable with `python -m pipeline.db query "SQL"` or Datasette
 
 ## Models
 
@@ -135,7 +134,7 @@ Snakemake needs deterministic file paths at DAG construction time. MLflow artifa
 - **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge — safe for concurrent DB writes
 - **Git remote**: `git@github.com:RobertFrenken/DQN-Fusion.git` (SSH)
 - **Python**: conda `gnn-experiments`, PyTorch + PyG + Lightning
-- **Key packages**: SQLite 3.51.1, Pandas 2.3.3, MLflow 3.8.1, DuckDB 1.4.4, PyArrow 14.0.2
+- **Key packages**: SQLite 3.51.1, Pandas 2.3.3, MLflow 3.8.1, PyArrow 14.0.2, Datasette, Pandera
 - **SLURM account**: PAS3209, gpu partition, V100 GPUs
 - **tmux**: 3.2a available on login nodes -- use for Snakemake orchestration and Claude Code sessions
 - **Jupyter**: Available via OSC OnDemand portal

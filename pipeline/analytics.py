@@ -1,5 +1,10 @@
 """Analytical query layer over the project database.
 
+Complements MLflow UI — use MLflow for visual metric comparison and artifact
+browsing; use this module for hyperparameter sweeps, arbitrary SQL joins on
+config_json, and headless/scriptable analysis. Datasette provides interactive
+point-and-click DB exploration.
+
 Provides functions for post-run experiment analysis using SQLite json_extract()
 on the config_json column in the runs table. All queries run against the local
 project DB (data/project.db) — no MLflow or network dependency.
