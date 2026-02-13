@@ -1,18 +1,27 @@
 # KD-GAT: CAN Bus Intrusion Detection via Knowledge Distillation
 
-CAN bus intrusion detection using a 3-stage teacher-student knowledge distillation pipeline:
+CAN bus intrusion detection using a 3-stage knowledge distillation pipeline:
 VGAE (unsupervised reconstruction) → GAT (supervised classification) → DQN (RL fusion).
-Teachers are compressed into lightweight students for edge deployment.
+Large models are compressed into small models via KD auxiliaries for edge deployment.
 
 ## Key Commands
 
 ```bash
 # Run a single stage
-python -m pipeline.cli <stage> --preset <model>,<size> --dataset <name>
+python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>
 
 # Stages: autoencoder, curriculum, fusion, evaluation
 # Models: vgae, gat, dqn
-# Sizes: teacher, student
+# Scales: large, small
+# Auxiliaries: none (default), kd_standard
+
+# Examples
+python -m pipeline.cli autoencoder --model vgae --scale large --dataset hcrl_sa
+python -m pipeline.cli curriculum --model gat --scale small --auxiliaries kd_standard --teacher-path <path> --dataset hcrl_sa
+python -m pipeline.cli fusion --model dqn --scale large --dataset hcrl_ch
+
+# Override nested config values
+python -m pipeline.cli autoencoder --model vgae --scale large -O training.lr 0.001 -O vgae.latent_dim 16
 
 # Full pipeline via Snakemake + SLURM
 snakemake -s pipeline/Snakefile --profile profiles/slurm
@@ -57,24 +66,37 @@ python -m pytest tests/ -v
 squeue -u $USER
 ```
 
-## Project Structure
+## Project Structure (3-layer hierarchy)
 
 ```
-pipeline/           # Main orchestration (frozen dataclasses, no Hydra)
+config/             # Layer 1: Inert, declarative (no imports from pipeline/ or src/)
+  schema.py         # Pydantic v2 frozen models: PipelineConfig, VGAEArchitecture, etc.
+  resolver.py       # YAML composition: defaults → model_def → auxiliaries → CLI
+  paths.py          # Path layout: {dataset}/{model_type}_{scale}_{stage}[_{aux}]
+  constants.py      # Domain/infrastructure constants (window sizes, feature counts, etc.)
+  __init__.py       # Re-exports: from config import PipelineConfig, resolve, checkpoint_path, ...
+  defaults.yaml     # Global baseline config values
+  datasets.yaml     # Dataset catalog (add entries here for new datasets)
+  models/           # Architecture × Scale YAML files
+    vgae/large.yaml, small.yaml
+    gat/large.yaml, small.yaml
+    dqn/large.yaml, small.yaml
+  auxiliaries/      # Loss modifier YAML files (composable)
+    none.yaml, kd_standard.yaml
+pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from src/)
   cli.py            # Entry point + write-through DB recording
-  config.py         # PipelineConfig + typed sub-configs (VGAEConfig, GATConfig, etc.)
-  paths.py          # Canonical 2-level path layout
   stages/           # Stage implementations (training, fusion, evaluation)
+  tracking.py       # MLflow integration
+  memory.py         # GPU memory management
   ingest.py         # CSV → Parquet conversion + dataset registration
   db.py             # SQLite project DB + write-through record_run_start/end
   analytics.py      # Post-run analysis: sweeps, leaderboards, comparisons
   Snakefile         # 20 rules, all stages + evaluation + onsuccess hooks
-src/                # Supporting modules
+src/                # Layer 3: Domain (models, training, preprocessing; imports config/)
   models/           # vgae.py, gat.py, dqn.py
   training/         # load_dataset(), graph caching
   preprocessing/    # Graph construction from CAN CSVs
 data/
-  datasets.yaml     # Dataset catalog (add entries here for new datasets)
   project.db        # SQLite DB: queryable datasets, runs, metrics
   automotive/       # 6 datasets (DVC-tracked): hcrl_ch, hcrl_sa, set_01-04
   parquet/          # Columnar format (from ingest), queryable via Datasette or SQL
@@ -82,6 +104,29 @@ data/
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json
 profiles/slurm/     # SLURM submission profile for Snakemake
 ```
+
+## Config System
+
+Config is defined by four orthogonal concerns: **model_type** (architecture), **scale** (capacity), **auxiliaries** (loss modifiers like KD), and **dataset**. Adding a new value along any axis = adding a YAML file.
+
+**Resolution order**: `defaults.yaml` → `models/{type}/{scale}.yaml` → `auxiliaries/{aux}.yaml` → CLI overrides → Pydantic validation → frozen.
+
+```python
+from config import resolve, PipelineConfig
+cfg = resolve("vgae", "large", dataset="hcrl_sa")          # No KD
+cfg = resolve("gat", "small", auxiliaries="kd_standard")    # With KD
+cfg.vgae.latent_dim    # Nested sub-config access
+cfg.training.lr        # Training hyperparameters
+cfg.has_kd             # Property: any KD auxiliary?
+cfg.kd.temperature     # KD auxiliary config (via property)
+cfg.active_arch        # Architecture config for active model_type
+```
+
+**Path layout**: `experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
+  - `experimentruns/hcrl_sa/vgae_large_autoencoder/`
+  - `experimentruns/hcrl_sa/gat_small_curriculum_kd/`
+
+**Legacy**: Old flat JSON config files (`model_size`, `use_kd`, `teacher_path`) load via `PipelineConfig.load()` with automatic migration.
 
 ## Critical Constraints
 
@@ -94,20 +139,25 @@ These fix real crashes -- do not violate:
 
 ## Architecture Decisions
 
-- Config: frozen dataclasses + JSON. No Hydra, no Pydantic, no OmegaConf.
-- Sub-configs: `cfg.vgae`, `cfg.gat`, `cfg.dqn`, `cfg.kd`, `cfg.fusion` — typed views over flat fields. Use sub-config access (`cfg.vgae.latent_dim`) in new code, not flat access (`cfg.vgae_latent_dim`).
+- **3-layer import hierarchy** (enforced by `tests/test_layer_boundaries.py`):
+  - `config/` → never imports from `pipeline/` or `src/`
+  - `pipeline/` → imports `config/` at top level; imports `src/` only inside functions (lazy)
+  - `src/` → imports `config/` (constants); never imports from `pipeline/`
+- Config: Pydantic v2 frozen BaseModels + YAML composition + JSON serialization.
+- Sub-configs: `cfg.vgae`, `cfg.gat`, `cfg.dqn`, `cfg.training`, `cfg.fusion` — nested Pydantic models. Always use nested access (`cfg.vgae.latent_dim`), never flat.
+- Auxiliaries: `cfg.auxiliaries` is a list of `AuxiliaryConfig`. KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
+- Constants: domain/infrastructure constants live in `config/constants.py` (not in PipelineConfig). Hyperparameters live in PipelineConfig.
 - Write-through DB: `cli.py` records run start/end directly to project DB. `populate()` is a backfill/recovery tool only.
-- Imports from `src/` are conditional (inside functions) to avoid top-level coupling.
 - Triple storage: Snakemake owns filesystem paths (DAG triggers), MLflow owns metadata (tracking/UI), project DB owns structured results (write-through from cli.py).
 - Data layer: Parquet (columnar storage) + SQLite (project DB) + Datasette (interactive browsing). All serverless.
-- Dataset catalog: `data/datasets.yaml` — single place to register new datasets.
+- Dataset catalog: `config/datasets.yaml` — single place to register new datasets.
 - Delete unused code completely. No compatibility shims or `# removed` comments.
 
 ## Environment
 
 - **Cluster**: OSC (Ohio Supercomputer Center), RHEL 9, SLURM
 - **GPU**: V100 (account PAS3209, gpu partition)
-- **Python**: conda `gnn-experiments` (PyTorch, PyG, Lightning, MLflow, Datasette)
+- **Python**: conda `gnn-experiments` (PyTorch, PyG, Lightning, MLflow, Pydantic v2, Datasette)
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
 - **MLflow DB**: `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db` (auto-backed up to `~/backups/` on pipeline success)

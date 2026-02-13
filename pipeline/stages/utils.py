@@ -17,8 +17,8 @@ from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from torch_geometric.loader import DataLoader
 from torch_geometric.nn import global_mean_pool
 
-from ..config import PipelineConfig
-from ..paths import stage_dir, checkpoint_path, config_path, data_dir, cache_dir
+from config import PipelineConfig, stage_dir, checkpoint_path, config_path, data_dir, cache_dir
+from config.constants import MMAP_TENSOR_LIMIT
 from ..tracking import log_memory_metrics, get_memory_summary
 from ..memory import compute_batch_size, log_memory_state
 
@@ -88,7 +88,7 @@ def load_data(cfg: PipelineConfig):
 
 def effective_batch_size(cfg: PipelineConfig) -> int:
     """Apply safety factor to batch size (legacy fallback)."""
-    return max(8, int(cfg.batch_size * cfg.safety_factor))
+    return max(8, int(cfg.training.batch_size * cfg.training.safety_factor))
 
 
 def compute_optimal_batch_size(
@@ -99,7 +99,7 @@ def compute_optimal_batch_size(
 ) -> int:
     """Compute optimal batch size using memory analysis.
 
-    Uses cfg.memory_estimation: "static" (fast) or "measured" (accurate).
+    Uses cfg.training.memory_estimation: "static" (fast) or "measured" (accurate).
     Falls back to Lightning Tuner or safety_factor if estimation fails.
     """
     if len(train_data) == 0:
@@ -108,26 +108,26 @@ def compute_optimal_batch_size(
 
     sample_graph = train_data[0]
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
-    mode = cfg.memory_estimation if cfg.memory_estimation in ("static", "measured") else "measured"
+    mode = cfg.training.memory_estimation if cfg.training.memory_estimation in ("static", "measured") else "measured"
 
     try:
-        target_utilization = min(0.85, cfg.safety_factor + 0.15)
+        target_utilization = min(0.85, cfg.training.safety_factor + 0.15)
 
         budget = compute_batch_size(
             model=model,
             sample_graph=sample_graph,
             device=device,
             teacher=teacher,
-            precision=cfg.precision,
+            precision=cfg.training.precision,
             target_utilization=target_utilization,
             min_batch_size=8,
-            max_batch_size=cfg.batch_size,
+            max_batch_size=cfg.training.batch_size,
             mode=mode,
         )
 
         log.info(
             "Batch size: %d (mode=%s, max=%d, KD=%s)",
-            budget.recommended_batch_size, mode, cfg.batch_size, teacher is not None
+            budget.recommended_batch_size, mode, cfg.training.batch_size, teacher is not None
         )
         return budget.recommended_batch_size
 
@@ -157,11 +157,9 @@ def _safe_num_workers(data, cfg: PipelineConfig) -> int:
     """Return num_workers, falling back to 0 if dataset exceeds mmap limits.
 
     With spawn multiprocessing, every tensor storage needs a separate mmap
-    entry.  Calling share_memory_() does NOT help — it also creates one mmap
+    entry.  Calling share_memory_() does NOT help -- it also creates one mmap
     per tensor.  The only safe option for large datasets is num_workers=0.
     """
-    from src.training.datamodules import MMAP_TENSOR_LIMIT
-
     nw = cfg.num_workers
     if nw > 0 and cfg.mp_start_method == "spawn":
         tensor_count = _estimate_tensor_count(data)
@@ -327,13 +325,38 @@ def make_projection(
 # Model loading factory
 # ---------------------------------------------------------------------------
 
-def load_frozen_cfg(cfg: PipelineConfig, stage: str) -> PipelineConfig:
+def _cross_model_path(cfg: PipelineConfig, model_type: str, stage: str, filename: str) -> Path:
+    """Build a path for a specific model_type (may differ from cfg.model_type).
+
+    Used when loading another model's artifacts (e.g. loading VGAE checkpoint from GAT config).
+    """
+    aux_suffix = f"_{cfg.auxiliaries[0].type}" if cfg.auxiliaries else ""
+    return (Path(cfg.experiment_root) / cfg.dataset
+            / f"{model_type}_{cfg.scale}_{stage}{aux_suffix}" / filename)
+
+
+# Stage → canonical model_type that owns that stage's artifacts.
+_STAGE_MODEL_TYPE = {
+    "autoencoder": "vgae",
+    "curriculum": "gat",
+    "normal": "gat",
+    "fusion": "dqn",
+}
+
+
+def load_frozen_cfg(cfg: PipelineConfig, stage: str, model_type: str | None = None) -> PipelineConfig:
     """Load the frozen config.json saved during training for *stage*.
 
-    Raises FileNotFoundError if the frozen config doesn't exist, rather than
-    silently falling back to the current config (which may have wrong dimensions).
+    model_type defaults to the canonical owner of the stage (e.g. "autoencoder" → "vgae").
+    When cfg.model_type already matches the stage owner, this is equivalent to config_path(cfg, stage).
+
+    Raises FileNotFoundError if the frozen config doesn't exist.
     """
-    p = config_path(cfg, stage)
+    mt = model_type or _STAGE_MODEL_TYPE.get(stage, cfg.model_type)
+    if mt == cfg.model_type:
+        p = config_path(cfg, stage)
+    else:
+        p = _cross_model_path(cfg, mt, stage, "config.json")
     if not p.exists():
         raise FileNotFoundError(
             f"Frozen config not found: {p}. "
@@ -356,16 +379,15 @@ def load_vgae(
     """Load trained VGAE model using its frozen config."""
     from src.models.vgae import GraphAutoencoderNeighborhood
 
-    vgae_cfg = load_frozen_cfg(cfg, stage)
+    vgae_cfg = load_frozen_cfg(cfg, stage, model_type="vgae")
+    ckpt = _cross_model_path(cfg, "vgae", stage, "best_model.pt")
     vgae = GraphAutoencoderNeighborhood(
         num_ids=num_ids, in_channels=in_channels,
         hidden_dims=list(vgae_cfg.vgae.hidden_dims), latent_dim=vgae_cfg.vgae.latent_dim,
         encoder_heads=vgae_cfg.vgae.heads, embedding_dim=vgae_cfg.vgae.embedding_dim,
         dropout=vgae_cfg.vgae.dropout,
     )
-    vgae.load_state_dict(torch.load(
-        checkpoint_path(cfg, stage), map_location="cpu", weights_only=True,
-    ))
+    vgae.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=True))
     vgae.to(device)
     vgae.eval()
     return vgae
@@ -381,7 +403,8 @@ def load_gat(
     """Load trained GAT model using its frozen config."""
     from src.models.gat import GATWithJK
 
-    gat_cfg = load_frozen_cfg(cfg, stage)
+    gat_cfg = load_frozen_cfg(cfg, stage, model_type="gat")
+    ckpt = _cross_model_path(cfg, "gat", stage, "best_model.pt")
     gat = GATWithJK(
         num_ids=num_ids, in_channels=in_channels,
         hidden_channels=gat_cfg.gat.hidden, out_channels=2,
@@ -390,9 +413,7 @@ def load_gat(
         num_fc_layers=gat_cfg.gat.fc_layers,
         embedding_dim=gat_cfg.gat.embedding_dim,
     )
-    gat.load_state_dict(torch.load(
-        checkpoint_path(cfg, stage), map_location="cpu", weights_only=True,
-    ))
+    gat.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=True))
     gat.to(device)
     gat.eval()
     return gat
@@ -404,27 +425,28 @@ def load_gat(
 
 def build_optimizer_dict(optimizer, cfg: PipelineConfig):
     """Return optimizer or {optimizer, lr_scheduler} dict for Lightning."""
-    if not cfg.use_scheduler:
+    t = cfg.training
+    if not t.use_scheduler:
         return optimizer
 
-    t_max = cfg.scheduler_t_max if cfg.scheduler_t_max > 0 else cfg.max_epochs
+    t_max = t.scheduler_t_max if t.scheduler_t_max > 0 else t.max_epochs
 
-    if cfg.scheduler_type == "cosine":
+    if t.scheduler_type == "cosine":
         sched = torch.optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=t_max)
-    elif cfg.scheduler_type == "step":
+    elif t.scheduler_type == "step":
         sched = torch.optim.lr_scheduler.StepLR(
-            optimizer, step_size=cfg.scheduler_step_size, gamma=cfg.scheduler_gamma,
+            optimizer, step_size=t.scheduler_step_size, gamma=t.scheduler_gamma,
         )
-    elif cfg.scheduler_type == "plateau":
+    elif t.scheduler_type == "plateau":
         sched = torch.optim.lr_scheduler.ReduceLROnPlateau(
-            optimizer, mode=cfg.monitor_mode, patience=cfg.patience // 2,
+            optimizer, mode=t.monitor_mode, patience=t.patience // 2,
         )
         return {
             "optimizer": optimizer,
-            "lr_scheduler": {"scheduler": sched, "monitor": cfg.monitor_metric},
+            "lr_scheduler": {"scheduler": sched, "monitor": t.monitor_metric},
         }
     else:
-        log.warning("Unknown scheduler_type=%s, skipping", cfg.scheduler_type)
+        log.warning("Unknown scheduler_type=%s, skipping", t.scheduler_type)
         return optimizer
 
     return {"optimizer": optimizer, "lr_scheduler": sched}
@@ -436,35 +458,36 @@ def build_optimizer_dict(optimizer, cfg: PipelineConfig):
 
 def make_trainer(cfg: PipelineConfig, stage: str) -> pl.Trainer:
     """Create a Lightning Trainer with standard callbacks."""
+    t = cfg.training
     out = stage_dir(cfg, stage)
     out.mkdir(parents=True, exist_ok=True)
-    torch.backends.cudnn.benchmark = cfg.cudnn_benchmark
+    torch.backends.cudnn.benchmark = t.cudnn_benchmark
 
     mlflow.pytorch.autolog(log_models=False)
 
     return pl.Trainer(
         default_root_dir=str(out),
-        max_epochs=cfg.max_epochs,
+        max_epochs=t.max_epochs,
         accelerator="auto",
         devices="auto",
-        precision=cfg.precision,
-        gradient_clip_val=cfg.gradient_clip,
-        accumulate_grad_batches=cfg.accumulate_grad_batches,
+        precision=t.precision,
+        gradient_clip_val=t.gradient_clip,
+        accumulate_grad_batches=t.accumulate_grad_batches,
         callbacks=[
             ModelCheckpoint(
                 dirpath=str(out), filename="best_model",
-                monitor=cfg.monitor_metric, mode=cfg.monitor_mode,
-                save_top_k=cfg.save_top_k,
+                monitor=t.monitor_metric, mode=t.monitor_mode,
+                save_top_k=t.save_top_k,
             ),
             EarlyStopping(
-                monitor=cfg.monitor_metric, patience=cfg.patience,
-                mode=cfg.monitor_mode,
+                monitor=t.monitor_metric, patience=t.patience,
+                mode=t.monitor_mode,
             ),
-            MemoryMonitorCallback(log_every_n_epochs=cfg.test_every_n_epochs),
+            MemoryMonitorCallback(log_every_n_epochs=t.test_every_n_epochs),
         ],
-        log_every_n_steps=cfg.log_every_n_steps,
+        log_every_n_steps=t.log_every_n_steps,
         enable_progress_bar=True,
-        deterministic=cfg.deterministic,
+        deterministic=t.deterministic,
     )
 
 

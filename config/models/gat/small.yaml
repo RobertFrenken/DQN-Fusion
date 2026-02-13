@@ -1,0 +1,12 @@
+# GAT small (was: student preset)
+gat:
+  hidden: 24
+  layers: 2
+  heads: 4
+  embedding_dim: 8
+  fc_layers: 3
+  dropout: 0.1
+training:
+  lr: 0.001
+  patience: 50
+  safety_factor: 0.55

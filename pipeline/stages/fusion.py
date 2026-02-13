@@ -8,8 +8,7 @@ import mlflow
 import torch
 import pytorch_lightning as pl
 
-from ..config import PipelineConfig
-from ..paths import stage_dir, checkpoint_path, config_path
+from config import PipelineConfig, stage_dir, checkpoint_path
 from .utils import load_data, load_vgae, load_gat, cache_predictions, cleanup
 
 log = logging.getLogger(__name__)
@@ -17,13 +16,13 @@ log = logging.getLogger(__name__)
 
 def train_fusion(cfg: PipelineConfig) -> Path:
     """Train DQN fusion agent on cached VGAE+GAT predictions. Returns checkpoint path."""
-    log.info("=== FUSION: %s / %s ===", cfg.dataset, cfg.model_size)
+    log.info("=== FUSION: %s / %s_%s ===", cfg.dataset, cfg.model_type, cfg.scale)
     pl.seed_everything(cfg.seed)
 
     train_data, val_data, num_ids, in_ch = load_data(cfg)
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
 
-    # Determine prerequisite stage names (run_id() adds _kd suffix automatically)
+    # Determine prerequisite stage names (run_id() adds aux suffix automatically)
     vgae_stage = "autoencoder"
     gat_stage = "curriculum"
 
@@ -109,7 +108,6 @@ def train_fusion(cfg: PipelineConfig) -> Path:
             "epsilon": agent.epsilon,
         }, ckpt)
 
-    cfg.save(config_path(cfg, "fusion"))
     log.info("Saved DQN: %s (best_acc=%.4f)", ckpt, best_acc)
     cleanup()
     return ckpt

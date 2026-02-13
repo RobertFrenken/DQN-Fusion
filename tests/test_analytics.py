@@ -42,42 +42,42 @@ def populated_db(tmp_path):
 
     # Insert runs with config_json
     runs = [
-        ("ds_a/teacher_autoencoder", "ds_a", "teacher", "autoencoder", 0, "complete",
+        ("ds_a/vgae_large_autoencoder", "ds_a", "vgae", "large", "autoencoder", 0, "complete",
          json.dumps({"lr": 0.002, "batch_size": 4096, "gat_hidden": 48, "seed": 42})),
-        ("ds_a/student_autoencoder_kd", "ds_a", "student", "autoencoder", 1, "complete",
+        ("ds_a/vgae_small_autoencoder_kd", "ds_a", "vgae", "small", "autoencoder", 1, "complete",
          json.dumps({"lr": 0.001, "batch_size": 2048, "gat_hidden": 24, "seed": 42})),
-        ("ds_a/teacher_curriculum", "ds_a", "teacher", "curriculum", 0, "complete",
+        ("ds_a/gat_large_curriculum", "ds_a", "gat", "large", "curriculum", 0, "complete",
          json.dumps({"lr": 0.002, "batch_size": 4096, "gat_hidden": 48, "seed": 42})),
-        ("ds_a/teacher_evaluation", "ds_a", "teacher", "evaluation", 0, "complete",
+        ("ds_a/vgae_large_evaluation", "ds_a", "vgae", "large", "evaluation", 0, "complete",
          json.dumps({"lr": 0.002, "batch_size": 4096, "gat_hidden": 48, "seed": 42})),
-        ("ds_a/student_evaluation_kd", "ds_a", "student", "evaluation", 1, "complete",
+        ("ds_a/vgae_small_evaluation_kd", "ds_a", "vgae", "small", "evaluation", 1, "complete",
          json.dumps({"lr": 0.001, "batch_size": 2048, "gat_hidden": 24, "seed": 42})),
-        ("ds_b/teacher_autoencoder", "ds_b", "teacher", "autoencoder", 0, "complete",
+        ("ds_b/vgae_large_autoencoder", "ds_b", "vgae", "large", "autoencoder", 0, "complete",
          json.dumps({"lr": 0.005, "batch_size": 4096, "gat_hidden": 48, "seed": 99})),
     ]
-    for run_id, dataset, model_size, stage, use_kd, status, config_json in runs:
+    for run_id, dataset, model_type, scale, stage, has_kd, status, config_json in runs:
         conn.execute(
-            """INSERT INTO runs (run_id, dataset, model_size, stage, use_kd, status, config_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (run_id, dataset, model_size, stage, use_kd, status, config_json),
+            """INSERT INTO runs (run_id, dataset, model_type, scale, stage, has_kd, status, config_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+            (run_id, dataset, model_type, scale, stage, has_kd, status, config_json),
         )
 
     # Insert metrics
     metrics = [
-        # ds_a teacher eval
-        ("ds_a/teacher_evaluation", "gat", "val", "f1", 0.95),
-        ("ds_a/teacher_evaluation", "gat", "val", "accuracy", 0.96),
-        ("ds_a/teacher_evaluation", "gat", "val", "auc", 0.98),
-        ("ds_a/teacher_evaluation", "vgae", "val", "f1", 0.88),
-        # ds_a student eval
-        ("ds_a/student_evaluation_kd", "gat", "val", "f1", 0.92),
-        ("ds_a/student_evaluation_kd", "gat", "val", "accuracy", 0.93),
-        ("ds_a/student_evaluation_kd", "gat", "val", "auc", 0.96),
-        ("ds_a/student_evaluation_kd", "vgae", "val", "f1", 0.85),
-        # ds_a teacher autoencoder (training metrics)
-        ("ds_a/teacher_autoencoder", "vgae", "val", "f1", 0.87),
-        # ds_b teacher autoencoder
-        ("ds_b/teacher_autoencoder", "vgae", "val", "f1", 0.90),
+        # ds_a large eval
+        ("ds_a/vgae_large_evaluation", "gat", "val", "f1", 0.95),
+        ("ds_a/vgae_large_evaluation", "gat", "val", "accuracy", 0.96),
+        ("ds_a/vgae_large_evaluation", "gat", "val", "auc", 0.98),
+        ("ds_a/vgae_large_evaluation", "vgae", "val", "f1", 0.88),
+        # ds_a small+kd eval
+        ("ds_a/vgae_small_evaluation_kd", "gat", "val", "f1", 0.92),
+        ("ds_a/vgae_small_evaluation_kd", "gat", "val", "accuracy", 0.93),
+        ("ds_a/vgae_small_evaluation_kd", "gat", "val", "auc", 0.96),
+        ("ds_a/vgae_small_evaluation_kd", "vgae", "val", "f1", 0.85),
+        # ds_a large autoencoder (training metrics)
+        ("ds_a/vgae_large_autoencoder", "vgae", "val", "f1", 0.87),
+        # ds_b large autoencoder
+        ("ds_b/vgae_large_autoencoder", "vgae", "val", "f1", 0.90),
     ]
     for run_id, model, scenario, metric_name, value in metrics:
         conn.execute(
@@ -189,7 +189,7 @@ class TestCompare:
 
     def test_shows_deltas(self, populated_db):
         rows = compare(
-            "ds_a/teacher_evaluation", "ds_a/student_evaluation_kd",
+            "ds_a/vgae_large_evaluation", "ds_a/vgae_small_evaluation_kd",
             db_path=populated_db,
         )
         assert len(rows) > 0
@@ -201,7 +201,7 @@ class TestCompare:
 
     def test_missing_run_raises(self, populated_db):
         with pytest.raises(KeyError, match="Run not found"):
-            compare("ds_a/teacher_evaluation", "nonexistent/run", db_path=populated_db)
+            compare("ds_a/vgae_large_evaluation", "nonexistent/run", db_path=populated_db)
 
     def test_both_missing_raises(self, populated_db):
         with pytest.raises(KeyError, match="Run not found"):
@@ -216,7 +216,7 @@ class TestConfigDiff:
 
     def test_finds_differences(self, populated_db):
         diffs = config_diff(
-            "ds_a/teacher_autoencoder", "ds_a/student_autoencoder_kd",
+            "ds_a/vgae_large_autoencoder", "ds_a/vgae_small_autoencoder_kd",
             db_path=populated_db,
         )
         diff_params = {d["param"] for d in diffs}
@@ -226,7 +226,7 @@ class TestConfigDiff:
 
     def test_excludes_same_values(self, populated_db):
         diffs = config_diff(
-            "ds_a/teacher_autoencoder", "ds_a/student_autoencoder_kd",
+            "ds_a/vgae_large_autoencoder", "ds_a/vgae_small_autoencoder_kd",
             db_path=populated_db,
         )
         diff_params = {d["param"] for d in diffs}
@@ -234,11 +234,11 @@ class TestConfigDiff:
 
     def test_missing_run_raises(self, populated_db):
         with pytest.raises(KeyError, match="Run not found"):
-            config_diff("ds_a/teacher_autoencoder", "nonexistent/run", db_path=populated_db)
+            config_diff("ds_a/vgae_large_autoencoder", "nonexistent/run", db_path=populated_db)
 
     def test_identical_configs_empty(self, populated_db):
         diffs = config_diff(
-            "ds_a/teacher_autoencoder", "ds_a/teacher_curriculum",
+            "ds_a/vgae_large_autoencoder", "ds_a/gat_large_curriculum",
             db_path=populated_db,
         )
         assert diffs == []

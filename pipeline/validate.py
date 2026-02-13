@@ -1,6 +1,7 @@
 """Config validation. Catches mistakes before they become 6-hour SLURM failures.
 
-No Pydantic. No triple-validator stack. Just plain checks that raise ValueError.
+Most field-level checks are now handled by Pydantic Field() constraints.
+This module handles filesystem checks and cross-stage prerequisite checks.
 """
 from __future__ import annotations
 
@@ -9,9 +10,9 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
-    from .config import PipelineConfig
+    from config import PipelineConfig
 
-from .paths import STAGES, DATASETS, checkpoint_path, config_path, data_dir
+from config import STAGES, get_datasets, checkpoint_path, config_path, data_dir
 
 _log = logging.getLogger(__name__)
 
@@ -24,24 +25,21 @@ def validate(cfg: PipelineConfig, stage: str) -> None:
     if stage not in STAGES:
         errors.append(f"Unknown stage '{stage}'. Choose from: {list(STAGES.keys())}")
 
-    if cfg.dataset not in DATASETS:
-        errors.append(f"Unknown dataset '{cfg.dataset}'. Choose from: {DATASETS}")
+    if cfg.dataset not in get_datasets():
+        errors.append(f"Unknown dataset '{cfg.dataset}'. Choose from: {get_datasets()}")
 
     if not data_dir(cfg).exists():
         errors.append(f"Data directory not found: {data_dir(cfg)}")
 
-    if cfg.model_size not in ("teacher", "student"):
-        errors.append(f"model_size must be 'teacher' or 'student', got '{cfg.model_size}'")
-
     # --- KD consistency ---
-    if cfg.model_size == "student" and not cfg.use_kd:
-        _log.warning("Student without KD — running as ablation baseline")
+    if cfg.scale == "small" and not cfg.has_kd:
+        _log.warning("Small model without KD -- running as ablation baseline")
 
-    if cfg.use_kd and not cfg.teacher_path and stage != "evaluation":
-        errors.append("use_kd=True but teacher_path is empty")
+    if cfg.has_kd and not cfg.kd.model_path and stage != "evaluation":
+        errors.append("KD auxiliary enabled but model_path is empty")
 
-    if cfg.use_kd and cfg.teacher_path:
-        tp = Path(cfg.teacher_path)
+    if cfg.has_kd and cfg.kd.model_path:
+        tp = Path(cfg.kd.model_path)
         if not tp.exists():
             errors.append(f"Teacher checkpoint not found: {tp}")
         teacher_cfg = tp.parent / "config.json"
@@ -69,18 +67,6 @@ def validate(cfg: PipelineConfig, stage: str) -> None:
         vgae_ckpt = checkpoint_path(cfg, "autoencoder")
         if not gat_ckpt.exists() and not vgae_ckpt.exists():
             errors.append("Evaluation needs at least one checkpoint (GAT or VGAE)")
-
-    # --- numeric sanity ---
-    if cfg.lr <= 0:
-        errors.append("lr must be positive")
-    if cfg.max_epochs < 1:
-        errors.append("max_epochs must be >= 1")
-    if cfg.batch_size < 1:
-        errors.append("batch_size must be >= 1")
-    if not 0 < cfg.dqn_gamma <= 1:
-        errors.append("dqn_gamma must be in (0, 1]")
-    if not 0 < cfg.safety_factor <= 1:
-        errors.append("safety_factor must be in (0, 1]")
 
     if errors:
         raise ValueError(

@@ -18,10 +18,10 @@ class TestVGAESmoke:
     """VGAE module trains and produces finite loss."""
 
     def test_trains(self):
-        from pipeline.config import PipelineConfig
+        from config import resolve
         from pipeline.stages.modules import VGAEModule
 
-        cfg = PipelineConfig.from_preset("vgae", "teacher", **SMOKE_OVERRIDES)
+        cfg = resolve("vgae", "large", **SMOKE_OVERRIDES)
         data = _make_dataset(20)
         module = VGAEModule(cfg, NUM_IDS, IN_CHANNELS)
 
@@ -36,24 +36,24 @@ class TestVGAESmoke:
         assert torch.isfinite(trainer.callback_metrics["train_loss"])
 
     def test_kd_trains(self):
-        from pipeline.config import PipelineConfig
+        from config import resolve
         from pipeline.stages.modules import VGAEModule
         from pipeline.stages.utils import make_projection
         from src.models.vgae import GraphAutoencoderNeighborhood
 
-        teacher_cfg = PipelineConfig.from_preset("vgae", "teacher", **SMOKE_OVERRIDES)
-        student_cfg = PipelineConfig.from_preset(
-            "vgae", "student", **SMOKE_OVERRIDES,
-            use_kd=True, kd_alpha=0.5,
+        teacher_cfg = resolve("vgae", "large", **SMOKE_OVERRIDES)
+        student_cfg = resolve(
+            "vgae", "small", auxiliaries="kd_standard",
+            **SMOKE_OVERRIDES,
         )
 
         teacher = GraphAutoencoderNeighborhood(
             num_ids=NUM_IDS, in_channels=IN_CHANNELS,
-            hidden_dims=list(teacher_cfg.vgae_hidden_dims),
-            latent_dim=teacher_cfg.vgae_latent_dim,
-            encoder_heads=teacher_cfg.vgae_heads,
-            embedding_dim=teacher_cfg.vgae_embedding_dim,
-            dropout=teacher_cfg.vgae_dropout,
+            hidden_dims=list(teacher_cfg.vgae.hidden_dims),
+            latent_dim=teacher_cfg.vgae.latent_dim,
+            encoder_heads=teacher_cfg.vgae.heads,
+            embedding_dim=teacher_cfg.vgae.embedding_dim,
+            dropout=teacher_cfg.vgae.dropout,
         )
         teacher.eval()
         for p in teacher.parameters():
@@ -61,11 +61,11 @@ class TestVGAESmoke:
 
         student_model = GraphAutoencoderNeighborhood(
             num_ids=NUM_IDS, in_channels=IN_CHANNELS,
-            hidden_dims=list(student_cfg.vgae_hidden_dims),
-            latent_dim=student_cfg.vgae_latent_dim,
-            encoder_heads=student_cfg.vgae_heads,
-            embedding_dim=student_cfg.vgae_embedding_dim,
-            dropout=student_cfg.vgae_dropout,
+            hidden_dims=list(student_cfg.vgae.hidden_dims),
+            latent_dim=student_cfg.vgae.latent_dim,
+            encoder_heads=student_cfg.vgae.heads,
+            embedding_dim=student_cfg.vgae.embedding_dim,
+            dropout=student_cfg.vgae.dropout,
         )
         projection = make_projection(student_model, teacher, "vgae", torch.device("cpu"))
         del student_model
@@ -87,10 +87,10 @@ class TestGATSmoke:
     """GAT module trains and produces finite loss."""
 
     def test_trains(self):
-        from pipeline.config import PipelineConfig
+        from config import resolve
         from pipeline.stages.modules import GATModule
 
-        cfg = PipelineConfig.from_preset("gat", "teacher", **SMOKE_OVERRIDES)
+        cfg = resolve("gat", "large", **SMOKE_OVERRIDES)
         data = _make_dataset(20)
         module = GATModule(cfg, NUM_IDS, IN_CHANNELS)
 
@@ -105,23 +105,23 @@ class TestGATSmoke:
         assert torch.isfinite(trainer.callback_metrics["train_loss"])
 
     def test_kd_trains(self):
-        from pipeline.config import PipelineConfig
+        from config import resolve
         from pipeline.stages.modules import GATModule
         from src.models.gat import GATWithJK
 
-        teacher_cfg = PipelineConfig.from_preset("gat", "teacher", **SMOKE_OVERRIDES)
-        student_cfg = PipelineConfig.from_preset(
-            "gat", "student", **SMOKE_OVERRIDES,
-            use_kd=True, kd_alpha=0.5,
+        teacher_cfg = resolve("gat", "large", **SMOKE_OVERRIDES)
+        student_cfg = resolve(
+            "gat", "small", auxiliaries="kd_standard",
+            **SMOKE_OVERRIDES,
         )
 
         teacher = GATWithJK(
             num_ids=NUM_IDS, in_channels=IN_CHANNELS,
-            hidden_channels=teacher_cfg.gat_hidden, out_channels=2,
-            num_layers=teacher_cfg.gat_layers, heads=teacher_cfg.gat_heads,
-            dropout=teacher_cfg.gat_dropout,
-            num_fc_layers=teacher_cfg.gat_fc_layers,
-            embedding_dim=teacher_cfg.gat_embedding_dim,
+            hidden_channels=teacher_cfg.gat.hidden, out_channels=2,
+            num_layers=teacher_cfg.gat.layers, heads=teacher_cfg.gat.heads,
+            dropout=teacher_cfg.gat.dropout,
+            num_fc_layers=teacher_cfg.gat.fc_layers,
+            embedding_dim=teacher_cfg.gat.embedding_dim,
         )
         teacher.eval()
         for p in teacher.parameters():

@@ -1,10 +1,10 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-02-12
+**Updated**: 2026-02-13
 
 ## What This Is
 
-CAN bus intrusion detection via knowledge distillation. Teacher models (VGAE → GAT → DQN fusion) are compressed into lightweight students. Runs on OSC HPC via Snakemake/SLURM.
+CAN bus intrusion detection via knowledge distillation. Large models (VGAE → GAT → DQN fusion) are compressed into small models via KD auxiliaries. Runs on OSC HPC via Snakemake/SLURM.
 
 ## Architecture
 
@@ -14,29 +14,42 @@ VGAE (unsupervised reconstruction) → GAT (supervised classification) → DQN (
                                      EVALUATION (all models)
 ```
 
-**Entry point**: `python -m pipeline.cli <stage> [options]`
+**Entry point**: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>`
 
-## Active System: `pipeline/`
+## Layered Architecture
 
-Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pydantic.
+Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
-- `config.py` — `PipelineConfig` frozen dataclass + typed sub-config views (`VGAEConfig`, `GATConfig`, `DQNConfig`, `KDConfig`, `FusionConfig`) + presets, JSON save/load
+### Layer 1: `config/` (inert, declarative — no pipeline/ or src/ imports)
+
+- `schema.py` — Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`, `PreprocessingConfig`. Legacy flat JSON loading via `_from_legacy_flat()`.
+- `resolver.py` — YAML composition: `resolve(model_type, scale, auxiliaries="none", **cli_overrides)`, `list_models()`, `list_auxiliaries()`. Merge order: defaults → model_def → auxiliaries → CLI.
+- `paths.py` — Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`. String-based variants for Snakefile.
+- `constants.py` — Domain/infrastructure constants: feature counts, window sizes, DB paths, MLflow URI, memory limits
+- `__init__.py` — Re-exports for clean `from config import PipelineConfig, resolve, checkpoint_path` usage
+- `defaults.yaml` — Global baseline config values
+- `datasets.yaml` — Dataset catalog (6 automotive datasets)
+- `models/{vgae,gat,dqn}/{large,small}.yaml` — Architecture × Scale definitions
+- `auxiliaries/{none,kd_standard}.yaml` — Loss modifier configs (composable)
+
+### Layer 2: `pipeline/` (orchestration — imports config/ freely, lazy imports from src/)
+
+- `cli.py` — Arg parser (`--model`/`--scale`/`--auxiliaries`), MLflow run lifecycle, write-through DB recording, `STAGE_FNS` dispatch
 - `stages/` — Training logic split into modules:
   - `training.py` — VGAE (autoencoder) and GAT (curriculum) training
   - `fusion.py` — DQN fusion training (uses `cfg.dqn.*`, `cfg.fusion.*`)
   - `evaluation.py` — Multi-model evaluation and metrics
-  - `modules.py` — PyTorch Lightning modules (uses `cfg.vgae.*`, `cfg.gat.*`)
-  - `utils.py` — Shared utilities (teacher/model loading uses sub-config views)
-- `paths.py` — Canonical directory layout, checkpoint/config paths
-- `validate.py` — Config validation
-- `cli.py` — Arg parser, MLflow run lifecycle, write-through DB recording, `STAGE_FNS` dispatch
+  - `modules.py` — PyTorch Lightning modules (uses `cfg.vgae.*`, `cfg.gat.*`, `cfg.training.*`)
+  - `utils.py` — Shared utilities: model loading with cross-model path resolution (`_cross_model_path`, `_STAGE_MODEL_TYPE`), batch size optimization, trainer construction
+- `validate.py` — Config validation (simplified — Pydantic handles field constraints)
 - `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
 - `memory.py` — Memory monitoring and GPU/CPU optimization
-- `ingest.py` — CSV→Parquet ingestion, validation against `data/datasets.yaml`, dataset registration
-- `db.py` — SQLite project DB (`data/project.db`): schema, write-through `record_run_start()`/`record_run_end()`, backfill `populate()`, CLI queries
-- `Snakefile` — Snakemake workflow (20 rules, 2-level paths, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup)
-- `profiles/slurm/config.yaml` — SLURM cluster submission profile for Snakemake
-- `profiles/slurm/status.sh` — Job status checker (sacct-based)
+- `ingest.py` — CSV→Parquet ingestion, validation against `config/datasets.yaml`, dataset registration
+- `db.py` — SQLite project DB (`data/project.db`): schema (model_type/scale/has_kd), write-through `record_run_start()`/`record_run_end()`, backfill `populate()`, CLI queries
+- `analytics.py` — Post-run analysis: sweep, leaderboard, compare, config_diff, dataset_summary
+- `Snakefile` — Snakemake workflow (20 rules, `--model`/`--scale`/`--auxiliaries` CLI, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup)
+
+### Layer 3: `src/` (domain — imports config.constants, never imports pipeline/)
 
 ## Supporting Code: `src/`
 
@@ -47,10 +60,29 @@ Clean, self-contained module. Frozen dataclasses + JSON config. No Hydra, no Pyd
 
 `load_dataset()` accepts direct `Path` arguments from `pipeline/paths.py`. No legacy adapters remain.
 
+## Config System
+
+Config defined by four orthogonal concerns: **model_type** (architecture), **scale** (capacity), **auxiliaries** (loss modifiers), **dataset**.
+
+```python
+from config import resolve, PipelineConfig
+cfg = resolve("vgae", "large", dataset="hcrl_sa")          # No KD
+cfg = resolve("gat", "small", auxiliaries="kd_standard")    # With KD
+cfg.vgae.latent_dim    # Nested sub-config access
+cfg.training.lr        # Training hyperparameters
+cfg.has_kd             # Property: any KD auxiliary?
+cfg.kd.temperature     # KD auxiliary config (via property)
+cfg.active_arch        # Architecture config for active model_type
+```
+
+**Resolution order**: `defaults.yaml` → `models/{type}/{scale}.yaml` → `auxiliaries/{aux}.yaml` → CLI overrides → Pydantic validation → frozen.
+
+**Cross-model loading**: `load_vgae(gat_cfg)` resolves to `vgae_*` paths via `_STAGE_MODEL_TYPE` mapping. Each stage has a canonical model owner (autoencoder→vgae, curriculum→gat, fusion→dqn).
+
 ## Data Pipeline
 
 ```
-data/datasets.yaml                  # Dataset catalog (source of truth for dataset metadata)
+config/datasets.yaml                # Dataset catalog (source of truth for dataset metadata)
      ↓ (python -m pipeline.ingest)
 data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parquet
      (raw CSVs, DVC-tracked)              (columnar, queryable via SQL)
@@ -65,15 +97,14 @@ data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parqu
 - 6 datasets: hcrl_ch, hcrl_sa, set_01-04
 - Cache auto-built on first access, validated via metadata on subsequent loads
 - All data versioned with DVC (remote: `/fs/scratch/PAS1266/can-graph-dvc`)
-- Parquet files: 5-10x smaller than CSV, queryable via SQL
-- Project DB: write-through from `cli.py` (primary), backfill via `populate()` (recovery). Queryable with `python -m pipeline.db query "SQL"` or Datasette
+- Project DB: write-through from `cli.py` (primary), backfill via `populate()` (recovery)
 
 ## Models
 
-| Model | File | Teacher | Student |
-|-------|------|---------|---------|
-| `GraphAutoencoderNeighborhood` | `src/models/vgae.py` | (1024,512,96) latent 96 | (80,40,16) latent 16 |
-| `GATWithJK` | `src/models/gat.py` | hidden 64, 5 layers, 8 heads | hidden 24, 2 layers, 4 heads |
+| Model | File | Large | Small |
+|-------|------|-------|-------|
+| `GraphAutoencoderNeighborhood` | `src/models/vgae.py` | (480,240,48) latent 48 | (80,40,16) latent 16 |
+| `GATWithJK` | `src/models/gat.py` | hidden 48, 3 layers, 8 heads | hidden 24, 2 layers, 4 heads |
 | `EnhancedDQNFusionAgent` | `src/models/dqn.py` | hidden 576, 3 layers | hidden 160, 2 layers |
 
 DQN state: 15D vector (VGAE 8D: errors + latent stats + confidence; GAT 7D: logits + embedding stats + confidence).
@@ -85,19 +116,15 @@ Default config enables memory-efficient training:
 - `precision: "16-mixed"` — 50% model/activation memory reduction
 - Both `GATWithJK` and `GraphAutoencoderNeighborhood` support checkpointing via `use_checkpointing` flag
 
-Memory monitoring logs to MLflow every N epochs:
-- CPU: mem_percent, mem_used_gb, mem_available_gb
-- GPU: mem_allocated_gb, mem_reserved_gb, mem_max_allocated_gb
-
 ## Critical Constraints
 
 **Do not violate these — they fix real crashes:**
 
-- **PyG `Data.to()` is in-place.** Always `.clone().to(device)`, never `.to(device)` on shared data. Mutating training data before DataLoader fork causes CUDA errors.
+- **PyG `Data.to()` is in-place.** Always `.clone().to(device)`, never `.to(device)` on shared data.
 - **Use spawn multiprocessing.** `mp_start_method: "spawn"` in config, `mp.set_start_method('spawn', force=True)` in CLI. Fork + CUDA = crashes.
 - **DataLoader workers**: `multiprocessing_context='spawn'` on all DataLoader instances.
-- **NFS filesystem**: `.nfs*` ghost files appear when processes delete open files. Already in `.gitignore`. Git operations (stash, reset) can fail on them.
-- **No GUI on HPC**: Git auth via SSH key (configured), not HTTPS tokens. Avoid `gnome-ssh-askpass`.
+- **NFS filesystem**: `.nfs*` ghost files appear when processes delete open files. Already in `.gitignore`.
+- **No GUI on HPC**: Git auth via SSH key (configured), not HTTPS tokens.
 
 ## Experiment Management
 
@@ -105,9 +132,9 @@ Memory monitoring logs to MLflow every N epochs:
 
 **Filesystem** (NFS home, permanent — Snakemake-managed):
 ```
-experimentruns/{dataset}/{model_size}_{stage}[_kd]/
+experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
 ├── best_model.pt       # Snakemake DAG trigger
-├── config.json         # Frozen config (also logged to MLflow)
+├── config.json         # Frozen config (Pydantic JSON, also logged to MLflow)
 ├── metrics.json        # Evaluation stage only (also logged as MLflow artifact)
 ```
 
@@ -122,19 +149,12 @@ experimentruns/{dataset}/{model_size}_{stage}[_kd]/
 data/project.db         # SQLite: datasets, runs, metrics tables
 ```
 
-Snakemake needs deterministic file paths at DAG construction time. MLflow artifact paths contain run UUIDs (not deterministic). So models save to filesystem first (Snakemake), then log to MLflow (tracking). If scratch purges, checkpoints/configs survive on NFS.
-
-**MLflow integration**: Fully wired. `cli.py` wraps stage dispatch with `start_run`/`end_run` and records to project DB via `record_run_start()`/`record_run_end()`. Evaluation stage logs flattened test-scenario metrics as `test.{model}.{scenario}.{metric}` and logs `metrics.json` as an artifact. Snakefile `onsuccess` hook backs up MLflow DB to `~/backups/` and runs `populate()` as a safety net backfill.
-
 ## Environment
 
 - **Cluster**: Ohio Supercomputer Center (OSC), RHEL 9, SLURM scheduler
 - **Home**: `/users/PAS2022/rf15/` — NFS v4, 1.7TB — permanent, safe for checkpoints
-- **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge — safe for concurrent DB writes
+- **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge
 - **Git remote**: `git@github.com:RobertFrenken/DQN-Fusion.git` (SSH)
-- **Python**: conda `gnn-experiments`, PyTorch + PyG + Lightning
-- **Key packages**: SQLite 3.51.1, Pandas 2.3.3, MLflow 3.8.1, PyArrow 14.0.2, Datasette, Pandera
+- **Python**: venv at `/users/PAS2022/rf15/CAN-Graph-Test/.venv/` (PyTorch + PyG + Lightning + Pydantic v2)
+- **Key packages**: SQLite, Pandas, MLflow, PyArrow, Datasette, Pandera, Pydantic v2
 - **SLURM account**: PAS3209, gpu partition, V100 GPUs
-- **tmux**: 3.2a available on login nodes -- use for Snakemake orchestration and Claude Code sessions
-- **Jupyter**: Available via OSC OnDemand portal
-- **MLflow UI**: Available via OSC OnDemand app (`bc_osc_mlflow`)

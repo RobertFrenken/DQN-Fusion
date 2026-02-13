@@ -31,35 +31,46 @@ def _make_dataset(n=50):
 
 
 # ---------------------------------------------------------------------------
-# Shared smoke-test config overrides
+# Shared smoke-test config overrides (nested format for new PipelineConfig)
 # ---------------------------------------------------------------------------
 
 SMOKE_OVERRIDES = dict(
-    max_epochs=2,
-    batch_size=16,
+    training=dict(
+        max_epochs=2,
+        batch_size=16,
+        precision="32-true",
+        patience=2,
+        optimize_batch_size=False,
+        gradient_checkpointing=False,
+        log_every_n_steps=1,
+        safety_factor=1.0,
+    ),
     device="cpu",
-    precision="32-true",
-    patience=2,
-    optimize_batch_size=False,
     num_workers=0,
-    gradient_checkpointing=False,
-    log_every_n_steps=1,
-    safety_factor=1.0,
     mp_start_method="spawn",
 )
 
 # E2E tests need tiny architectures to finish in reasonable time on CPU
 E2E_OVERRIDES = dict(
-    **SMOKE_OVERRIDES,
+    training=dict(
+        max_epochs=2,
+        batch_size=16,
+        precision="32-true",
+        patience=2,
+        optimize_batch_size=False,
+        gradient_checkpointing=False,
+        log_every_n_steps=1,
+        safety_factor=1.0,
+    ),
+    device="cpu",
+    num_workers=0,
+    mp_start_method="spawn",
     # Tiny VGAE
-    vgae_hidden_dims=(32, 16, 8), vgae_latent_dim=8,
-    vgae_heads=1, vgae_embedding_dim=4, vgae_dropout=0.1,
+    vgae=dict(hidden_dims=(32, 16, 8), latent_dim=8, heads=1, embedding_dim=4, dropout=0.1),
     # Tiny GAT
-    gat_hidden=8, gat_layers=2, gat_heads=2,
-    gat_embedding_dim=4, gat_fc_layers=2, gat_dropout=0.1,
+    gat=dict(hidden=8, layers=2, heads=2, embedding_dim=4, fc_layers=2, dropout=0.1),
     # Tiny DQN
-    dqn_hidden=32, dqn_layers=2,
-    dqn_buffer_size=500, dqn_batch_size=32, dqn_target_update=10,
+    dqn=dict(hidden=32, layers=2, buffer_size=500, batch_size=32, target_update=10),
 )
 
 

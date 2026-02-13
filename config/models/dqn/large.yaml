@@ -1,0 +1,12 @@
+# DQN large (was: teacher preset)
+dqn:
+  hidden: 576
+  layers: 3
+  buffer_size: 100000
+  batch_size: 128
+  target_update: 100
+  gamma: 0.99
+training:
+  safety_factor: 0.45
+fusion:
+  episodes: 500

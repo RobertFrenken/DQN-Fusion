@@ -9,7 +9,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
-from ..config import PipelineConfig
+from config import PipelineConfig
 from .utils import build_optimizer_dict, effective_batch_size, make_dataloader
 
 log = logging.getLogger(__name__)
@@ -22,7 +22,7 @@ class VGAEModule(pl.LightningModule):
       kd_loss = latent_w * MSE(project(z_s), z_t) + recon_w * MSE(recon_s, recon_t)
       total = alpha * kd_loss + (1-alpha) * task_loss
 
-    Memory optimization: When cfg.offload_teacher_to_cpu is True, the teacher
+    Memory optimization: When cfg.training.offload_teacher_to_cpu is True, the teacher
     model is moved to CPU after each forward pass to free GPU memory.
     """
 
@@ -46,7 +46,7 @@ class VGAEModule(pl.LightningModule):
             encoder_heads=cfg.vgae.heads,
             embedding_dim=cfg.vgae.embedding_dim,
             dropout=cfg.vgae.dropout,
-            use_checkpointing=cfg.gradient_checkpointing,
+            use_checkpointing=cfg.training.gradient_checkpointing,
         )
         self.teacher = teacher
         self.projection = projection
@@ -69,7 +69,8 @@ class VGAEModule(pl.LightningModule):
         task_loss, cont_out, z = self._task_loss(batch)
 
         if self.teacher is not None:
-            if self.cfg.offload_teacher_to_cpu and self._teacher_on_cpu:
+            kd = self.cfg.kd
+            if self.cfg.training.offload_teacher_to_cpu and self._teacher_on_cpu:
                 self.teacher.to(batch.x.device)
                 self._teacher_on_cpu = False
 
@@ -78,7 +79,7 @@ class VGAEModule(pl.LightningModule):
                     torch.zeros(batch.x.size(0), dtype=torch.long, device=batch.x.device)
                 t_cont, _, _, t_z, _ = self.teacher(batch.x, batch.edge_index, batch_idx)
 
-            if self.cfg.offload_teacher_to_cpu:
+            if self.cfg.training.offload_teacher_to_cpu:
                 self.teacher.to('cpu')
                 torch.cuda.empty_cache()
                 self._teacher_on_cpu = True
@@ -90,9 +91,9 @@ class VGAEModule(pl.LightningModule):
             min_r = min(cont_out.size(0), t_cont.size(0))
             recon_kd = F.mse_loss(cont_out[:min_r], t_cont[:min_r])
 
-            kd_loss = (self.cfg.kd.vgae_latent_weight * latent_kd
-                       + self.cfg.kd.vgae_recon_weight * recon_kd)
-            return self.cfg.kd.alpha * kd_loss + (1 - self.cfg.kd.alpha) * task_loss
+            kd_loss = (kd.vgae_latent_weight * latent_kd
+                       + kd.vgae_recon_weight * recon_kd)
+            return kd.alpha * kd_loss + (1 - kd.alpha) * task_loss
 
         return task_loss
 
@@ -109,7 +110,7 @@ class VGAEModule(pl.LightningModule):
         params = list(self.model.parameters())
         if self.projection is not None:
             params += list(self.projection.parameters())
-        opt = torch.optim.Adam(params, lr=self.cfg.lr, weight_decay=self.cfg.weight_decay)
+        opt = torch.optim.Adam(params, lr=self.cfg.training.lr, weight_decay=self.cfg.training.weight_decay)
         return build_optimizer_dict(opt, self.cfg)
 
 
@@ -120,7 +121,7 @@ class GATModule(pl.LightningModule):
       kd_loss = KL_div(student_logits/T, teacher_logits/T) * T^2
       total = alpha * kd_loss + (1-alpha) * task_loss
 
-    Memory optimization: When cfg.offload_teacher_to_cpu is True, the teacher
+    Memory optimization: When cfg.training.offload_teacher_to_cpu is True, the teacher
     model is moved to CPU after each forward pass to free GPU memory.
     """
 
@@ -146,7 +147,7 @@ class GATModule(pl.LightningModule):
             dropout=cfg.gat.dropout,
             num_fc_layers=cfg.gat.fc_layers,
             embedding_dim=cfg.gat.embedding_dim,
-            use_checkpointing=cfg.gradient_checkpointing,
+            use_checkpointing=cfg.training.gradient_checkpointing,
         )
         self.teacher = teacher
         self._teacher_on_cpu = False
@@ -160,25 +161,26 @@ class GATModule(pl.LightningModule):
         acc = (logits.argmax(1) == batch.y).float().mean()
 
         if self.teacher is not None:
-            if self.cfg.offload_teacher_to_cpu and self._teacher_on_cpu:
+            kd = self.cfg.kd
+            if self.cfg.training.offload_teacher_to_cpu and self._teacher_on_cpu:
                 self.teacher.to(batch.x.device)
                 self._teacher_on_cpu = False
 
             with torch.no_grad():
                 t_logits = self.teacher(batch)
 
-            if self.cfg.offload_teacher_to_cpu:
+            if self.cfg.training.offload_teacher_to_cpu:
                 self.teacher.to('cpu')
                 torch.cuda.empty_cache()
                 self._teacher_on_cpu = True
 
-            T = self.cfg.kd.temperature
+            T = kd.temperature
             kd_loss = F.kl_div(
                 F.log_softmax(logits / T, dim=-1),
                 F.softmax(t_logits / T, dim=-1),
                 reduction="batchmean",
             ) * (T ** 2)
-            loss = self.cfg.kd.alpha * kd_loss + (1 - self.cfg.kd.alpha) * task_loss
+            loss = kd.alpha * kd_loss + (1 - kd.alpha) * task_loss
         else:
             loss = task_loss
 
@@ -197,7 +199,7 @@ class GATModule(pl.LightningModule):
 
     def configure_optimizers(self):
         opt = torch.optim.Adam(
-            self.parameters(), lr=self.cfg.lr, weight_decay=self.cfg.weight_decay,
+            self.parameters(), lr=self.cfg.training.lr, weight_decay=self.cfg.training.weight_decay,
         )
         return build_optimizer_dict(opt, self.cfg)
 
@@ -230,11 +232,11 @@ class CurriculumDataModule(pl.LightningDataModule):
 
 def _curriculum_sample(normals, attacks, scores, epoch, cfg: PipelineConfig):
     """Sample training batch with curriculum ratio and difficulty-based selection."""
-    progress = min(epoch / max(cfg.max_epochs, 1), 1.0)
-    ratio = cfg.curriculum_start_ratio + progress * (
-        cfg.curriculum_end_ratio - cfg.curriculum_start_ratio
+    progress = min(epoch / max(cfg.training.max_epochs, 1), 1.0)
+    ratio = cfg.training.curriculum_start_ratio + progress * (
+        cfg.training.curriculum_end_ratio - cfg.training.curriculum_start_ratio
     )
-    percentile = cfg.difficulty_percentile + progress * (95 - cfg.difficulty_percentile)
+    percentile = cfg.training.difficulty_percentile + progress * (95 - cfg.training.difficulty_percentile)
 
     if scores:
         threshold = sorted(scores)[int(len(scores) * percentile / 100)]

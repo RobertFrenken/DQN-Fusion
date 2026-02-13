@@ -1,0 +1,10 @@
+# VGAE large (was: teacher preset)
+vgae:
+  hidden_dims: [480, 240, 48]
+  latent_dim: 48
+  heads: 4
+  embedding_dim: 32
+  dropout: 0.15
+training:
+  lr: 0.002
+  safety_factor: 0.55

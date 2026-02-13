@@ -164,6 +164,7 @@ def compare(
             conn.close()
             raise KeyError(f"Run not found: {rid!r}")
 
+    # Emulate FULL OUTER JOIN using UNION of LEFT JOINs (compatible with all SQLite versions)
     sql = """
         SELECT
             COALESCE(a.model, b.model)             AS model,
@@ -174,12 +175,26 @@ def compare(
             ROUND(b.value - a.value, 6)            AS delta
         FROM
             (SELECT * FROM metrics WHERE run_id = ?) a
-        FULL OUTER JOIN
+        LEFT JOIN
             (SELECT * FROM metrics WHERE run_id = ?) b
         ON a.model = b.model AND a.scenario = b.scenario AND a.metric_name = b.metric_name
+        UNION
+        SELECT
+            COALESCE(a2.model, b2.model)             AS model,
+            COALESCE(a2.scenario, b2.scenario)       AS scenario,
+            COALESCE(a2.metric_name, b2.metric_name) AS metric_name,
+            a2.value                                 AS value_a,
+            b2.value                                 AS value_b,
+            ROUND(b2.value - a2.value, 6)            AS delta
+        FROM
+            (SELECT * FROM metrics WHERE run_id = ?) b2
+        LEFT JOIN
+            (SELECT * FROM metrics WHERE run_id = ?) a2
+        ON b2.model = a2.model AND b2.scenario = a2.scenario AND b2.metric_name = a2.metric_name
+        WHERE a2.run_id IS NULL
         ORDER BY model, scenario, metric_name
     """
-    rows = conn.execute(sql, (run_a, run_b)).fetchall()
+    rows = conn.execute(sql, (run_a, run_b, run_b, run_a)).fetchall()
     conn.close()
     return [dict(r) for r in rows]
 
@@ -233,7 +248,7 @@ def dataset_summary(
     conn.row_factory = sqlite3.Row
 
     runs = conn.execute(
-        "SELECT run_id, model_size, stage, use_kd, status FROM runs WHERE dataset = ? ORDER BY run_id",
+        "SELECT run_id, model_type, scale, stage, has_kd, status FROM runs WHERE dataset = ? ORDER BY run_id",
         (dataset,),
     ).fetchall()
 

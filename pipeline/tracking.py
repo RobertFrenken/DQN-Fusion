@@ -6,9 +6,7 @@ Uses deterministic run IDs for compatibility with Snakemake's DAG.
 from __future__ import annotations
 
 import logging
-import os
 import time
-from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -17,19 +15,11 @@ import psutil
 import torch
 
 if TYPE_CHECKING:
-    from .config import PipelineConfig
+    from config import PipelineConfig
+
+from config.constants import TRACKING_URI, EXPERIMENT_NAME
 
 log = logging.getLogger(__name__)
-
-# MLflow tracking URI - must be on GPFS scratch for concurrent writes
-# Set via environment variable or default to scratch directory
-TRACKING_URI = os.getenv(
-    "MLFLOW_TRACKING_URI",
-    "sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db"
-)
-
-# Experiment name for all KD-GAT runs
-EXPERIMENT_NAME = "kd-gat-pipeline"
 
 _tracking_initialized = False
 
@@ -75,7 +65,7 @@ def start_run(cfg: PipelineConfig, stage: str, run_name: str) -> None:
     Args:
         cfg: Pipeline configuration
         stage: Training stage (autoencoder, curriculum, etc.)
-        run_name: Deterministic run ID (dataset/model_size_stage[_kd])
+        run_name: Deterministic run ID (dataset/model_type_scale_stage[_aux])
     """
     # Ensure tracking is set up
     setup_tracking()
@@ -86,26 +76,41 @@ def start_run(cfg: PipelineConfig, stage: str, run_name: str) -> None:
         run_name=run_name,
     )
 
-    # Log all configuration parameters
-    config_dict = asdict(cfg)
-    mlflow.log_params(config_dict)
+    # Log configuration parameters (flatten nested config for MLflow)
+    config_dict = cfg.model_dump()
+    flat_params = _flatten_dict(config_dict)
+    mlflow.log_params(flat_params)
 
     # Set metadata tags
     mlflow.set_tag("stage", stage)
     mlflow.set_tag("dataset", cfg.dataset)
-    mlflow.set_tag("model_size", cfg.model_size)
-    mlflow.set_tag("use_kd", cfg.use_kd)
+    mlflow.set_tag("model_type", cfg.model_type)
+    mlflow.set_tag("scale", cfg.scale)
+    mlflow.set_tag("has_kd", cfg.has_kd)
     mlflow.set_tag("model_arch", _get_model_arch(stage))
 
     # Set teacher relationship for KD runs
-    if cfg.use_kd and cfg.teacher_path:
-        # Extract teacher run ID from path if possible
-        teacher_id = _extract_teacher_id(cfg.teacher_path)
+    if cfg.has_kd and cfg.kd and cfg.kd.model_path:
+        teacher_id = _extract_teacher_id(cfg.kd.model_path)
         if teacher_id:
             mlflow.set_tag("teacher_run_id", teacher_id)
 
     # Log start time
     mlflow.set_tag("start_time", time.strftime("%Y-%m-%d %H:%M:%S"))
+
+
+def _flatten_dict(d: dict, prefix: str = "") -> dict:
+    """Flatten nested dict for MLflow params (which only accept flat dicts)."""
+    items = {}
+    for k, v in d.items():
+        key = f"{prefix}{k}" if prefix else k
+        if isinstance(v, dict):
+            items.update(_flatten_dict(v, f"{key}."))
+        elif isinstance(v, list):
+            items[key] = str(v)
+        else:
+            items[key] = v
+    return items
 
 
 def end_run(result: dict[str, Any] | None = None, success: bool = True) -> None:
@@ -158,7 +163,7 @@ def log_failure(error_msg: str) -> None:
 
 def _get_model_arch(stage: str) -> str:
     """Get model architecture from stage name."""
-    from .paths import STAGES
+    from config import STAGES
     _, model_arch, _ = STAGES.get(stage, ("unknown", "unknown", "unknown"))
     return model_arch
 
@@ -167,8 +172,8 @@ def _extract_teacher_id(teacher_path: str) -> str | None:
     """Extract teacher run ID from checkpoint path.
 
     Example:
-        experimentruns/hcrl_sa/teacher_autoencoder/best_model.pt
-        -> "hcrl_sa/teacher_autoencoder"
+        experimentruns/hcrl_sa/vgae_large_autoencoder/best_model.pt
+        -> "hcrl_sa/vgae_large_autoencoder"
     """
     try:
         path = Path(teacher_path)

@@ -1,6 +1,6 @@
 """CSV → Parquet ingestion and dataset registration.
 
-Reads the dataset catalog (data/datasets.yaml), validates CSV structure,
+Reads the dataset catalog (config/datasets.yaml), validates CSV structure,
 converts to Parquet with proper types, computes statistics, and registers
 the dataset in the project SQLite database.
 
@@ -20,16 +20,13 @@ import pyarrow.csv as pcsv
 import pyarrow.parquet as pq
 import yaml
 
-from .paths import CATALOG_PATH
+from config.constants import CATALOG_PATH, PARQUET_ROOT, ROW_GROUP_SIZE
 
 log = logging.getLogger(__name__)
 
-PARQUET_ROOT = Path("data/parquet")
-ROW_GROUP_SIZE = 500_000
-
 
 def load_catalog() -> dict:
-    """Load the dataset catalog from data/datasets.yaml."""
+    """Load the dataset catalog from config/datasets.yaml."""
     with open(CATALOG_PATH) as f:
         return yaml.safe_load(f)
 

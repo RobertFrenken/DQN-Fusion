@@ -16,11 +16,9 @@ import torch.nn as nn
 if TYPE_CHECKING:
     from torch_geometric.data import Data
 
-log = logging.getLogger(__name__)
+from config.constants import CUDA_CONTEXT_MB, FRAGMENTATION_BUFFER
 
-# Fixed overhead constants
-CUDA_CONTEXT_MB = 500.0
-FRAGMENTATION_BUFFER = 0.10
+log = logging.getLogger(__name__)
 
 
 @dataclass

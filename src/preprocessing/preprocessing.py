@@ -23,19 +23,20 @@ import pandas as pd
 import torch
 from torch_geometric.data import Data
 
+from config.constants import (
+    DEFAULT_WINDOW_SIZE,
+    DEFAULT_STRIDE,
+    EXCLUDED_ATTACK_TYPES,
+    MAX_DATA_BYTES,
+    NODE_FEATURE_COUNT,
+    EDGE_FEATURE_COUNT,
+)
+
 logger = logging.getLogger(__name__)
 
 # ==================== Configuration Constants ====================
 
-DEFAULT_WINDOW_SIZE = 100
-DEFAULT_STRIDE = 100
-EXCLUDED_ATTACK_TYPES = ['suppress', 'masquerade']  # Attack types to exclude from processing
-MAX_DATA_BYTES = 8  # CAN bus data field maximum bytes
 HEX_CHARS = '0123456789abcdefABCDEF'
-
-# Node feature configuration
-NODE_FEATURE_COUNT = 11  # CAN_ID + 8 data bytes + count + position
-EDGE_FEATURE_COUNT = 11  # Streamlined edge features
 
 # Column indices for processed DataFrame (after conversion to numpy)
 # Columns: [CAN_ID, Data1-8, Source, Target, label]

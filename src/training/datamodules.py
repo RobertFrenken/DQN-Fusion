@@ -14,20 +14,16 @@ from pathlib import Path
 
 import torch
 
-from src.preprocessing.preprocessing import (
-    GraphDataset,
+from config.constants import (
     DEFAULT_WINDOW_SIZE,
     DEFAULT_STRIDE,
     NODE_FEATURE_COUNT,
     EDGE_FEATURE_COUNT,
+    MMAP_TENSOR_LIMIT,
 )
+from src.preprocessing.preprocessing import GraphDataset
 
 logger = logging.getLogger(__name__)
-
-# vm.max_map_count is typically 65530 on Linux.
-# Both spawn workers and share_memory_() create mmap entries per tensor,
-# so datasets exceeding this limit must use num_workers=0.
-MMAP_TENSOR_LIMIT = 60000
 
 
 # ============================================================================

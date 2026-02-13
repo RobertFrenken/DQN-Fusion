@@ -1,13 +1,13 @@
 """SQLite project database for structured experiment tracking.
 
 Provides a queryable store for dataset metadata, training runs, and evaluation
-metrics — complementing MLflow (which tracks live params/metrics) and the
+metrics -- complementing MLflow (which tracks live params/metrics) and the
 filesystem (which Snakemake uses for DAG triggers).
 
 Tables:
-    datasets — one row per dataset (stats from cache + catalog)
-    runs     — one row per training/evaluation run
-    metrics  — flattened evaluation metrics (model × scenario × metric)
+    datasets -- one row per dataset (stats from cache + catalog)
+    runs     -- one row per training/evaluation run
+    metrics  -- flattened evaluation metrics (model x scenario x metric)
 
 Usage:
     python -m pipeline.db init          # Create schema
@@ -24,9 +24,10 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 
-log = logging.getLogger(__name__)
+from config.constants import DB_PATH
+from config.paths import EXPERIMENT_ROOT
 
-DB_PATH = Path("data/project.db")
+log = logging.getLogger(__name__)
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS datasets (
@@ -49,9 +50,10 @@ CREATE TABLE IF NOT EXISTS datasets (
 CREATE TABLE IF NOT EXISTS runs (
     run_id         TEXT PRIMARY KEY,
     dataset        TEXT REFERENCES datasets(name),
-    model_size     TEXT,
+    model_type     TEXT,
+    scale          TEXT,
     stage          TEXT,
-    use_kd         INTEGER,
+    has_kd         INTEGER,
     status         TEXT,
     teacher_run    TEXT,
     started_at     TEXT,
@@ -77,6 +79,14 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     if "config_json" not in cols:
         conn.execute("ALTER TABLE runs ADD COLUMN config_json TEXT")
         log.info("Migrated: added config_json column to runs table")
+    # Migrate old column names
+    if "model_size" in cols and "model_type" not in cols:
+        conn.execute("ALTER TABLE runs RENAME COLUMN model_size TO scale")
+        conn.execute("ALTER TABLE runs ADD COLUMN model_type TEXT DEFAULT 'unknown'")
+        log.info("Migrated: renamed model_size -> scale, added model_type")
+    if "use_kd" in cols and "has_kd" not in cols:
+        conn.execute("ALTER TABLE runs RENAME COLUMN use_kd TO has_kd")
+        log.info("Migrated: renamed use_kd -> has_kd")
 
 
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
@@ -126,9 +136,10 @@ def register_datasets(stats_list: list[dict], db_path: Path | None = None) -> No
 def record_run_start(
     run_id: str,
     dataset: str,
-    model_size: str,
+    model_type: str,
+    scale: str,
     stage: str,
-    use_kd: bool,
+    has_kd: bool,
     config_json: str,
     teacher_run: str = "",
     db_path: Path | None = None,
@@ -139,11 +150,11 @@ def record_run_start(
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """INSERT OR REPLACE INTO runs
-               (run_id, dataset, model_size, stage, use_kd, status,
+               (run_id, dataset, model_type, scale, stage, has_kd, status,
                 teacher_run, started_at, completed_at, config_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
-            (run_id, dataset, model_size, stage,
-             1 if use_kd else 0, "running", teacher_run, now, config_json),
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+            (run_id, dataset, model_type, scale, stage,
+             1 if has_kd else 0, "running", teacher_run, now, config_json),
         )
         conn.commit()
     finally:
@@ -263,8 +274,8 @@ def _populate_datasets_from_cache(conn: sqlite3.Connection) -> int:
 
 
 def _populate_runs(conn: sqlite3.Connection) -> int:
-    """Populate runs table from existing experimentruns/ config.json files."""
-    exp_root = Path("experimentruns")
+    """Populate runs table from existing config.json files."""
+    exp_root = Path(EXPERIMENT_ROOT)
     if not exp_root.exists():
         return 0
 
@@ -282,40 +293,59 @@ def _populate_runs(conn: sqlite3.Connection) -> int:
             config_text = cfg_path.read_text()
             cfg = json.loads(config_text)
 
-            run_name = run_dir.name  # e.g. "teacher_autoencoder"
+            run_name = run_dir.name  # e.g. "vgae_large_autoencoder"
             dataset = ds_dir.name
-            run_id = f"{dataset}/{run_name}"
+            run_id_val = f"{dataset}/{run_name}"
 
-            # Parse stage and model_size from directory name
+            # Parse model_type, scale, stage from directory name
             parts = run_name.split("_")
-            model_size = parts[0]  # teacher or student
-            use_kd = run_name.endswith("_kd")
-
-            # Determine stage from the run name
-            stage = "unknown"
-            for s in ["autoencoder", "curriculum", "fusion", "evaluation"]:
-                if s in run_name:
-                    stage = s
-                    break
+            # New format: {model_type}_{scale}_{stage}[_{aux}]
+            if len(parts) >= 3:
+                model_type = parts[0]
+                scale = parts[1]
+                has_kd = run_name.endswith("_kd")
+                stage = "unknown"
+                for s in ["autoencoder", "curriculum", "fusion", "evaluation"]:
+                    if s in run_name:
+                        stage = s
+                        break
+            else:
+                # Legacy format: {model_size}_{stage}[_kd]
+                model_type = cfg.get("model_type", "unknown")
+                scale_map = {"teacher": "large", "student": "small"}
+                scale = scale_map.get(parts[0], parts[0])
+                has_kd = run_name.endswith("_kd")
+                stage = "unknown"
+                for s in ["autoencoder", "curriculum", "fusion", "evaluation"]:
+                    if s in run_name:
+                        stage = s
+                        break
 
             has_model = (run_dir / "best_model.pt").exists()
             has_metrics = (run_dir / "metrics.json").exists()
             status = "complete" if (has_model or has_metrics) else "unknown"
 
             teacher_run = ""
-            if cfg.get("teacher_path"):
-                tp = Path(cfg["teacher_path"])
+            teacher_path = cfg.get("teacher_path", "")
+            # Check nested auxiliaries format
+            if not teacher_path:
+                for aux in cfg.get("auxiliaries", []):
+                    if isinstance(aux, dict) and aux.get("model_path"):
+                        teacher_path = aux["model_path"]
+                        break
+            if teacher_path:
+                tp = Path(teacher_path)
                 if len(tp.parts) >= 3:
                     teacher_run = f"{tp.parts[-3]}/{tp.parts[-2]}"
 
             conn.execute(
                 """INSERT OR REPLACE INTO runs
-                   (run_id, dataset, model_size, stage, use_kd, status,
+                   (run_id, dataset, model_type, scale, stage, has_kd, status,
                     teacher_run, started_at, completed_at, config_json)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                 (
-                    run_id, dataset, model_size, stage,
-                    1 if use_kd else 0, status, teacher_run,
+                    run_id_val, dataset, model_type, scale, stage,
+                    1 if has_kd else 0, status, teacher_run,
                     None, None, config_text,
                 ),
             )
@@ -327,7 +357,7 @@ def _populate_runs(conn: sqlite3.Connection) -> int:
 
 def _populate_metrics(conn: sqlite3.Connection) -> int:
     """Populate metrics table from existing metrics.json files."""
-    exp_root = Path("experimentruns")
+    exp_root = Path(EXPERIMENT_ROOT)
     if not exp_root.exists():
         return 0
 
@@ -342,7 +372,7 @@ def _populate_metrics(conn: sqlite3.Connection) -> int:
             if not metrics_path.exists():
                 continue
 
-            run_id = f"{ds_dir.name}/{run_dir.name}"
+            run_id_val = f"{ds_dir.name}/{run_dir.name}"
 
             with open(metrics_path) as f:
                 all_metrics = json.load(f)
@@ -361,7 +391,7 @@ def _populate_metrics(conn: sqlite3.Connection) -> int:
                                 """INSERT OR REPLACE INTO metrics
                                    (run_id, model, scenario, metric_name, value)
                                    VALUES (?, ?, ?, ?, ?)""",
-                                (run_id, model_name, "val", metric_name, value),
+                                (run_id_val, model_name, "val", metric_name, value),
                             )
                             count += 1
 
@@ -379,7 +409,7 @@ def _populate_metrics(conn: sqlite3.Connection) -> int:
                                     """INSERT OR REPLACE INTO metrics
                                        (run_id, model, scenario, metric_name, value)
                                        VALUES (?, ?, ?, ?, ?)""",
-                                    (run_id, model_name, scenario,
+                                    (run_id_val, model_name, scenario,
                                      metric_name, value),
                                 )
                                 count += 1

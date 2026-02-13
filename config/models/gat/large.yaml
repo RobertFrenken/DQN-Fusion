@@ -1,0 +1,11 @@
+# GAT large (was: teacher preset)
+gat:
+  hidden: 48
+  layers: 3
+  heads: 8
+  embedding_dim: 16
+  fc_layers: 2
+  dropout: 0.2
+training:
+  lr: 0.003
+  safety_factor: 0.5

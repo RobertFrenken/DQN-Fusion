@@ -2,11 +2,27 @@
 
 ## Architecture
 
-- Pipeline system uses frozen dataclasses + JSON. No Hydra, no Pydantic, no OmegaConf in new code.
-- All config is `PipelineConfig` — one object, one file. Presets for model/size combos.
-- **Sub-config views**: Use `cfg.vgae.latent_dim` (not `cfg.vgae_latent_dim`) in new/modified code. Flat fields remain for serialization; sub-config properties are computed views.
+- Config: Pydantic v2 frozen BaseModels + YAML composition. No Hydra, no OmegaConf.
+- All config resolved via `resolve(model_type, scale, auxiliaries="none", **overrides)` — returns frozen `PipelineConfig`.
+- **Nested access only**: Use `cfg.vgae.latent_dim`, `cfg.training.lr`, `cfg.kd.temperature`. Never flat access.
+- **Auxiliaries**: KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
+- **Adding new config**: New model type → add `config/models/{name}/` dir with scale YAMLs + Architecture class in schema.py. New auxiliary → add `config/auxiliaries/{name}.yaml`.
 - **Write-through DB**: `cli.py` records runs directly to project DB. Don't rely on `populate()` as the primary data path.
-- Imports from `src/` are conditional (inside functions) to avoid top-level coupling.
+
+## Import Rules (3-layer hierarchy)
+
+Enforced by `tests/test_layer_boundaries.py`:
+
+1. **`config/`** (top): Never imports from `pipeline/` or `src/`. Pure data definitions + path helpers.
+2. **`pipeline/`** (middle): Imports `config/` freely at top level. Imports `src/` only inside functions (lazy/conditional). This prevents heavy ML dependencies from loading at import time.
+3. **`src/`** (bottom): Imports `config.constants` for shared constants. Never imports from `pipeline/`.
+
+When adding new code:
+- Constants (window sizes, feature counts, DB paths) → `config/constants.py`
+- Hyperparameters → Pydantic models in `config/schema.py`
+- Architecture defaults → YAML files in `config/models/` or `config/auxiliaries/`
+- Path helpers → `config/paths.py`
+- `from config import PipelineConfig, resolve, checkpoint_path` — use the package re-exports
 
 ## Code Style
 

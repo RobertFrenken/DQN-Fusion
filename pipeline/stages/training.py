@@ -8,8 +8,7 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
-from ..config import PipelineConfig
-from ..paths import checkpoint_path, config_path
+from config import PipelineConfig, checkpoint_path
 from ..memory import log_memory_state
 from .utils import (
     load_data,
@@ -31,7 +30,7 @@ log = logging.getLogger(__name__)
 
 def train_autoencoder(cfg: PipelineConfig) -> Path:
     """Train VGAE on graph reconstruction. Returns checkpoint path."""
-    log.info("=== AUTOENCODER: %s / %s ===", cfg.dataset, cfg.model_size)
+    log.info("=== AUTOENCODER: %s / %s_%s ===", cfg.dataset, cfg.model_type, cfg.scale)
     pl.seed_everything(cfg.seed)
 
     train_data, val_data, num_ids, in_ch = load_data(cfg)
@@ -39,8 +38,8 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
 
     # Optional KD: load teacher
     teacher, projection = None, None
-    if cfg.use_kd and cfg.teacher_path:
-        teacher = load_teacher(cfg.teacher_path, "vgae", cfg, num_ids, in_ch, device)
+    if cfg.has_kd and cfg.kd.model_path:
+        teacher = load_teacher(cfg.kd.model_path, "vgae", cfg, num_ids, in_ch, device)
         from src.models.vgae import GraphAutoencoderNeighborhood
         _tmp_student = GraphAutoencoderNeighborhood(
             num_ids=num_ids, in_channels=in_ch,
@@ -53,7 +52,7 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
 
     module = VGAEModule(cfg, num_ids, in_ch, teacher=teacher, projection=projection)
 
-    if cfg.optimize_batch_size:
+    if cfg.training.optimize_batch_size:
         bs = compute_optimal_batch_size(module.model, train_data, cfg, teacher=teacher)
     else:
         bs = effective_batch_size(cfg)
@@ -68,7 +67,6 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
     ckpt = checkpoint_path(cfg, "autoencoder")
     ckpt.parent.mkdir(parents=True, exist_ok=True)
     torch.save(module.model.state_dict(), ckpt)
-    cfg.save(config_path(cfg, "autoencoder"))
     log.info("Saved VGAE: %s", ckpt)
     cleanup()
     return ckpt
@@ -76,7 +74,7 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
 
 def train_curriculum(cfg: PipelineConfig) -> Path:
     """Train GAT with VGAE-guided curriculum learning. Returns checkpoint path."""
-    log.info("=== CURRICULUM: %s / %s ===", cfg.dataset, cfg.model_size)
+    log.info("=== CURRICULUM: %s / %s_%s ===", cfg.dataset, cfg.model_type, cfg.scale)
     pl.seed_everything(cfg.seed)
 
     train_data, val_data, num_ids, in_ch = load_data(cfg)
@@ -94,8 +92,8 @@ def train_curriculum(cfg: PipelineConfig) -> Path:
 
     # Optional KD: load teacher GAT
     teacher = None
-    if cfg.use_kd and cfg.teacher_path:
-        teacher = load_teacher(cfg.teacher_path, "gat", cfg, num_ids, in_ch, device)
+    if cfg.has_kd and cfg.kd.model_path:
+        teacher = load_teacher(cfg.kd.model_path, "gat", cfg, num_ids, in_ch, device)
 
     module = GATModule(cfg, num_ids, in_ch, teacher=teacher)
     trainer = make_trainer(cfg, "curriculum")
@@ -106,7 +104,6 @@ def train_curriculum(cfg: PipelineConfig) -> Path:
     ckpt = checkpoint_path(cfg, "curriculum")
     ckpt.parent.mkdir(parents=True, exist_ok=True)
     torch.save(module.model.state_dict(), ckpt)
-    cfg.save(config_path(cfg, "curriculum"))
     log.info("Saved GAT: %s", ckpt)
     cleanup()
     return ckpt
@@ -114,7 +111,7 @@ def train_curriculum(cfg: PipelineConfig) -> Path:
 
 def train_normal(cfg: PipelineConfig) -> Path:
     """Train GAT with standard cross-entropy (no curriculum). Returns checkpoint path."""
-    log.info("=== NORMAL: %s / %s ===", cfg.dataset, cfg.model_size)
+    log.info("=== NORMAL: %s / %s_%s ===", cfg.dataset, cfg.model_type, cfg.scale)
     pl.seed_everything(cfg.seed)
 
     train_data, val_data, num_ids, in_ch = load_data(cfg)
@@ -122,12 +119,12 @@ def train_normal(cfg: PipelineConfig) -> Path:
 
     # Optional KD: load teacher GAT
     teacher = None
-    if cfg.use_kd and cfg.teacher_path:
-        teacher = load_teacher(cfg.teacher_path, "gat", cfg, num_ids, in_ch, device)
+    if cfg.has_kd and cfg.kd.model_path:
+        teacher = load_teacher(cfg.kd.model_path, "gat", cfg, num_ids, in_ch, device)
 
     module = GATModule(cfg, num_ids, in_ch, teacher=teacher)
 
-    if cfg.optimize_batch_size:
+    if cfg.training.optimize_batch_size:
         bs = compute_optimal_batch_size(module.model, train_data, cfg, teacher=teacher)
     else:
         bs = effective_batch_size(cfg)
@@ -142,7 +139,6 @@ def train_normal(cfg: PipelineConfig) -> Path:
     ckpt = checkpoint_path(cfg, "normal")
     ckpt.parent.mkdir(parents=True, exist_ok=True)
     torch.save(module.model.state_dict(), ckpt)
-    cfg.save(config_path(cfg, "normal"))
     log.info("Saved GAT (normal): %s", ckpt)
     cleanup()
     return ckpt

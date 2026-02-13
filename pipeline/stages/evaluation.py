@@ -12,8 +12,7 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
-from ..config import PipelineConfig
-from ..paths import stage_dir, checkpoint_path, config_path, data_dir, cache_dir
+from config import PipelineConfig, stage_dir, checkpoint_path, metrics_path, data_dir, cache_dir
 from .utils import (
     load_data,
     load_vgae,
@@ -42,7 +41,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
             }
         }
     """
-    log.info("=== EVALUATION: %s / %s ===", cfg.dataset, cfg.model_size)
+    log.info("=== EVALUATION: %s / %s_%s ===", cfg.dataset, cfg.model_type, cfg.scale)
     pl.seed_everything(cfg.seed)
 
     train_data, val_data, num_ids, in_ch = load_data(cfg)
@@ -53,7 +52,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
     all_metrics: dict = {}
     test_metrics: dict = {}
 
-    # Stage names (run_id() adds _kd suffix automatically based on cfg.use_kd)
+    # Stage names (run_id() adds aux suffix automatically based on cfg.auxiliaries)
     gat_stage = "curriculum"
     vgae_stage = "autoencoder"
 
@@ -181,11 +180,10 @@ def evaluate(cfg: PipelineConfig) -> dict:
     # Save all metrics
     out = stage_dir(cfg, "evaluation")
     out.mkdir(parents=True, exist_ok=True)
-    metrics_path = out / "metrics.json"
-    metrics_path.write_text(json.dumps(all_metrics, indent=2))
-    cfg.save(config_path(cfg, "evaluation"))
+    mp = metrics_path(cfg, "evaluation")
+    mp.write_text(json.dumps(all_metrics, indent=2))
 
-    log.info("All metrics saved to %s/metrics.json", out)
+    log.info("All metrics saved to %s", mp)
     cleanup()
     return all_metrics
 
@@ -194,22 +192,13 @@ def evaluate(cfg: PipelineConfig) -> dict:
 # Inference helpers
 # ---------------------------------------------------------------------------
 
-def _graph_label(g) -> int:
-    """Extract scalar graph-level label consistently.
-
-    Deprecated: use graph_label() from utils.py instead.
-    Kept as thin wrapper to avoid changing all local call sites.
-    """
-    return graph_label(g)
-
-
 def _load_test_data(cfg: PipelineConfig) -> dict:
     """Load held-out test graphs per scenario."""
     from src.preprocessing.preprocessing import graph_creation
 
     mapping_file = cache_dir(cfg) / "id_mapping.pkl"
     if not mapping_file.exists():
-        log.warning("No id_mapping at %s — skipping test data", mapping_file)
+        log.warning("No id_mapping at %s -- skipping test data", mapping_file)
         return {}
 
     with open(mapping_file, "rb") as f:
@@ -217,7 +206,7 @@ def _load_test_data(cfg: PipelineConfig) -> dict:
 
     ds_path = data_dir(cfg)
     if not ds_path.exists():
-        log.warning("Dataset path %s not found — skipping test data", ds_path)
+        log.warning("Dataset path %s not found -- skipping test data", ds_path)
         return {}
 
     scenarios: dict[str, list] = {}
@@ -245,7 +234,7 @@ def _run_gat_inference(gat, data, device):
             logits = gat(g)
             probs = F.softmax(logits, dim=1)
             preds.append(logits.argmax(1)[0].item())
-            labels.append(_graph_label(g))
+            labels.append(graph_label(g))
             scores.append(probs[0, 1].item())
     return np.array(preds), np.array(labels), np.array(scores)
 
@@ -261,7 +250,7 @@ def _run_vgae_inference(vgae, data, device):
             cont, canid_logits, _, _, _ = vgae(g.x, g.edge_index, batch_idx)
             err = F.mse_loss(cont, g.x[:, 1:]).item()
             errors.append(err)
-            labels.append(_graph_label(g))
+            labels.append(graph_label(g))
     return np.array(errors), np.array(labels)
 
 

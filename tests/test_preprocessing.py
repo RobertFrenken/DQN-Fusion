@@ -12,6 +12,7 @@ import unittest
 import numpy as np
 import torch
 
+from config.constants import NODE_FEATURE_COUNT, EDGE_FEATURE_COUNT
 from src.preprocessing.preprocessing import (
     safe_hex_to_int,
     apply_dynamic_id_mapping,
@@ -20,8 +21,6 @@ from src.preprocessing.preprocessing import (
     find_csv_files,
     graph_creation,
     GraphDataset,
-    NODE_FEATURE_COUNT,
-    EDGE_FEATURE_COUNT,
 )
 from torch_geometric.data import Data
 

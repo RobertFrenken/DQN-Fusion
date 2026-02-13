@@ -1,10 +1,9 @@
 # ===========================================================================
 # KD-GAT Pipeline Orchestration
 #
-# Path layout (simplified): {EXP}/{ds}/{size}_{stage}[_kd]
-#
-# Before: 8 levels (modality/dataset/size/learning/arch/distill/mode)
-# After:  2 levels (dataset/run_name)
+# Path layout: {EXPERIMENT_ROOT}/{ds}/{model}_{scale}_{stage}[_{aux}]
+# All path logic imported from config/paths.py (single source of truth).
+# SLURM config imported from config/constants.py (env-overridable).
 #
 # All datasets:
 #   snakemake -s pipeline/Snakefile --profile profiles/slurm --jobs 20
@@ -19,20 +18,24 @@
 #   snakemake -s pipeline/Snakefile --dag | dot -Tpdf > dag.pdf
 # ===========================================================================
 
-import yaml as _yaml
-with open("data/datasets.yaml") as _f:
-    ALL_DATASETS = list(_yaml.safe_load(_f).keys())
+from config.paths import (
+    get_datasets, EXPERIMENT_ROOT,
+    checkpoint_path_str, metrics_path_str, benchmark_path_str, log_path_str,
+)
+from config.constants import SLURM_ACCOUNT, SLURM_PARTITION, SLURM_GPU_TYPE
+
+ALL_DATASETS = get_datasets()
 DATASETS     = config.get("datasets", ALL_DATASETS)
-EXP       = "experimentruns"
 import os as _os, sys as _sys
 PY        = _os.environ.get("KD_GAT_PYTHON", _sys.executable)
 CLI       = f"{PY} -m pipeline.cli"
 
-# Helper: build canonical checkpoint path (2-level structure)
-# {EXP}/{ds}/{size}_{stage}[_kd]/best_model.pt
-def _p(ds, size, stage, kd=False):
-    suffix = "_kd" if kd else ""
-    return f"{EXP}/{ds}/{size}_{stage}{suffix}/best_model.pt"
+# Short aliases for rule definitions
+# New signatures: (dataset, model_type, scale, stage, aux="")
+_ckpt    = checkpoint_path_str
+_metrics = metrics_path_str
+_bench   = benchmark_path_str
+_log     = log_path_str
 
 # Pre-initialize MLflow DB on the login node before any SLURM jobs start.
 # Prevents race condition when multiple jobs try to CREATE TABLE concurrently.
@@ -50,263 +53,255 @@ onsuccess:
 
 rule all:
     input:
-        # Teacher pipeline
-        expand(_p("{ds}", "teacher", "fusion"), ds=DATASETS),
-        # Student with KD
-        expand(_p("{ds}", "student", "fusion", kd=True), ds=DATASETS),
-        # Student without KD (ablation)
-        expand(_p("{ds}", "student", "fusion"), ds=DATASETS),
+        # Large pipeline
+        expand(_ckpt("{ds}", "dqn", "large", "fusion"), ds=DATASETS),
+        # Small with KD
+        expand(_ckpt("{ds}", "dqn", "small", "fusion", aux="kd"), ds=DATASETS),
+        # Small without KD (ablation)
+        expand(_ckpt("{ds}", "dqn", "small", "fusion"), ds=DATASETS),
 
-rule teachers:
+rule large:
     input:
-        expand(_p("{ds}", "teacher", "fusion"), ds=DATASETS),
+        expand(_ckpt("{ds}", "dqn", "large", "fusion"), ds=DATASETS),
 
-rule students:
+rule small_kd:
     input:
-        expand(_p("{ds}", "student", "fusion", kd=True), ds=DATASETS),
+        expand(_ckpt("{ds}", "dqn", "small", "fusion", aux="kd"), ds=DATASETS),
 
-rule students_nokd:
+rule small_nokd:
     input:
-        expand(_p("{ds}", "student", "fusion"), ds=DATASETS),
+        expand(_ckpt("{ds}", "dqn", "small", "fusion"), ds=DATASETS),
 
 rule evaluate_all:
     input:
-        expand(EXP + "/{ds}/teacher_evaluation/metrics.json", ds=DATASETS),
-        expand(EXP + "/{ds}/student_evaluation_kd/metrics.json", ds=DATASETS),
-        expand(EXP + "/{ds}/student_evaluation/metrics.json", ds=DATASETS),
+        expand(_metrics("{ds}", "vgae", "large", "evaluation"), ds=DATASETS),
+        expand(_metrics("{ds}", "vgae", "small", "evaluation", aux="kd"), ds=DATASETS),
+        expand(_metrics("{ds}", "vgae", "small", "evaluation"), ds=DATASETS),
 
 # ---------------------------------------------------------------------------
 # SLURM resource defaults
 # ---------------------------------------------------------------------------
 
-_TRAIN_RES = dict(
-    time_min=360, mem_mb=128000, cpus_per_task=16, gpus=1, gpu_type="v100",
-    slurm_account="PAS3209", slurm_partition="gpu",
-)
-_EVAL_RES = dict(
-    time_min=120, mem_mb=32000, cpus_per_task=8, gpus=1, gpu_type="v100",
-    slurm_account="PAS3209", slurm_partition="gpu",
-)
+_SLURM = dict(slurm_account=SLURM_ACCOUNT, slurm_partition=SLURM_PARTITION, gpu_type=SLURM_GPU_TYPE)
+_TRAIN_RES = dict(time_min=360, mem_mb=128000, cpus_per_task=16, gpus=1, **_SLURM)
+_EVAL_RES = dict(time_min=120, mem_mb=32000, cpus_per_task=8, gpus=1, **_SLURM)
 
 # ===========================================================================
-# Teacher pipeline  (no KD dependencies, runs first)
+# Large pipeline  (no KD dependencies, runs first)
 # ===========================================================================
 
-rule vgae_teacher:
+rule vgae_large:
     output:
-        _p("{ds}", "teacher", "autoencoder"),
+        _ckpt("{ds}", "vgae", "large", "autoencoder"),
     benchmark:
-        EXP + "/{ds}/teacher_autoencoder/benchmark.tsv"
+        _bench("{ds}", "vgae", "large", "autoencoder")
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/{ds}/teacher_autoencoder/slurm.out",
-        err=EXP + "/{ds}/teacher_autoencoder/slurm.err",
+        out=_log("{ds}", "vgae", "large", "autoencoder"),
+        err=_log("{ds}", "vgae", "large", "autoencoder", stream="err"),
     shell:
-        CLI + " autoencoder --preset vgae,teacher --dataset {wildcards.ds}"
+        CLI + " autoencoder --model vgae --scale large --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
-rule gat_teacher:
+rule gat_large:
     input:
-        vgae=_p("{ds}", "teacher", "autoencoder"),
+        vgae=_ckpt("{ds}", "vgae", "large", "autoencoder"),
     output:
-        _p("{ds}", "teacher", "curriculum"),
+        _ckpt("{ds}", "gat", "large", "curriculum"),
     benchmark:
-        EXP + "/{ds}/teacher_curriculum/benchmark.tsv"
+        _bench("{ds}", "gat", "large", "curriculum")
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/{ds}/teacher_curriculum/slurm.out",
-        err=EXP + "/{ds}/teacher_curriculum/slurm.err",
+        out=_log("{ds}", "gat", "large", "curriculum"),
+        err=_log("{ds}", "gat", "large", "curriculum", stream="err"),
     shell:
-        CLI + " curriculum --preset gat,teacher --dataset {wildcards.ds}"
+        CLI + " curriculum --model gat --scale large --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
-rule dqn_teacher:
+rule dqn_large:
     input:
-        vgae=_p("{ds}", "teacher", "autoencoder"),
-        gat=_p("{ds}", "teacher", "curriculum"),
+        vgae=_ckpt("{ds}", "vgae", "large", "autoencoder"),
+        gat=_ckpt("{ds}", "gat", "large", "curriculum"),
     output:
-        _p("{ds}", "teacher", "fusion"),
+        _ckpt("{ds}", "dqn", "large", "fusion"),
     benchmark:
-        EXP + "/{ds}/teacher_fusion/benchmark.tsv"
+        _bench("{ds}", "dqn", "large", "fusion")
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/{ds}/teacher_fusion/slurm.out",
-        err=EXP + "/{ds}/teacher_fusion/slurm.err",
+        out=_log("{ds}", "dqn", "large", "fusion"),
+        err=_log("{ds}", "dqn", "large", "fusion", stream="err"),
     shell:
-        CLI + " fusion --preset dqn,teacher --dataset {wildcards.ds}"
+        CLI + " fusion --model dqn --scale large --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
 # ===========================================================================
-# Student with KD  (each stage depends on teacher counterpart)
+# Small with KD  (each stage depends on large counterpart)
 # ===========================================================================
 
-rule vgae_student:
+rule vgae_small_kd:
     input:
-        teacher=_p("{ds}", "teacher", "autoencoder"),
+        teacher=_ckpt("{ds}", "vgae", "large", "autoencoder"),
     output:
-        _p("{ds}", "student", "autoencoder", kd=True),
+        _ckpt("{ds}", "vgae", "small", "autoencoder", aux="kd"),
     benchmark:
-        EXP + "/{ds}/student_autoencoder_kd/benchmark.tsv"
+        _bench("{ds}", "vgae", "small", "autoencoder", aux="kd")
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/{ds}/student_autoencoder_kd/slurm.out",
-        err=EXP + "/{ds}/student_autoencoder_kd/slurm.err",
+        out=_log("{ds}", "vgae", "small", "autoencoder", aux="kd"),
+        err=_log("{ds}", "vgae", "small", "autoencoder", aux="kd", stream="err"),
     shell:
-        CLI + " autoencoder --preset vgae,student --dataset {wildcards.ds}"
-        " --teacher-path {input.teacher} --use-kd true"
+        CLI + " autoencoder --model vgae --scale small --auxiliaries kd_standard"
+        " --teacher-path {input.teacher} --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
-rule gat_student:
+rule gat_small_kd:
     input:
-        teacher=_p("{ds}", "teacher", "curriculum"),
-        vgae=_p("{ds}", "student", "autoencoder", kd=True),
+        teacher=_ckpt("{ds}", "gat", "large", "curriculum"),
+        vgae=_ckpt("{ds}", "vgae", "small", "autoencoder", aux="kd"),
     output:
-        _p("{ds}", "student", "curriculum", kd=True),
+        _ckpt("{ds}", "gat", "small", "curriculum", aux="kd"),
     benchmark:
-        EXP + "/{ds}/student_curriculum_kd/benchmark.tsv"
+        _bench("{ds}", "gat", "small", "curriculum", aux="kd")
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/{ds}/student_curriculum_kd/slurm.out",
-        err=EXP + "/{ds}/student_curriculum_kd/slurm.err",
+        out=_log("{ds}", "gat", "small", "curriculum", aux="kd"),
+        err=_log("{ds}", "gat", "small", "curriculum", aux="kd", stream="err"),
     shell:
-        CLI + " curriculum --preset gat,student --dataset {wildcards.ds}"
-        " --teacher-path {input.teacher} --use-kd true"
+        CLI + " curriculum --model gat --scale small --auxiliaries kd_standard"
+        " --teacher-path {input.teacher} --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
-rule dqn_student:
+rule dqn_small_kd:
     input:
-        teacher=_p("{ds}", "teacher", "fusion"),
-        vgae=_p("{ds}", "student", "autoencoder", kd=True),
-        gat=_p("{ds}", "student", "curriculum", kd=True),
+        teacher=_ckpt("{ds}", "dqn", "large", "fusion"),
+        vgae=_ckpt("{ds}", "vgae", "small", "autoencoder", aux="kd"),
+        gat=_ckpt("{ds}", "gat", "small", "curriculum", aux="kd"),
     output:
-        _p("{ds}", "student", "fusion", kd=True),
+        _ckpt("{ds}", "dqn", "small", "fusion", aux="kd"),
     benchmark:
-        EXP + "/{ds}/student_fusion_kd/benchmark.tsv"
+        _bench("{ds}", "dqn", "small", "fusion", aux="kd")
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/{ds}/student_fusion_kd/slurm.out",
-        err=EXP + "/{ds}/student_fusion_kd/slurm.err",
+        out=_log("{ds}", "dqn", "small", "fusion", aux="kd"),
+        err=_log("{ds}", "dqn", "small", "fusion", aux="kd", stream="err"),
     shell:
-        CLI + " fusion --preset dqn,student --dataset {wildcards.ds}"
-        " --teacher-path {input.teacher} --use-kd true"
+        CLI + " fusion --model dqn --scale small --auxiliaries kd_standard"
+        " --teacher-path {input.teacher} --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
 # ===========================================================================
-# Student without KD  (ablation — no teacher dependency)
+# Small without KD  (ablation -- no teacher dependency)
 # ===========================================================================
 
-rule vgae_student_nokd:
+rule vgae_small_nokd:
     output:
-        _p("{ds}", "student", "autoencoder"),
+        _ckpt("{ds}", "vgae", "small", "autoencoder"),
     benchmark:
-        EXP + "/{ds}/student_autoencoder/benchmark.tsv"
+        _bench("{ds}", "vgae", "small", "autoencoder")
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/{ds}/student_autoencoder/slurm.out",
-        err=EXP + "/{ds}/student_autoencoder/slurm.err",
+        out=_log("{ds}", "vgae", "small", "autoencoder"),
+        err=_log("{ds}", "vgae", "small", "autoencoder", stream="err"),
     shell:
-        CLI + " autoencoder --preset vgae,student --dataset {wildcards.ds}"
-        " --use-kd false"
+        CLI + " autoencoder --model vgae --scale small --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
-rule gat_student_nokd:
+rule gat_small_nokd:
     input:
-        vgae=_p("{ds}", "student", "autoencoder"),
+        vgae=_ckpt("{ds}", "vgae", "small", "autoencoder"),
     output:
-        _p("{ds}", "student", "curriculum"),
+        _ckpt("{ds}", "gat", "small", "curriculum"),
     benchmark:
-        EXP + "/{ds}/student_curriculum/benchmark.tsv"
+        _bench("{ds}", "gat", "small", "curriculum")
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/{ds}/student_curriculum/slurm.out",
-        err=EXP + "/{ds}/student_curriculum/slurm.err",
+        out=_log("{ds}", "gat", "small", "curriculum"),
+        err=_log("{ds}", "gat", "small", "curriculum", stream="err"),
     shell:
-        CLI + " curriculum --preset gat,student --dataset {wildcards.ds}"
-        " --use-kd false"
+        CLI + " curriculum --model gat --scale small --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
-rule dqn_student_nokd:
+rule dqn_small_nokd:
     input:
-        vgae=_p("{ds}", "student", "autoencoder"),
-        gat=_p("{ds}", "student", "curriculum"),
+        vgae=_ckpt("{ds}", "vgae", "small", "autoencoder"),
+        gat=_ckpt("{ds}", "gat", "small", "curriculum"),
     output:
-        _p("{ds}", "student", "fusion"),
+        _ckpt("{ds}", "dqn", "small", "fusion"),
     benchmark:
-        EXP + "/{ds}/student_fusion/benchmark.tsv"
+        _bench("{ds}", "dqn", "small", "fusion")
     resources: **_TRAIN_RES,
     log:
-        out=EXP + "/{ds}/student_fusion/slurm.out",
-        err=EXP + "/{ds}/student_fusion/slurm.err",
+        out=_log("{ds}", "dqn", "small", "fusion"),
+        err=_log("{ds}", "dqn", "small", "fusion", stream="err"),
     shell:
-        CLI + " fusion --preset dqn,student --dataset {wildcards.ds}"
-        " --use-kd false"
+        CLI + " fusion --model dqn --scale small --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
 # ===========================================================================
 # Evaluation  (one rule per pipeline variant)
 # ===========================================================================
 
-rule eval_teacher:
+rule eval_large:
     input:
-        vgae=_p("{ds}", "teacher", "autoencoder"),
-        gat=_p("{ds}", "teacher", "curriculum"),
-        dqn=_p("{ds}", "teacher", "fusion"),
+        vgae=_ckpt("{ds}", "vgae", "large", "autoencoder"),
+        gat=_ckpt("{ds}", "gat", "large", "curriculum"),
+        dqn=_ckpt("{ds}", "dqn", "large", "fusion"),
     output:
         report(
-            EXP + "/{ds}/teacher_evaluation/metrics.json",
+            _metrics("{ds}", "vgae", "large", "evaluation"),
             category="Evaluation",
-            caption="Teacher evaluation metrics for dataset {ds}",
+            caption="Large model evaluation metrics for dataset {ds}",
         ),
     benchmark:
-        EXP + "/{ds}/teacher_evaluation/benchmark.tsv"
+        _bench("{ds}", "vgae", "large", "evaluation")
     resources: **_EVAL_RES,
     log:
-        out=EXP + "/{ds}/teacher_evaluation/slurm.out",
-        err=EXP + "/{ds}/teacher_evaluation/slurm.err",
+        out=_log("{ds}", "vgae", "large", "evaluation"),
+        err=_log("{ds}", "vgae", "large", "evaluation", stream="err"),
     shell:
-        CLI + " evaluation --dataset {wildcards.ds} --model-size teacher"
+        CLI + " evaluation --model vgae --scale large --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
-rule eval_student:
+rule eval_small_kd:
     input:
-        vgae=_p("{ds}", "student", "autoencoder", kd=True),
-        gat=_p("{ds}", "student", "curriculum", kd=True),
-        dqn=_p("{ds}", "student", "fusion", kd=True),
+        vgae=_ckpt("{ds}", "vgae", "small", "autoencoder", aux="kd"),
+        gat=_ckpt("{ds}", "gat", "small", "curriculum", aux="kd"),
+        dqn=_ckpt("{ds}", "dqn", "small", "fusion", aux="kd"),
     output:
         report(
-            EXP + "/{ds}/student_evaluation_kd/metrics.json",
+            _metrics("{ds}", "vgae", "small", "evaluation", aux="kd"),
             category="Evaluation",
-            caption="Student+KD evaluation metrics for dataset {ds}",
+            caption="Small+KD evaluation metrics for dataset {ds}",
         ),
     benchmark:
-        EXP + "/{ds}/student_evaluation_kd/benchmark.tsv"
+        _bench("{ds}", "vgae", "small", "evaluation", aux="kd")
     resources: **_EVAL_RES,
     log:
-        out=EXP + "/{ds}/student_evaluation_kd/slurm.out",
-        err=EXP + "/{ds}/student_evaluation_kd/slurm.err",
+        out=_log("{ds}", "vgae", "small", "evaluation", aux="kd"),
+        err=_log("{ds}", "vgae", "small", "evaluation", aux="kd", stream="err"),
     shell:
-        CLI + " evaluation --dataset {wildcards.ds} --model-size student --use-kd true"
+        CLI + " evaluation --model vgae --scale small --auxiliaries kd_standard --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
-rule eval_student_nokd:
+rule eval_small_nokd:
     input:
-        vgae=_p("{ds}", "student", "autoencoder"),
-        gat=_p("{ds}", "student", "curriculum"),
-        dqn=_p("{ds}", "student", "fusion"),
+        vgae=_ckpt("{ds}", "vgae", "small", "autoencoder"),
+        gat=_ckpt("{ds}", "gat", "small", "curriculum"),
+        dqn=_ckpt("{ds}", "dqn", "small", "fusion"),
     output:
         report(
-            EXP + "/{ds}/student_evaluation/metrics.json",
+            _metrics("{ds}", "vgae", "small", "evaluation"),
             category="Evaluation",
-            caption="Student (no KD) evaluation metrics for dataset {ds}",
+            caption="Small (no KD) evaluation metrics for dataset {ds}",
         ),
     benchmark:
-        EXP + "/{ds}/student_evaluation/benchmark.tsv"
+        _bench("{ds}", "vgae", "small", "evaluation")
     resources: **_EVAL_RES,
     log:
-        out=EXP + "/{ds}/student_evaluation/slurm.out",
-        err=EXP + "/{ds}/student_evaluation/slurm.err",
+        out=_log("{ds}", "vgae", "small", "evaluation"),
+        err=_log("{ds}", "vgae", "small", "evaluation", stream="err"),
     shell:
-        CLI + " evaluation --dataset {wildcards.ds} --model-size student"
+        CLI + " evaluation --model vgae --scale small --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
 
 # ---------------------------------------------------------------------------
@@ -315,12 +310,12 @@ rule eval_student_nokd:
 
 rule notebook_report:
     input:
-        EXP + "/{ds}/teacher_evaluation/metrics.json",
+        _metrics("{ds}", "vgae", "large", "evaluation"),
     output:
-        EXP + "/{ds}/report/analysis.ipynb",
+        EXPERIMENT_ROOT + "/{ds}/report/analysis.ipynb",
     resources:
         time_min=30, mem_mb=8000, cpus_per_task=4, gpus=0,
-        slurm_account="PAS3209", slurm_partition="serial",
+        slurm_account=SLURM_ACCOUNT, slurm_partition="serial",
     shell:
         PY + " -m papermill notebooks/03_analytics.ipynb {output} -p dataset {wildcards.ds}"
 
@@ -329,7 +324,7 @@ rule notebook_report:
 # ---------------------------------------------------------------------------
 
 rule clean_logs:
-    shell: "find {EXP} -name 'slurm.*' -delete"
+    shell: "find {EXPERIMENT_ROOT} -name 'slurm.*' -delete"
 
 rule clean_all:
-    shell: "rm -rf {EXP}"
+    shell: "rm -rf {EXPERIMENT_ROOT}"

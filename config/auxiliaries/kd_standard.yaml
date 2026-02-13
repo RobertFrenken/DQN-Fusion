@@ -1,0 +1,7 @@
+# Standard knowledge distillation
+auxiliaries:
+  - type: kd
+    temperature: 4.0
+    alpha: 0.7
+    vgae_latent_weight: 0.5
+    vgae_recon_weight: 0.5

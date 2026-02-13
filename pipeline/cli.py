@@ -1,9 +1,9 @@
-"""Single CLI entry point. Replaces train_with_hydra_zen.py + src/cli/main.py.
+"""Single CLI entry point.
 
 Usage:
-    python -m pipeline.cli autoencoder --dataset hcrl_ch --model-size teacher
-    python -m pipeline.cli curriculum  --config path/to/config.json
-    python -m pipeline.cli fusion      --preset dqn,teacher --dataset hcrl_ch
+    python -m pipeline.cli autoencoder --model vgae --scale large --dataset hcrl_ch
+    python -m pipeline.cli curriculum  --model gat --scale small --auxiliaries kd_standard --dataset hcrl_sa
+    python -m pipeline.cli fusion      --config path/to/config.json
 """
 from __future__ import annotations
 
@@ -12,17 +12,15 @@ import torch.multiprocessing as mp
 # Prevents "Cannot re-initialize CUDA in forked subprocess" errors
 # when DataLoader workers collate tensors after CUDA has been initialized
 # in the main process (e.g. by _score_difficulty in the curriculum stage).
-# Default matches PipelineConfig.mp_start_method; override via --mp-start-method.
 mp.set_start_method('spawn', force=True)
 
 import argparse
 import json
 import logging
-from dataclasses import fields as dc_fields, asdict, replace
 from pathlib import Path
 
-from .config import PipelineConfig
-from .paths import STAGES, config_path, run_id
+from config import PipelineConfig, STAGES, config_path, run_id
+from config.resolver import resolve
 from .validate import validate
 from .tracking import start_run, end_run, log_failure, log_run_artifacts
 from .db import record_run_start, record_run_end
@@ -48,28 +46,55 @@ def _build_parser() -> argparse.ArgumentParser:
         "--config", type=Path, default=None,
         help="Load a frozen config JSON (e.g. from a previous run)",
     )
-    src.add_argument(
-        "--preset", type=str, default=None,
-        help="Preset key as 'model,size' (e.g. gat,teacher)",
-    )
 
-    # Every PipelineConfig field becomes an optional override
-    for f in dc_fields(PipelineConfig):
-        flag = f"--{f.name.replace('_', '-')}"
-        default_val = f.default
+    # Identity flags (used by resolver)
+    p.add_argument("--model", type=str, default="vgae", help="Model type: vgae, gat, dqn")
+    p.add_argument("--scale", type=str, default="large", help="Model scale: large, small")
+    p.add_argument("--auxiliaries", type=str, default="none", help="Auxiliary config: none, kd_standard")
+    p.add_argument("--dataset", type=str, default=None)
+    p.add_argument("--seed", type=int, default=None)
 
-        if isinstance(default_val, bool):
-            p.add_argument(flag, type=_parse_bool, default=None, metavar="BOOL")
-        elif isinstance(default_val, tuple):
-            p.add_argument(flag, type=int, nargs="+", default=None)
-        elif isinstance(default_val, int):
-            p.add_argument(flag, type=int, default=None)
-        elif isinstance(default_val, float):
-            p.add_argument(flag, type=float, default=None)
-        else:
-            p.add_argument(flag, type=str, default=None)
+    # Infrastructure overrides
+    p.add_argument("--experiment-root", type=str, default=None)
+    p.add_argument("--device", type=str, default=None)
+    p.add_argument("--num-workers", type=int, default=None)
+    p.add_argument("--mp-start-method", type=str, default=None)
+    p.add_argument("--run-test", type=_parse_bool, default=None)
+
+    # KD shorthand: --teacher-path sets auxiliaries + model_path
+    p.add_argument("--teacher-path", type=str, default=None,
+                    help="Shorthand: implies kd_standard aux with given model_path")
+
+    # Nested overrides via dot-path: --training.lr 0.001, --vgae.latent-dim 16
+    p.add_argument("--override", "-O", nargs=2, action="append", default=[],
+                    metavar=("KEY", "VALUE"),
+                    help="Nested override as 'section.field value' (e.g. -O training.lr 0.001)")
 
     return p
+
+
+def _parse_dot_overrides(pairs: list[list[str]]) -> dict:
+    """Parse -O key value pairs into a nested dict."""
+    result: dict = {}
+    for key, value in pairs:
+        parts = key.replace("-", "_").split(".")
+        # Auto-coerce types
+        try:
+            typed_value: object = int(value)
+        except ValueError:
+            try:
+                typed_value = float(value)
+            except ValueError:
+                if value.lower() in ("true", "false"):
+                    typed_value = value.lower() == "true"
+                else:
+                    typed_value = value
+
+        d = result
+        for p in parts[:-1]:
+            d = d.setdefault(p, {})
+        d[parts[-1]] = typed_value
+    return result
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -86,24 +111,39 @@ def main(argv: list[str] | None = None) -> None:
     if args.config:
         cfg = PipelineConfig.load(args.config)
         log.info("Loaded frozen config: %s", args.config)
-    elif args.preset:
-        model, size = [s.strip() for s in args.preset.split(",")]
-        cfg = PipelineConfig.from_preset(model, size)
-        log.info("Using preset: %s, %s", model, size)
     else:
-        cfg = PipelineConfig()
+        # Build overrides dict
+        overrides: dict = {}
+        if args.dataset:
+            overrides["dataset"] = args.dataset
+        if args.seed is not None:
+            overrides["seed"] = args.seed
+        if args.experiment_root:
+            overrides["experiment_root"] = args.experiment_root
+        if args.device:
+            overrides["device"] = args.device
+        if args.num_workers is not None:
+            overrides["num_workers"] = args.num_workers
+        if args.mp_start_method:
+            overrides["mp_start_method"] = args.mp_start_method
+        if args.run_test is not None:
+            overrides["run_test"] = args.run_test
 
-    # ---- Apply CLI overrides ----
-    overrides: dict = {}
-    for f in dc_fields(PipelineConfig):
-        # argparse stores with underscores
-        val = getattr(args, f.name, None)
-        if val is not None:
-            overrides[f.name] = tuple(val) if isinstance(val, list) else val
+        # Handle --teacher-path shorthand
+        aux_name = args.auxiliaries
+        if args.teacher_path:
+            if aux_name == "none":
+                aux_name = "kd_standard"
+            overrides.setdefault("auxiliaries", [{"type": "kd", "model_path": args.teacher_path}])
 
-    if overrides:
-        cfg = replace(cfg, **overrides)
-        log.info("Applied %d CLI overrides: %s", len(overrides), list(overrides.keys()))
+        # Parse dot-path overrides
+        dot_overrides = _parse_dot_overrides(args.override)
+        if dot_overrides:
+            from config.resolver import _deep_merge
+            _deep_merge(overrides, dot_overrides)
+
+        cfg = resolve(args.model, args.scale, auxiliaries=aux_name, **overrides)
+        log.info("Resolved config: model=%s, scale=%s, aux=%s", args.model, args.scale, aux_name)
 
     # ---- Validate ----
     validate(cfg, args.stage)
@@ -120,9 +160,9 @@ def main(argv: list[str] | None = None) -> None:
 
     # ---- Record run start in project DB ----
     record_run_start(
-        run_id=run_name, dataset=cfg.dataset, model_size=cfg.model_size,
-        stage=args.stage, use_kd=cfg.use_kd,
-        config_json=json.dumps(asdict(cfg), indent=2),
+        run_id=run_name, dataset=cfg.dataset, model_type=cfg.model_type,
+        scale=cfg.scale, stage=args.stage, has_kd=cfg.has_kd,
+        config_json=cfg.model_dump_json(indent=2),
     )
 
     # ---- Dispatch ----
@@ -132,7 +172,7 @@ def main(argv: list[str] | None = None) -> None:
         log.info("Stage '%s' complete. Result: %s", args.stage, result)
 
         # ---- Log artifacts and results to MLflow ----
-        from .paths import stage_dir
+        from config import stage_dir
         log_run_artifacts(stage_dir(cfg, args.stage))
         end_run(result if isinstance(result, dict) else None, success=True)
         record_run_end(run_name, success=True,
