@@ -28,6 +28,17 @@ class QNetwork(nn.Module):
         layers.append(nn.Linear(in_dim, action_dim))
         self.net = nn.Sequential(*layers)
         
+    @classmethod
+    def from_config(cls, cfg) -> "QNetwork":
+        """Construct from a PipelineConfig."""
+        from .registry import fusion_state_dim
+        return cls(
+            state_dim=fusion_state_dim(),
+            action_dim=cfg.fusion.alpha_steps,
+            hidden_dim=cfg.dqn.hidden,
+            num_layers=cfg.dqn.layers,
+        )
+
     def forward(self, x):
         return self.net(x)
 
@@ -39,8 +50,8 @@ class EnhancedDQNFusionAgent:
     
     def __init__(self, alpha_steps=21, lr=1e-3, gamma=0.9, epsilon=0.2,
                  epsilon_decay=0.995, min_epsilon=0.01, buffer_size=50000,
-                 batch_size=128, target_update_freq=100, device='cpu', state_dim=15,
-                 hidden_dim=128, num_layers=3):
+                 batch_size=128, target_update_freq=100, device='cpu', *,
+                 state_dim, hidden_dim=128, num_layers=3):
 
         # Action and state space
         self.alpha_values = np.linspace(0, 1, alpha_steps)
@@ -87,27 +98,26 @@ class EnhancedDQNFusionAgent:
 
     def normalize_state(self, state_features: np.ndarray) -> np.ndarray:
         """
-        Normalize 15D state representation.
+        Normalize state representation.
 
-        Args:
-            state_features: [15] array with:
-                [0:3] - VGAE errors (node, neighbor, canid)
-                [3:7] - VGAE latent stats (mean, std, max, min)
-                [7] - VGAE confidence
-                [8:10] - GAT logits (class 0, class 1)
-                [10:14] - GAT embedding stats (mean, std, max, min)
-                [14] - GAT confidence
+        Default 15-D layout (VGAE 8-D + GAT 7-D):
+            [0:3] - VGAE errors (node, neighbor, canid)
+            [3:7] - VGAE latent stats (mean, std, max, min)
+            [7] - VGAE confidence
+            [8:10] - GAT logits (class 0, class 1)
+            [10:14] - GAT embedding stats (mean, std, max, min)
+            [14] - GAT confidence
 
         Returns:
-            Normalized 15D state as float32 array
+            Normalized state as float32 array
         """
         # Ensure input is numpy array
         if not isinstance(state_features, np.ndarray):
             state_features = np.array(state_features, dtype=np.float32)
 
         # Validate dimensions
-        if len(state_features) != 15:
-            raise ValueError(f"Expected 15D state, got {len(state_features)}D")
+        if len(state_features) != self.state_dim:
+            raise ValueError(f"Expected {self.state_dim}D state, got {len(state_features)}D")
 
         # Avoid mutating caller's array
         state_features = state_features.copy()

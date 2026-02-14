@@ -8,8 +8,8 @@ import mlflow
 import torch
 import pytorch_lightning as pl
 
-from config import PipelineConfig, stage_dir, checkpoint_path
-from .utils import load_data, load_vgae, load_gat, cache_predictions, cleanup
+from config import PipelineConfig, stage_dir, checkpoint_path, config_path
+from .utils import load_data, load_model, cache_predictions, cleanup
 
 log = logging.getLogger(__name__)
 
@@ -27,18 +27,20 @@ def train_fusion(cfg: PipelineConfig) -> Path:
     gat_stage = "curriculum"
 
     # Load frozen VGAE + GAT
-    vgae = load_vgae(cfg, num_ids, in_ch, device, stage=vgae_stage)
-    gat = load_gat(cfg, num_ids, in_ch, device, stage=gat_stage)
+    vgae = load_model(cfg, "vgae", vgae_stage, num_ids, in_ch, device)
+    gat = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
 
     # Cache predictions
     log.info("Caching VGAE + GAT predictions ...")
-    train_cache = cache_predictions(vgae, gat, train_data, device, cfg.fusion.max_samples)
-    val_cache = cache_predictions(vgae, gat, val_data, device, cfg.fusion.max_val_samples)
+    models = {"vgae": vgae, "gat": gat}
+    train_cache = cache_predictions(models, train_data, device, cfg.fusion.max_samples)
+    val_cache = cache_predictions(models, val_data, device, cfg.fusion.max_val_samples)
     del vgae, gat
     cleanup()
 
     # DQN agent
     from src.models.dqn import EnhancedDQNFusionAgent
+    from src.models.registry import fusion_state_dim
 
     agent = EnhancedDQNFusionAgent(
         lr=cfg.fusion.lr, gamma=cfg.dqn.gamma,
@@ -46,6 +48,7 @@ def train_fusion(cfg: PipelineConfig) -> Path:
         min_epsilon=cfg.dqn.min_epsilon,
         buffer_size=cfg.dqn.buffer_size, batch_size=cfg.dqn.batch_size,
         target_update_freq=cfg.dqn.target_update, device=str(device),
+        state_dim=fusion_state_dim(),
         hidden_dim=cfg.dqn.hidden, num_layers=cfg.dqn.layers,
     )
 
@@ -108,6 +111,7 @@ def train_fusion(cfg: PipelineConfig) -> Path:
             "epsilon": agent.epsilon,
         }, ckpt)
 
+    cfg.save(config_path(cfg, "fusion"))
     log.info("Saved DQN: %s (best_acc=%.4f)", ckpt, best_acc)
     cleanup()
     return ckpt

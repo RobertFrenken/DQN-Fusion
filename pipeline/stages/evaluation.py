@@ -12,15 +12,15 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
-from config import PipelineConfig, stage_dir, checkpoint_path, metrics_path, data_dir, cache_dir
+from config import PipelineConfig, stage_dir, metrics_path, data_dir, cache_dir
 from .utils import (
     load_data,
-    load_vgae,
-    load_gat,
+    load_model,
     load_frozen_cfg,
     cache_predictions,
     cleanup,
     graph_label,
+    _cross_model_path,
 )
 
 log = logging.getLogger(__name__)
@@ -57,9 +57,9 @@ def evaluate(cfg: PipelineConfig) -> dict:
     vgae_stage = "autoencoder"
 
     # ---- GAT evaluation ----
-    gat_ckpt = checkpoint_path(cfg, gat_stage)
+    gat_ckpt = _cross_model_path(cfg, "gat", gat_stage, "best_model.pt")
     if gat_ckpt.exists():
-        gat = load_gat(cfg, num_ids, in_ch, device, stage=gat_stage)
+        gat = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
 
         p, l, s = _run_gat_inference(gat, val_data, device)
         all_metrics["gat"] = _compute_metrics(l, p, s)
@@ -81,9 +81,9 @@ def evaluate(cfg: PipelineConfig) -> dict:
         cleanup()
 
     # ---- VGAE evaluation ----
-    vgae_ckpt = checkpoint_path(cfg, vgae_stage)
+    vgae_ckpt = _cross_model_path(cfg, "vgae", vgae_stage, "best_model.pt")
     if vgae_ckpt.exists():
-        vgae = load_vgae(cfg, num_ids, in_ch, device, stage=vgae_stage)
+        vgae = load_model(cfg, "vgae", vgae_stage, num_ids, in_ch, device)
 
         errors_np, labels_np = _run_vgae_inference(vgae, val_data, device)
         best_thresh, youden_j, vgae_preds = _vgae_threshold(labels_np, errors_np)
@@ -110,14 +110,16 @@ def evaluate(cfg: PipelineConfig) -> dict:
         cleanup()
 
     # ---- DQN Fusion evaluation ----
-    fusion_ckpt = checkpoint_path(cfg, "fusion")
+    fusion_ckpt = _cross_model_path(cfg, "dqn", "fusion", "best_model.pt")
     if fusion_ckpt.exists() and vgae_ckpt.exists() and gat_ckpt.exists():
-        vgae = load_vgae(cfg, num_ids, in_ch, device, stage=vgae_stage)
-        gat = load_gat(cfg, num_ids, in_ch, device, stage=gat_stage)
+        vgae = load_model(cfg, "vgae", vgae_stage, num_ids, in_ch, device)
+        gat = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
 
-        val_cache = cache_predictions(vgae, gat, val_data, device, cfg.fusion.max_val_samples)
+        models = {"vgae": vgae, "gat": gat}
+        val_cache = cache_predictions(models, val_data, device, cfg.fusion.max_val_samples)
 
         from src.models.dqn import EnhancedDQNFusionAgent
+        from src.models.registry import fusion_state_dim
 
         fusion_cfg = load_frozen_cfg(cfg, "fusion")
         agent = EnhancedDQNFusionAgent(
@@ -127,6 +129,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
             batch_size=fusion_cfg.dqn.batch_size,
             target_update_freq=fusion_cfg.dqn.target_update,
             device=str(device),
+            state_dim=fusion_state_dim(),
             alpha_steps=fusion_cfg.fusion.alpha_steps,
             hidden_dim=fusion_cfg.dqn.hidden,
             num_layers=fusion_cfg.dqn.layers,
@@ -144,7 +147,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
         if test_scenarios:
             test_metrics["fusion"] = {}
             for scenario, tdata in test_scenarios.items():
-                tc = cache_predictions(vgae, gat, tdata, device, cfg.fusion.max_val_samples)
+                tc = cache_predictions(models, tdata, device, cfg.fusion.max_val_samples)
                 tp, tl, ts = _run_fusion_inference(agent, tc)
                 test_metrics["fusion"][scenario] = _compute_metrics(tl, tp, ts)
                 log.info("Fusion %s  acc=%.4f f1=%.4f",

@@ -53,6 +53,18 @@ class GATWithJK(nn.Module):
             self.fc_layers.append(nn.Dropout(p=dropout))
         self.fc_layers.append(nn.Linear(fc_input_dim, out_channels))
 
+    @classmethod
+    def from_config(cls, cfg, num_ids: int, in_ch: int) -> "GATWithJK":
+        """Construct from a PipelineConfig."""
+        return cls(
+            num_ids=num_ids, in_channels=in_ch,
+            hidden_channels=cfg.gat.hidden, out_channels=2,
+            num_layers=cfg.gat.layers, heads=cfg.gat.heads,
+            dropout=cfg.gat.dropout,
+            num_fc_layers=cfg.gat.fc_layers,
+            embedding_dim=cfg.gat.embedding_dim,
+        )
+
     def forward(self, data, return_intermediate=False):
         """Forward pass through the GATWithJK model.
         

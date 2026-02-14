@@ -273,6 +273,44 @@ def _process_dataset_from_scratch(
     return graphs, id_mapping
 
 
+def _compute_graph_stats(graphs) -> dict:
+    """Compute per-graph statistics for batch size estimation."""
+    import numpy as np
+
+    # Unwrap GraphDataset to plain list if needed
+    if hasattr(graphs, 'data_list'):
+        graphs = graphs.data_list
+
+    node_counts = []
+    edge_counts = []
+    per_graph_bytes = []
+
+    for g in graphs:
+        node_counts.append(g.x.size(0) if g.x is not None else 0)
+        edge_counts.append(g.edge_index.size(1) if g.edge_index is not None else 0)
+        byte_count = 0
+        for attr in ('x', 'edge_index', 'edge_attr', 'y'):
+            t = getattr(g, attr, None)
+            if t is not None:
+                byte_count += t.numel() * t.element_size()
+        per_graph_bytes.append(byte_count)
+
+    def _stats(values):
+        arr = np.array(values)
+        return {
+            "mean": round(float(arr.mean()), 1),
+            "median": int(np.median(arr)),
+            "p95": int(np.percentile(arr, 95)),
+            "max": int(arr.max()),
+        }
+
+    return {
+        "node_count": _stats(node_counts),
+        "edge_count": _stats(edge_counts),
+        "per_graph_bytes": _stats(per_graph_bytes),
+    }
+
+
 def _write_cache_metadata(cache_dir, dataset_name, graphs, id_mapping, csv_files):
     """Write cache_metadata.json alongside processed cache files."""
     import torch_geometric
@@ -291,6 +329,13 @@ def _write_cache_metadata(cache_dir, dataset_name, graphs, id_mapping, csv_files
         "torch_version": torch.__version__,
         "pyg_version": torch_geometric.__version__,
     }
+
+    try:
+        metadata["graph_stats"] = _compute_graph_stats(graphs)
+        logger.info("Graph stats: %s", metadata["graph_stats"]["node_count"])
+    except Exception as e:
+        logger.warning("Failed to compute graph stats: %s", e)
+
     metadata_file = Path(cache_dir) / "cache_metadata.json"
     try:
         metadata_file.write_text(json.dumps(metadata, indent=2))

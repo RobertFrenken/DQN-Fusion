@@ -174,7 +174,11 @@ class TestModelMatchesConfig:
     def test_dqn_agent_uses_config_batch_size(self):
         """Agent must use the config batch_size, not override it."""
         from src.models.dqn import EnhancedDQNFusionAgent
-        agent = EnhancedDQNFusionAgent(batch_size=64, buffer_size=500, device='cpu')
+        from src.models.registry import fusion_state_dim
+        agent = EnhancedDQNFusionAgent(
+            batch_size=64, buffer_size=500, device='cpu',
+            state_dim=fusion_state_dim(),
+        )
         assert agent.batch_size == 64
         assert agent.buffer_size == 500
 

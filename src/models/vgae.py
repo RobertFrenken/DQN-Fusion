@@ -234,6 +234,16 @@ class GraphAutoencoderNeighborhood(nn.Module):
 
         return neighbor_targets
 
+    @classmethod
+    def from_config(cls, cfg, num_ids: int, in_ch: int) -> "GraphAutoencoderNeighborhood":
+        """Construct from a PipelineConfig."""
+        return cls(
+            num_ids=num_ids, in_channels=in_ch,
+            hidden_dims=list(cfg.vgae.hidden_dims), latent_dim=cfg.vgae.latent_dim,
+            encoder_heads=cfg.vgae.heads, embedding_dim=cfg.vgae.embedding_dim,
+            dropout=cfg.vgae.dropout,
+        )
+
     def forward(self, x, edge_index, batch):
         """Forward pass through the GraphAutoencoderNeighborhood.
         

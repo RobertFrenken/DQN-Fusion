@@ -1,0 +1,106 @@
+"""Fusion feature extractors for DQN state construction.
+
+Each extractor knows how to derive a fixed-size feature vector from one
+model's output.  Extractors are stateless and registered in the model
+registry so that ``cache_predictions`` can iterate them generically.
+"""
+from __future__ import annotations
+
+import math
+from typing import Protocol, runtime_checkable
+
+import torch
+import torch.nn.functional as F
+from torch_geometric.nn import global_mean_pool
+
+
+@runtime_checkable
+class FusionFeatureExtractor(Protocol):
+    """Extracts a fixed-size feature vector from a model's output for DQN fusion."""
+
+    @property
+    def feature_dim(self) -> int: ...
+
+    def extract(
+        self,
+        model: torch.nn.Module,
+        graph,
+        batch_idx: torch.Tensor,
+        device: torch.device,
+    ) -> torch.Tensor: ...
+
+
+class VGAEFusionExtractor:
+    """Extract 8-D features from VGAE output.
+
+    Layout:
+        [0:3]  errors  (node recon, neighbor, canid)
+        [3:7]  latent stats  (mean, std, max, min)
+        [7]    confidence  (1 / (1 + recon_err))
+    """
+
+    @property
+    def feature_dim(self) -> int:
+        return 8
+
+    def extract(
+        self,
+        model: torch.nn.Module,
+        graph,
+        batch_idx: torch.Tensor,
+        device: torch.device,
+    ) -> torch.Tensor:
+        cont, canid_logits, nbr_logits, z, _ = model(graph.x, graph.edge_index, batch_idx)
+        recon_err = F.mse_loss(cont, graph.x[:, 1:], reduction="none").mean().item()
+        canid_err = F.cross_entropy(canid_logits, graph.x[:, 0].long()).item()
+        nbr_targets = model.create_neighborhood_targets(graph.x, graph.edge_index, batch_idx)
+        nbr_err = F.binary_cross_entropy_with_logits(
+            nbr_logits, nbr_targets, reduction="mean"
+        ).item()
+        z_mean, z_std = z.mean().item(), z.std().item()
+        z_max, z_min = z.max().item(), z.min().item()
+        vgae_conf = 1.0 / (1.0 + recon_err)
+
+        return torch.tensor([
+            recon_err, nbr_err, canid_err,
+            z_mean, z_std, z_max, z_min,
+            vgae_conf,
+        ])
+
+
+class GATFusionExtractor:
+    """Extract 7-D features from GAT output.
+
+    Layout:
+        [0:2]  class probabilities  (class 0, class 1)
+        [2:6]  embedding stats  (mean, std, max, min)
+        [6]    confidence  (1 - normalized entropy)
+    """
+
+    @property
+    def feature_dim(self) -> int:
+        return 7
+
+    def extract(
+        self,
+        model: torch.nn.Module,
+        graph,
+        batch_idx: torch.Tensor,
+        device: torch.device,
+    ) -> torch.Tensor:
+        xs = model(graph, return_intermediate=True)
+        jk_out = model.jk(xs)
+        pooled = global_mean_pool(jk_out, batch_idx)
+        emb_mean = pooled.mean().item()
+        emb_std = pooled.std().item() if pooled.numel() > 1 else 0.0
+        emb_max, emb_min = pooled.max().item(), pooled.min().item()
+
+        x = pooled
+        for layer in model.fc_layers:
+            x = layer(x)
+        probs = F.softmax(x, dim=1)
+        p0, p1 = probs[0, 0].item(), probs[0, 1].item()
+        entropy = -(probs * (probs + 1e-8).log()).sum().item()
+        gat_conf = max(0.0, min(1.0, 1.0 - entropy / math.log(2)))
+
+        return torch.tensor([p0, p1, emb_mean, emb_std, emb_max, emb_min, gat_conf])

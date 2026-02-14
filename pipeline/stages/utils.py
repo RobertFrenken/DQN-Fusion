@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import gc
 import logging
-import math
 import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
@@ -11,11 +10,9 @@ from typing import TYPE_CHECKING, Optional
 import mlflow
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from torch_geometric.loader import DataLoader
-from torch_geometric.nn import global_mean_pool
 
 from config import PipelineConfig, stage_dir, checkpoint_path, config_path, data_dir, cache_dir
 from config.constants import MMAP_TENSOR_LIMIT
@@ -46,9 +43,11 @@ if str(_ROOT) not in sys.path:
 class MemoryMonitorCallback(pl.Callback):
     """Log memory usage to MLflow at epoch boundaries."""
 
-    def __init__(self, log_every_n_epochs: int = 5):
+    def __init__(self, log_every_n_epochs: int = 5, predicted_peak_mb: float = 0.0):
         super().__init__()
         self.log_every_n_epochs = log_every_n_epochs
+        self.predicted_peak_mb = predicted_peak_mb
+        self._logged_first_epoch = False
 
     def on_train_start(self, trainer, pl_module):
         log.info("Memory at train start: %s", get_memory_summary())
@@ -58,6 +57,17 @@ class MemoryMonitorCallback(pl.Callback):
         epoch = trainer.current_epoch
         if epoch % self.log_every_n_epochs == 0:
             log_memory_metrics(step=epoch)
+
+        # Log predicted vs actual peak memory after the first epoch
+        if not self._logged_first_epoch and epoch == 0 and torch.cuda.is_available():
+            self._logged_first_epoch = True
+            peak_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
+            mlflow.log_metric("memory_peak_actual_mb", peak_mb)
+            if self.predicted_peak_mb > 0:
+                mlflow.log_metric("memory_peak_predicted_mb", self.predicted_peak_mb)
+            torch.cuda.reset_peak_memory_stats()
+            log.info("Epoch 0 peak memory: actual=%.1fMB predicted=%.1fMB",
+                     peak_mb, self.predicted_peak_mb)
 
     def on_train_end(self, trainer, pl_module):
         log.info("Memory at train end: %s", get_memory_summary())
@@ -91,6 +101,30 @@ def effective_batch_size(cfg: PipelineConfig) -> int:
     return max(8, int(cfg.training.batch_size * cfg.training.safety_factor))
 
 
+def _get_representative_graph(train_data, cfg: PipelineConfig):
+    """Get the p95 graph by node count for conservative batch sizing.
+
+    Falls back to ``train_data[0]`` when cache metadata is unavailable.
+    """
+    import json as _json
+
+    metadata_path = cache_dir(cfg) / "cache_metadata.json"
+    if metadata_path.exists():
+        try:
+            meta = _json.loads(metadata_path.read_text())
+            p95_nodes = meta.get("graph_stats", {}).get("node_count", {}).get("p95")
+            if p95_nodes:
+                candidates = [train_data[i] for i in range(min(1000, len(train_data)))]
+                best = min(candidates, key=lambda g: abs(g.x.size(0) - p95_nodes))
+                log.info("Representative graph: p95=%d nodes, selected=%d nodes",
+                         p95_nodes, best.x.size(0))
+                return best
+        except Exception as e:
+            log.warning("Failed to read graph stats: %s", e)
+
+    return train_data[0]
+
+
 def compute_optimal_batch_size(
     model: nn.Module,
     train_data,
@@ -99,14 +133,14 @@ def compute_optimal_batch_size(
 ) -> int:
     """Compute optimal batch size using memory analysis.
 
-    Uses cfg.training.memory_estimation: "static" (fast) or "measured" (accurate).
-    Falls back to Lightning Tuner or safety_factor if estimation fails.
+    Uses the p95 graph from cache metadata for conservative sizing.
+    Falls back to safety_factor if estimation fails.
     """
     if len(train_data) == 0:
         log.warning("Empty training data, using fallback batch size")
         return effective_batch_size(cfg)
 
-    sample_graph = train_data[0]
+    sample_graph = _get_representative_graph(train_data, cfg)
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
     mode = cfg.training.memory_estimation if cfg.training.memory_estimation in ("static", "measured") else "measured"
 
@@ -222,7 +256,9 @@ def load_teacher(
     in_channels: int,
     device: torch.device,
 ) -> nn.Module:
-    """Load teacher model using its frozen config."""
+    """Load teacher model using its frozen config and the registry."""
+    from src.models.registry import get as registry_get
+
     checkpoint = torch.load(teacher_path, map_location="cpu", weights_only=True)
     sd = _extract_state_dict(checkpoint)
 
@@ -234,58 +270,27 @@ def load_teacher(
         )
     tcfg = PipelineConfig.load(teacher_cfg_path)
 
-    if model_type == "vgae":
-        from src.models.vgae import GraphAutoencoderNeighborhood
+    # Infer num_ids from checkpoint embedding if present
+    t_num_ids = num_ids
+    for key in sd:
+        if key.endswith("id_embedding.weight"):
+            t_num_ids = sd[key].shape[0]
+            break
 
-        id_emb = sd.get("encoder.id_embedding.weight", sd.get("id_embedding.weight"))
-        t_num_ids = id_emb.shape[0] if id_emb is not None else num_ids
+    teacher = registry_get(model_type).factory(tcfg, t_num_ids, in_channels)
 
-        teacher = GraphAutoencoderNeighborhood(
-            num_ids=t_num_ids, in_channels=in_channels,
-            hidden_dims=list(tcfg.vgae.hidden_dims), latent_dim=tcfg.vgae.latent_dim,
-            encoder_heads=tcfg.vgae.heads, embedding_dim=tcfg.vgae.embedding_dim,
-            dropout=tcfg.vgae.dropout,
-        )
-        teacher.load_state_dict(sd)
-        log.info("Loaded VGAE teacher: latent_dim=%d, num_ids=%d",
-                 tcfg.vgae.latent_dim, t_num_ids)
-
-    elif model_type == "gat":
-        from src.models.gat import GATWithJK
-
-        id_emb = sd.get("id_embedding.weight")
-        t_num_ids = id_emb.shape[0] if id_emb is not None else num_ids
-
-        teacher = GATWithJK(
-            num_ids=t_num_ids, in_channels=in_channels,
-            hidden_channels=tcfg.gat.hidden, out_channels=2,
-            num_layers=tcfg.gat.layers, heads=tcfg.gat.heads,
-            dropout=tcfg.gat.dropout,
-            num_fc_layers=tcfg.gat.fc_layers,
-            embedding_dim=tcfg.gat.embedding_dim,
-        )
-        teacher.load_state_dict(sd)
-        log.info("Loaded GAT teacher: hidden=%d, layers=%d, num_ids=%d",
-                 tcfg.gat.hidden, tcfg.gat.layers, t_num_ids)
-
-    elif model_type == "dqn":
-        from src.models.dqn import QNetwork
-
-        state_dim = 15
-        action_dim = tcfg.fusion.alpha_steps
-        teacher = QNetwork(state_dim, action_dim,
-                           hidden_dim=tcfg.dqn.hidden, num_layers=tcfg.dqn.layers)
-
+    # DQN checkpoints have nested state dict
+    if model_type == "dqn":
         if "q_network" in sd:
             teacher.load_state_dict(sd["q_network"])
         elif "q_network_state_dict" in sd:
             teacher.load_state_dict(sd["q_network_state_dict"])
         else:
             teacher.load_state_dict(sd)
-        log.info("Loaded DQN teacher: state_dim=%d, action_dim=%d", state_dim, action_dim)
-
     else:
-        raise ValueError(f"Cannot load teacher for model_type={model_type}")
+        teacher.load_state_dict(sd)
+
+    log.info("Loaded %s teacher from %s (num_ids=%d)", model_type, teacher_path, t_num_ids)
 
     teacher.to(device)
     teacher.eval()
@@ -369,54 +374,28 @@ def load_frozen_cfg(cfg: PipelineConfig, stage: str, model_type: str | None = No
         raise RuntimeError(f"Could not load frozen config {p}: {e}") from e
 
 
-def load_vgae(
+def load_model(
     cfg: PipelineConfig,
+    model_type: str,
+    stage: str,
     num_ids: int,
     in_channels: int,
     device: torch.device,
-    stage: str = "autoencoder",
 ) -> nn.Module:
-    """Load trained VGAE model using its frozen config."""
-    from src.models.vgae import GraphAutoencoderNeighborhood
+    """Load a trained model using its frozen config and the registry.
 
-    vgae_cfg = load_frozen_cfg(cfg, stage, model_type="vgae")
-    ckpt = _cross_model_path(cfg, "vgae", stage, "best_model.pt")
-    vgae = GraphAutoencoderNeighborhood(
-        num_ids=num_ids, in_channels=in_channels,
-        hidden_dims=list(vgae_cfg.vgae.hidden_dims), latent_dim=vgae_cfg.vgae.latent_dim,
-        encoder_heads=vgae_cfg.vgae.heads, embedding_dim=vgae_cfg.vgae.embedding_dim,
-        dropout=vgae_cfg.vgae.dropout,
-    )
-    vgae.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=True))
-    vgae.to(device)
-    vgae.eval()
-    return vgae
+    Replaces the old ``load_vgae`` / ``load_gat`` helpers with a single
+    generic loader that works for any registered model type.
+    """
+    from src.models.registry import get as registry_get
 
-
-def load_gat(
-    cfg: PipelineConfig,
-    num_ids: int,
-    in_channels: int,
-    device: torch.device,
-    stage: str = "curriculum",
-) -> nn.Module:
-    """Load trained GAT model using its frozen config."""
-    from src.models.gat import GATWithJK
-
-    gat_cfg = load_frozen_cfg(cfg, stage, model_type="gat")
-    ckpt = _cross_model_path(cfg, "gat", stage, "best_model.pt")
-    gat = GATWithJK(
-        num_ids=num_ids, in_channels=in_channels,
-        hidden_channels=gat_cfg.gat.hidden, out_channels=2,
-        num_layers=gat_cfg.gat.layers, heads=gat_cfg.gat.heads,
-        dropout=gat_cfg.gat.dropout,
-        num_fc_layers=gat_cfg.gat.fc_layers,
-        embedding_dim=gat_cfg.gat.embedding_dim,
-    )
-    gat.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=True))
-    gat.to(device)
-    gat.eval()
-    return gat
+    frozen_cfg = load_frozen_cfg(cfg, stage, model_type=model_type)
+    ckpt = _cross_model_path(cfg, model_type, stage, "best_model.pt")
+    model = registry_get(model_type).factory(frozen_cfg, num_ids, in_channels)
+    model.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=True))
+    model.to(device)
+    model.eval()
+    return model
 
 
 # ---------------------------------------------------------------------------
@@ -456,7 +435,11 @@ def build_optimizer_dict(optimizer, cfg: PipelineConfig):
 # Trainer factory
 # ---------------------------------------------------------------------------
 
-def make_trainer(cfg: PipelineConfig, stage: str) -> pl.Trainer:
+def make_trainer(
+    cfg: PipelineConfig,
+    stage: str,
+    predicted_peak_mb: float = 0.0,
+) -> pl.Trainer:
     """Create a Lightning Trainer with standard callbacks."""
     t = cfg.training
     out = stage_dir(cfg, stage)
@@ -483,7 +466,10 @@ def make_trainer(cfg: PipelineConfig, stage: str) -> pl.Trainer:
                 monitor=t.monitor_metric, patience=t.patience,
                 mode=t.monitor_mode,
             ),
-            MemoryMonitorCallback(log_every_n_epochs=t.test_every_n_epochs),
+            MemoryMonitorCallback(
+                log_every_n_epochs=t.test_every_n_epochs,
+                predicted_peak_mb=predicted_peak_mb,
+            ),
         ],
         log_every_n_steps=t.log_every_n_steps,
         enable_progress_bar=True,
@@ -502,20 +488,21 @@ def cleanup():
         torch.cuda.empty_cache()
 
 
-def cache_predictions(vgae, gat, data, device, max_samples: int = 150_000):
-    """Run VGAE + GAT inference, produce 15-D state vectors for DQN.
+def cache_predictions(models: dict[str, nn.Module], data, device, max_samples: int = 150_000):
+    """Run registered extractors over data, produce N-D state vectors for DQN.
 
-    State layout:
-        [0:3]  VGAE errors  (node recon, neighbor, canid)
-        [3:7]  VGAE latent stats  (mean, std, max, min)
-        [7]    VGAE confidence
-        [8:10] GAT logits  (class 0 prob, class 1 prob)
-        [10:14] GAT embedding stats  (mean, std, max, min)
-        [14]   GAT confidence
+    ``models`` maps model_type name to loaded model (e.g. ``{"vgae": vgae, "gat": gat}``).
+    Feature concatenation order follows registry registration order (VGAE then GAT)
+    to preserve the existing 15-D layout.
     """
+    from src.models.registry import extractors as registry_extractors
+
+    registered = registry_extractors()
+    active = [(name, ext) for name, ext in registered if name in models]
+
     states, labels = [], []
-    vgae.eval()
-    gat.eval()
+    for model in models.values():
+        model.eval()
     n_samples = min(len(data), max_samples)
 
     with torch.no_grad():
@@ -524,40 +511,9 @@ def cache_predictions(vgae, gat, data, device, max_samples: int = 150_000):
             batch_idx = (g.batch if hasattr(g, "batch") and g.batch is not None
                          else torch.zeros(g.x.size(0), dtype=torch.long, device=device))
 
-            # VGAE features
-            cont, canid_logits, nbr_logits, z, _ = vgae(g.x, g.edge_index, batch_idx)
-            recon_err = F.mse_loss(cont, g.x[:, 1:], reduction="none").mean().item()
-            canid_err = F.cross_entropy(canid_logits, g.x[:, 0].long()).item()
-            nbr_targets = vgae.create_neighborhood_targets(g.x, g.edge_index, batch_idx)
-            nbr_err = F.binary_cross_entropy_with_logits(
-                nbr_logits, nbr_targets, reduction="mean").item()
-            z_mean, z_std = z.mean().item(), z.std().item()
-            z_max, z_min = z.max().item(), z.min().item()
-            vgae_conf = 1.0 / (1.0 + recon_err)
-
-            # GAT features
-            xs = gat(g, return_intermediate=True)
-            jk_out = gat.jk(xs)
-            pooled = global_mean_pool(jk_out, batch_idx)
-            emb_mean, emb_std = pooled.mean().item(), (pooled.std().item() if pooled.numel() > 1 else 0.0)
-            emb_max, emb_min = pooled.max().item(), pooled.min().item()
-            x = pooled
-            for layer in gat.fc_layers:
-                x = layer(x)
-            probs = F.softmax(x, dim=1)
-            p0, p1 = probs[0, 0].item(), probs[0, 1].item()
-            entropy = -(probs * (probs + 1e-8).log()).sum().item()
-            gat_conf = max(0.0, min(1.0, 1.0 - entropy / math.log(2)))
-
-            state = torch.tensor([
-                recon_err, nbr_err, canid_err,
-                z_mean, z_std, z_max, z_min,
-                vgae_conf,
-                p0, p1,
-                emb_mean, emb_std, emb_max, emb_min,
-                gat_conf,
-            ])
-            states.append(state)
+            features = [ext.extract(models[name], g, batch_idx, device)
+                        for name, ext in active]
+            states.append(torch.cat(features))
             labels.append(g.y[0] if g.y.dim() > 0 else g.y)
 
     return {"states": torch.stack(states), "labels": torch.tensor(labels)}

@@ -4,26 +4,6 @@
 
 ---
 
-## Implemented Features
-
-### Benchmark Directive (**DONE**)
-
-All training and evaluation rules have `benchmark:` directives logging wall time, max RSS/VMS, and I/O to TSV files under `experimentruns/{ds}/{run}/benchmark.tsv`.
-
-### Retries with Attempt-Based Resource Scaling (**DONE**)
-
-All 9 training rules have `retries: 2` with dynamic memory: `mem_mb=lambda wc, attempt: 128000 * attempt`. First attempt uses 128GB; OOM auto-retries with 256GB.
-
-### Between-Workflow Caching (**DONE**)
-
-Dedicated `preprocess` rule with `cache: True` warms the graph cache per dataset. All training rules depend on it. Cache location: `SNAKEMAKE_OUTPUT_CACHE=/fs/scratch/PAS1266/snakemake-cache/`. Profile has `cache: all`.
-
-### Group Jobs — Batch SLURM Submissions (**DONE**)
-
-Three evaluation rules (`eval_large`, `eval_small_kd`, `eval_small_nokd`) use `group: "evaluation"` to bundle into single SLURM submissions per dataset, reducing scheduler overhead.
-
----
-
 ## Not Yet Implemented
 
 ### Paramspace — Hyperparameter Sweep Management

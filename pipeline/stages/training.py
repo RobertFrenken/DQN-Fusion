@@ -8,7 +8,7 @@ import torch
 import torch.nn.functional as F
 import pytorch_lightning as pl
 
-from config import PipelineConfig, checkpoint_path
+from config import PipelineConfig, checkpoint_path, config_path
 from ..memory import log_memory_state
 from .utils import (
     load_data,
@@ -18,7 +18,7 @@ from .utils import (
     make_dataloader,
     compute_optimal_batch_size,
     effective_batch_size,
-    load_vgae,
+    load_model,
     load_frozen_cfg,
     cleanup,
     graph_label,
@@ -40,13 +40,8 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
     teacher, projection = None, None
     if cfg.has_kd and cfg.kd.model_path:
         teacher = load_teacher(cfg.kd.model_path, "vgae", cfg, num_ids, in_ch, device)
-        from src.models.vgae import GraphAutoencoderNeighborhood
-        _tmp_student = GraphAutoencoderNeighborhood(
-            num_ids=num_ids, in_channels=in_ch,
-            hidden_dims=list(cfg.vgae.hidden_dims), latent_dim=cfg.vgae.latent_dim,
-            encoder_heads=cfg.vgae.heads, embedding_dim=cfg.vgae.embedding_dim,
-            dropout=cfg.vgae.dropout,
-        )
+        from src.models.registry import get as registry_get
+        _tmp_student = registry_get("vgae").factory(cfg, num_ids, in_ch)
         projection = make_projection(_tmp_student, teacher, "vgae", device)
         del _tmp_student
 
@@ -67,6 +62,7 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
     ckpt = checkpoint_path(cfg, "autoencoder")
     ckpt.parent.mkdir(parents=True, exist_ok=True)
     torch.save(module.model.state_dict(), ckpt)
+    cfg.save(config_path(cfg, "autoencoder"))
     log.info("Saved VGAE: %s", ckpt)
     cleanup()
     return ckpt
@@ -81,7 +77,7 @@ def train_curriculum(cfg: PipelineConfig) -> Path:
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
 
     # Load VGAE for difficulty scoring
-    vgae = load_vgae(cfg, num_ids, in_ch, device, stage="autoencoder")
+    vgae = load_model(cfg, "vgae", "autoencoder", num_ids, in_ch, device)
 
     # Split and score
     normals = [g for g in train_data if graph_label(g) == 0]
@@ -104,6 +100,7 @@ def train_curriculum(cfg: PipelineConfig) -> Path:
     ckpt = checkpoint_path(cfg, "curriculum")
     ckpt.parent.mkdir(parents=True, exist_ok=True)
     torch.save(module.model.state_dict(), ckpt)
+    cfg.save(config_path(cfg, "curriculum"))
     log.info("Saved GAT: %s", ckpt)
     cleanup()
     return ckpt
@@ -139,6 +136,7 @@ def train_normal(cfg: PipelineConfig) -> Path:
     ckpt = checkpoint_path(cfg, "normal")
     ckpt.parent.mkdir(parents=True, exist_ok=True)
     torch.save(module.model.state_dict(), ckpt)
+    cfg.save(config_path(cfg, "normal"))
     log.info("Saved GAT (normal): %s", ckpt)
     cleanup()
     return ckpt

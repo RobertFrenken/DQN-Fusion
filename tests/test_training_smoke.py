@@ -165,12 +165,14 @@ class TestDQNSmoke:
     def test_trains(self):
         import numpy as np
         from src.models.dqn import EnhancedDQNFusionAgent
+        from src.models.registry import fusion_state_dim
 
         agent = EnhancedDQNFusionAgent(
             alpha_steps=21, lr=1e-3, gamma=0.99,
             epsilon=0.5, epsilon_decay=0.99, min_epsilon=0.01,
             buffer_size=500, batch_size=32,
             target_update_freq=10, device="cpu",
+            state_dim=fusion_state_dim(),
             hidden_dim=64, num_layers=2,
         )
 
