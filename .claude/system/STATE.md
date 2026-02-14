@@ -1,6 +1,6 @@
 # Current State
 
-**Date**: 2026-02-13
+**Date**: 2026-02-14
 
 ## What's Working
 
@@ -30,7 +30,7 @@
 
 ### Data Management Layer
 - **Parquet ingestion**: All 6 datasets converted (`data/parquet/automotive/{dataset}/`)
-- **Project DB**: `data/project.db` — 6 datasets, 71 runs, 3915 metrics
+- **Project DB**: `data/project.db` — 6 datasets, 140 runs, 7830 metrics
   - Write-through from cli.py + backfill via `populate()`
 - **Analytics**: sweep, leaderboard, compare, config_diff, dataset_summary
 
@@ -51,7 +51,10 @@ Essential (imported by pipeline):
 - **Old experiment checkpoints**: Pre-MLflow runs have no `config.json`
 - **Bug 3.6 (research)**: OOD generalization collapse — not a code bug, requires research
 - **E2E tests**: Pre-existing failure — `train_autoencoder()` doesn't write config.json (CLI does)
-- **Existing experiment paths**: Old paths use `{model_size}_{stage}[_kd]` format, `populate()` handles both
+
+## Recently Completed
+
+- **Legacy path migration** (2026-02-14): All 70 `teacher_*/student_*` dirs renamed to `{model_type}_{scale}_{stage}[_{aux}]` format across 6 datasets. DB run_ids updated. 18 config.json `teacher_path` values rewritten. No legacy dirs remain.
 
 ## Next Steps
 

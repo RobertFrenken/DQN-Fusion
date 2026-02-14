@@ -54,12 +54,6 @@ python -m pipeline.state_sync preview   # Preview regenerated sections
 python -m pipeline.state_sync update    # Write updated STATE.md in-place
 python -m pipeline.cli state            # Shorthand for state_sync update
 
-# Legacy path migration (teacher_*/student_* → {model_type}_{scale}_*)
-python -m pipeline.migrate_paths --dry-run              # Preview renames
-python -m pipeline.migrate_paths --execute              # Execute renames
-python -m pipeline.migrate_paths --dry-run --dataset hcrl_sa  # Single dataset
-python -m pipeline.migrate_paths --execute --no-db-update     # Skip DB updates
-
 # MLflow UI (inside tmux on login node)
 mlflow ui --backend-store-uri sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db --host 0.0.0.0 --port 5000
 # Local: ssh -L 5000:localhost:5000 rf15@pitzer.osc.edu → http://localhost:5000
@@ -138,7 +132,7 @@ cfg.active_arch        # Architecture config for active model_type
   - `experimentruns/hcrl_sa/vgae_large_autoencoder/`
   - `experimentruns/hcrl_sa/gat_small_curriculum_kd/`
 
-**Legacy**: Old flat JSON config files (`model_size`, `use_kd`, `teacher_path`) load via `PipelineConfig.load()` with automatic migration.
+**Legacy config loading**: Old flat JSON config files (`model_size`, `use_kd`, `teacher_path`) still load via `PipelineConfig.load()` with automatic migration. All experiment directories now use the new naming convention (legacy `teacher_*/student_*` dirs were migrated 2026-02-14).
 
 ## Critical Constraints
 

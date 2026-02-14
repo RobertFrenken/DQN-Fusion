@@ -1,6 +1,6 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-02-13
+**Updated**: 2026-02-14
 
 ## What This Is
 
@@ -22,7 +22,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
 ### Layer 1: `config/` (inert, declarative — no pipeline/ or src/ imports)
 
-- `schema.py` — Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`, `PreprocessingConfig`. Legacy flat JSON loading via `_from_legacy_flat()`.
+- `schema.py` — Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`, `PreprocessingConfig`. Legacy flat JSON loading via `_from_legacy_flat()` (for old config.json files — all dirs now use new naming).
 - `resolver.py` — YAML composition: `resolve(model_type, scale, auxiliaries="none", **cli_overrides)`, `list_models()`, `list_auxiliaries()`. Merge order: defaults → model_def → auxiliaries → CLI.
 - `paths.py` — Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`. String-based variants for Snakefile.
 - `constants.py` — Domain/infrastructure constants: feature counts, window sizes, DB paths, MLflow URI, memory limits
@@ -47,6 +47,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 - `ingest.py` — CSV→Parquet ingestion, validation against `config/datasets.yaml`, dataset registration
 - `db.py` — SQLite project DB (`data/project.db`): schema (model_type/scale/has_kd), write-through `record_run_start()`/`record_run_end()`, backfill `populate()`, CLI queries
 - `analytics.py` — Post-run analysis: sweep, leaderboard, compare, config_diff, dataset_summary
+- `migrate_paths.py` — Legacy path migration tool (`teacher_*/student_*` → new format). Also rewrites `teacher_path` in config.json files. Migration completed 2026-02-14 (70 dirs across 6 datasets).
 - `Snakefile` — Snakemake workflow (`--model`/`--scale`/`--auxiliaries` CLI, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup, preprocessing cache rule, retries with resource scaling, evaluation group jobs)
 
 ### Layer 3: `src/` (domain — imports config.constants, never imports pipeline/)
