@@ -21,6 +21,11 @@ class FusionFeatureExtractor(Protocol):
     @property
     def feature_dim(self) -> int: ...
 
+    @property
+    def confidence_index(self) -> int:
+        """Index of confidence feature within this extractor's output."""
+        ...
+
     def extract(
         self,
         model: torch.nn.Module,
@@ -42,6 +47,10 @@ class VGAEFusionExtractor:
     @property
     def feature_dim(self) -> int:
         return 8
+
+    @property
+    def confidence_index(self) -> int:
+        return 7
 
     def extract(
         self,
@@ -80,6 +89,10 @@ class GATFusionExtractor:
     @property
     def feature_dim(self) -> int:
         return 7
+
+    @property
+    def confidence_index(self) -> int:
+        return 6
 
     def extract(
         self,

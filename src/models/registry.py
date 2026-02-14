@@ -49,6 +49,23 @@ def fusion_state_dim() -> int:
     )
 
 
+def feature_layout() -> dict[str, tuple[int, int, int]]:
+    """Return ``{name: (start, dim, confidence_abs_idx)}`` for each extractor.
+
+    Offsets are computed from registration order so the DQN agent can
+    look up slices by name instead of hardcoding indices.
+    """
+    layout: dict[str, tuple[int, int, int]] = {}
+    offset = 0
+    for name, entry in _REGISTRY.items():
+        if entry.extractor is not None:
+            dim = entry.extractor.feature_dim
+            conf_abs = offset + entry.extractor.confidence_index
+            layout[name] = (offset, dim, conf_abs)
+            offset += dim
+    return layout
+
+
 def extractors() -> list[tuple[str, FusionFeatureExtractor]]:
     """Return (name, extractor) pairs in registration order.
 

@@ -100,11 +100,5 @@ question, so I want it logged but not actively called upon if we are in
 training, cascading knowledge distillation, etc. I want claude to toggle between
 what kinds of contexts or what attention it should have depending on our session.
 
-This is similar to the "meta prompting" or steering problem.
-- https://github.com/gsd-build/get-shit-done
-
-## Claude to suggest out of the box ideas
-There are many things I don't know, but claude assumes that my prompt is the
-best thing ever and there can't be a better idea. That isn't true, I want claude
-to suggest designs or ideas I haven't even considered that could really help.
+.
 

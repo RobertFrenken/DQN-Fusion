@@ -94,47 +94,45 @@ class EnhancedDQNFusionAgent:
         self.patience_counter = 0
         self.max_patience = 5000
         
+        # Derive feature indices from registry (no hardcoded offsets)
+        from .registry import feature_layout
+        layout = feature_layout()
+        vgae_start, vgae_dim, _ = layout["vgae"]
+        gat_start, gat_dim, _ = layout["gat"]
+        self._confidence_indices = [layout[n][2] for n in layout]
+        self._vgae_error_slice = slice(vgae_start, vgae_start + 3)
+        self._gat_logit_slice = slice(gat_start, gat_start + 2)
+        self._vgae_conf_idx = layout["vgae"][2]
+        self._gat_conf_idx = layout["gat"][2]
+
         log.info("DQN Agent initialized: %d actions, state_dim=%d", alpha_steps, self.state_dim)
 
     def normalize_state(self, state_features: np.ndarray) -> np.ndarray:
-        """
-        Normalize state representation.
-
-        Default 15-D layout (VGAE 8-D + GAT 7-D):
-            [0:3] - VGAE errors (node, neighbor, canid)
-            [3:7] - VGAE latent stats (mean, std, max, min)
-            [7] - VGAE confidence
-            [8:10] - GAT logits (class 0, class 1)
-            [10:14] - GAT embedding stats (mean, std, max, min)
-            [14] - GAT confidence
+        """Normalize state representation (dimension from registry).
 
         Returns:
             Normalized state as float32 array
         """
-        # Ensure input is numpy array
         if not isinstance(state_features, np.ndarray):
             state_features = np.array(state_features, dtype=np.float32)
 
-        # Validate dimensions
         if len(state_features) != self.state_dim:
             raise ValueError(f"Expected {self.state_dim}D state, got {len(state_features)}D")
 
-        # Avoid mutating caller's array
         state_features = state_features.copy()
 
         # Clip confidence values to [0, 1]
-        state_features[7] = np.clip(state_features[7], 0.0, 1.0)  # VGAE confidence
-        state_features[14] = np.clip(state_features[14], 0.0, 1.0)  # GAT confidence
+        for idx in self._confidence_indices:
+            state_features[idx] = np.clip(state_features[idx], 0.0, 1.0)
 
         return state_features.astype(np.float32)
         
 
     def select_action(self, state_features: np.ndarray, training: bool = True) -> Tuple[float, int, np.ndarray]:
-        """
-        Select action using epsilon-greedy policy with 15D state.
+        """Select action using epsilon-greedy policy.
 
         Args:
-            state_features: [15] array with all VGAE and GAT features
+            state_features: N-D state (dimension from registry)
             training: Whether in training mode (use epsilon-greedy)
 
         Returns:
@@ -153,20 +151,19 @@ class EnhancedDQNFusionAgent:
         alpha_value = self.alpha_values[action_idx]
         return alpha_value, action_idx, state
 
-    @staticmethod
-    def _derive_scores(state_features: np.ndarray) -> Tuple[float, float]:
-        """Derive anomaly_score and gat_prob from 15D state features.
+    def _derive_scores(self, state_features: np.ndarray) -> Tuple[float, float]:
+        """Derive anomaly_score and gat_prob from state features.
 
         Returns:
             (anomaly_score, gat_prob) tuple
         """
-        # VGAE errors: [0:3] - use weighted combination
-        vgae_errors = state_features[0:3]
+        # VGAE errors - use weighted combination
+        vgae_errors = state_features[self._vgae_error_slice]
         vgae_weights = np.array([0.4, 0.35, 0.25])
         anomaly_score = float(np.clip(np.sum(vgae_errors * vgae_weights), 0.0, 1.0))
 
-        # GAT logits: [8:10] - numerically stable softmax
-        gat_logits = state_features[8:10]
+        # GAT logits - numerically stable softmax
+        gat_logits = state_features[self._gat_logit_slice]
         shifted = gat_logits - np.max(gat_logits)
         gat_probs = np.exp(shifted) / np.sum(np.exp(shifted))
         gat_prob = float(gat_probs[1])  # Probability of attack class
@@ -176,13 +173,12 @@ class EnhancedDQNFusionAgent:
     def compute_fusion_reward(self, prediction: int, true_label: int,
                              state_features: np.ndarray,
                              alpha: float) -> float:
-        """
-        Enhanced reward function with 15D state features.
+        """Enhanced reward function.
 
         Args:
             prediction: Fused prediction (0 or 1)
             true_label: Ground truth label (0 or 1)
-            state_features: [15] array with all features
+            state_features: N-D state (dimension from registry)
             alpha: Fusion weight selected by DQN
 
         Returns:
@@ -191,8 +187,8 @@ class EnhancedDQNFusionAgent:
         anomaly_score, gat_prob = self._derive_scores(state_features)
 
         # Confidence scores
-        vgae_confidence = float(state_features[7])
-        gat_confidence = float(state_features[14])
+        vgae_confidence = float(state_features[self._vgae_conf_idx])
+        gat_confidence = float(state_features[self._gat_conf_idx])
         combined_confidence = max(vgae_confidence, gat_confidence)
 
         # Base accuracy reward (higher magnitude for importance)
@@ -293,11 +289,10 @@ class EnhancedDQNFusionAgent:
         self.target_network.load_state_dict(self.q_network.state_dict())
 
     def validate_agent(self, validation_data: List[Tuple], num_samples: int = 1000) -> Dict:
-        """
-        Validate agent performance with 15D states.
+        """Validate agent performance.
 
         Args:
-            validation_data: List of (state_features[15], true_label) tuples
+            validation_data: List of (state_features, true_label) tuples
             num_samples: Number of samples to validate on
 
         Returns:
@@ -316,11 +311,11 @@ class EnhancedDQNFusionAgent:
             return {'accuracy': 0.0, 'avg_reward': 0.0, 'avg_alpha': 0.0, 'alpha_std': 0.0}
 
         for state_features, true_label in sample_data:
-            # Select action with 15D state
+            # Select action
             alpha, _, _ = self.select_action(state_features, training=False)
             alpha_values_used.append(alpha)
 
-            # Derive scalar scores for fusion from 15D state
+            # Derive scalar scores for fusion
             anomaly_score, gat_prob = self._derive_scores(state_features)
 
             # Make fusion prediction
