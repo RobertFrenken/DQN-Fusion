@@ -142,7 +142,48 @@ def execute_migrations(
     if update_db and count > 0:
         _update_db_run_ids(plans)
 
+    if count > 0:
+        tp_count = _update_config_teacher_paths()
+        if tp_count:
+            log.info("Updated teacher_path in %d config.json files", tp_count)
+
     return count
+
+
+def _update_config_teacher_paths(experiment_root: str = EXPERIMENT_ROOT) -> int:
+    """Rewrite stale teacher_path values in config.json files after renames."""
+    root = Path(experiment_root)
+    updated = 0
+    for config_path in root.rglob("config.json"):
+        try:
+            data = json.loads(config_path.read_text())
+        except (json.JSONDecodeError, OSError):
+            continue
+
+        tp = data.get("teacher_path")
+        if not tp or not isinstance(tp, str):
+            continue
+
+        # Extract the directory name from the teacher_path
+        # e.g. "experimentruns/hcrl_sa/teacher_autoencoder/best_model.pt"
+        tp_path = Path(tp)
+        parts = tp_path.parts
+        # Find the legacy dir component
+        changed = False
+        new_parts = list(parts)
+        for i, part in enumerate(parts):
+            info = _detect_legacy_dir(part)
+            if info is not None:
+                new_parts[i] = info["new_name"]
+                changed = True
+
+        if changed:
+            data["teacher_path"] = str(Path(*new_parts))
+            config_path.write_text(json.dumps(data, indent=2) + "\n")
+            log.info("Updated teacher_path in %s", config_path)
+            updated += 1
+
+    return updated
 
 
 def _update_db_run_ids(plans: list[dict]) -> None:
