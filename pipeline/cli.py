@@ -36,8 +36,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description="KD-GAT training pipeline",
     )
     p.add_argument(
-        "stage", choices=list(STAGES.keys()),
-        help="Training stage to run",
+        "stage", choices=list(STAGES.keys()) + ["state"],
+        help="Training stage to run (or 'state' to update STATE.md)",
     )
 
     # Config source
@@ -106,6 +106,13 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s  %(name)-20s  %(levelname)-7s  %(message)s",
     )
     log = logging.getLogger("pipeline")
+
+    # ---- Handle non-training subcommands ----
+    if args.stage == "state":
+        from .state_sync import update_state
+        update_state(preview=False)
+        log.info("STATE.md updated")
+        return
 
     # ---- Build config ----
     if args.config:

@@ -274,6 +274,72 @@ def dataset_summary(
     }
 
 
+def memory_prediction_summary(
+    *,
+    model_type: str | None = None,
+    dataset: str | None = None,
+    db_path: Path | None = None,
+) -> dict:
+    """Summarize memory prediction accuracy across runs.
+
+    Queries ``memory/prediction_ratio`` from MLflow-logged metrics.
+    Interpretation: <0.9 = over-allocating, >1.1 = OOM risk, else well-calibrated.
+
+    Returns dict with keys: count, mean, min, max, std, interpretation.
+    """
+    conn = get_connection(db_path)
+    conn.row_factory = sqlite3.Row
+
+    where_parts = ["m.metric_name = 'memory/prediction_ratio'"]
+    params: list = []
+
+    if model_type:
+        where_parts.append("r.model_type = ?")
+        params.append(model_type)
+    if dataset:
+        where_parts.append("r.dataset = ?")
+        params.append(dataset)
+
+    where = " AND ".join(where_parts)
+
+    sql = f"""
+        SELECT
+            COUNT(*)           AS count,
+            ROUND(AVG(m.value), 4) AS mean,
+            ROUND(MIN(m.value), 4) AS min,
+            ROUND(MAX(m.value), 4) AS max,
+            ROUND(
+                SQRT(AVG(m.value * m.value) - AVG(m.value) * AVG(m.value)),
+                4
+            ) AS std
+        FROM metrics m
+        JOIN runs r ON r.run_id = m.run_id
+        WHERE {where}
+    """
+    row = conn.execute(sql, params).fetchone()
+    conn.close()
+
+    if row is None or row["count"] == 0:
+        return {"count": 0, "message": "No memory prediction data found"}
+
+    mean = row["mean"]
+    if mean < 0.9:
+        interp = "over-allocating (predicted > actual)"
+    elif mean > 1.1:
+        interp = "OOM risk (actual > predicted)"
+    else:
+        interp = "well-calibrated"
+
+    return {
+        "count": row["count"],
+        "mean": mean,
+        "min": row["min"],
+        "max": row["max"],
+        "std": row["std"],
+        "interpretation": interp,
+    }
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -337,6 +403,11 @@ def main(argv: list[str] | None = None) -> None:
     p = sub.add_parser("query", help="Run arbitrary SQL")
     p.add_argument("sql", help="SQL query string")
 
+    # memory
+    p = sub.add_parser("memory", help="Memory prediction accuracy summary")
+    p.add_argument("--model", help="Filter by model type (vgae, gat, dqn)")
+    p.add_argument("--dataset", help="Filter by dataset")
+
     args = parser.parse_args(argv)
 
     if args.command == "sweep":
@@ -367,6 +438,22 @@ def main(argv: list[str] | None = None) -> None:
         if result["best_metrics"]:
             best_rows = list(result["best_metrics"].values())
             _print_table(best_rows, "Best metrics")
+
+    elif args.command == "memory":
+        result = memory_prediction_summary(
+            model_type=args.model, dataset=args.dataset,
+        )
+        print(f"\nMemory Prediction Summary")
+        print("=" * 30)
+        if result.get("count", 0) == 0:
+            print(result.get("message", "No data"))
+        else:
+            print(f"  Runs:           {result['count']}")
+            print(f"  Mean ratio:     {result['mean']}")
+            print(f"  Min:            {result['min']}")
+            print(f"  Max:            {result['max']}")
+            print(f"  Std:            {result['std']}")
+            print(f"  Assessment:     {result['interpretation']}")
 
     elif args.command == "query":
         from .db import query

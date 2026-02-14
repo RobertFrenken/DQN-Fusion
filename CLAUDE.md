@@ -47,6 +47,18 @@ python -m pipeline.analytics compare <run_a> <run_b>
 python -m pipeline.analytics diff <run_a> <run_b>
 python -m pipeline.analytics dataset <name>
 python -m pipeline.analytics query "SELECT json_extract(...) FROM ..."
+python -m pipeline.analytics memory [--model vgae] [--dataset hcrl_sa]
+
+# STATE.md automation
+python -m pipeline.state_sync preview   # Preview regenerated sections
+python -m pipeline.state_sync update    # Write updated STATE.md in-place
+python -m pipeline.cli state            # Shorthand for state_sync update
+
+# Legacy path migration (teacher_*/student_* → {model_type}_{scale}_*)
+python -m pipeline.migrate_paths --dry-run              # Preview renames
+python -m pipeline.migrate_paths --execute              # Execute renames
+python -m pipeline.migrate_paths --dry-run --dataset hcrl_sa  # Single dataset
+python -m pipeline.migrate_paths --execute --no-db-update     # Skip DB updates
 
 # MLflow UI (inside tmux on login node)
 mlflow ui --backend-store-uri sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db --host 0.0.0.0 --port 5000

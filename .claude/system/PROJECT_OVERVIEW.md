@@ -51,6 +51,30 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
 ### Layer 3: `src/` (domain — imports config.constants, never imports pipeline/)
 
+## Model Registry
+
+`src/models/registry.py` centralizes model construction and fusion feature extraction.
+
+**Registered models** (order matters — determines 15-D DQN state layout):
+
+| Model | Feature Dim | Extractor | Role |
+|-------|-------------|-----------|------|
+| `vgae` | 8-D | `VGAEFusionExtractor` | Errors + latent stats + confidence |
+| `gat` | 7-D | `GATFusionExtractor` | Class probs + embedding stats + confidence |
+| `dqn` | — | None | Consumes features (15-D state) |
+
+**Usage**:
+```python
+from src.models import get, fusion_state_dim, extractors
+
+entry = get("vgae")                  # ModelEntry(model_type, factory, extractor)
+model = entry.factory(cfg, num_ids, in_ch)  # Construct model from config
+dim = fusion_state_dim()             # 15 (sum of all extractor dims)
+pairs = extractors()                 # [("vgae", ext), ("gat", ext)] in registration order
+```
+
+**Adding a new model**: Register a `ModelEntry` in `registry.py` with a factory function (lazy import to avoid circular deps) and an optional `FusionFeatureExtractor` implementation.
+
 ## Supporting Code: `src/`
 
 `pipeline/stages/` imports from these `src/` modules:

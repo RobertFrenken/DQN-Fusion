@@ -17,7 +17,7 @@ from torch_geometric.loader import DataLoader
 from config import PipelineConfig, stage_dir, checkpoint_path, config_path, data_dir, cache_dir
 from config.constants import MMAP_TENSOR_LIMIT
 from ..tracking import log_memory_metrics, get_memory_summary
-from ..memory import compute_batch_size, log_memory_state
+from ..memory import compute_batch_size, log_memory_state, save_budget_cache, load_budget_cache
 
 if TYPE_CHECKING:
     from torch_geometric.data import Data
@@ -65,6 +65,11 @@ class MemoryMonitorCallback(pl.Callback):
             mlflow.log_metric("memory_peak_actual_mb", peak_mb)
             if self.predicted_peak_mb > 0:
                 mlflow.log_metric("memory_peak_predicted_mb", self.predicted_peak_mb)
+                ratio = peak_mb / self.predicted_peak_mb
+                error_pct = abs(1.0 - ratio) * 100
+                mlflow.log_metric("memory/prediction_ratio", ratio)
+                mlflow.log_metric("memory/prediction_error_pct", error_pct)
+                log.info("Memory prediction: ratio=%.3f error=%.1f%%", ratio, error_pct)
             torch.cuda.reset_peak_memory_stats()
             log.info("Epoch 0 peak memory: actual=%.1fMB predicted=%.1fMB",
                      peak_mb, self.predicted_peak_mb)
@@ -130,15 +135,25 @@ def compute_optimal_batch_size(
     train_data,
     cfg: PipelineConfig,
     teacher: Optional[nn.Module] = None,
+    run_dir: Optional[Path] = None,
 ) -> int:
     """Compute optimal batch size using memory analysis.
 
     Uses the p95 graph from cache metadata for conservative sizing.
-    Falls back to safety_factor if estimation fails.
+    Falls back to safety_factor if estimation fails.  Results are cached
+    to ``memory_cache.json`` in *run_dir* (if provided) for faster
+    subsequent runs with the same config.
     """
     if len(train_data) == 0:
         log.warning("Empty training data, using fallback batch size")
         return effective_batch_size(cfg)
+
+    # Check cache first
+    if run_dir is not None:
+        cached = load_budget_cache(run_dir, cfg)
+        if cached is not None:
+            log.info("Using cached batch size: %d", cached.recommended_batch_size)
+            return cached.recommended_batch_size
 
     sample_graph = _get_representative_graph(train_data, cfg)
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
@@ -163,6 +178,11 @@ def compute_optimal_batch_size(
             "Batch size: %d (mode=%s, max=%d, KD=%s)",
             budget.recommended_batch_size, mode, cfg.training.batch_size, teacher is not None
         )
+
+        # Save to cache for next run
+        if run_dir is not None:
+            save_budget_cache(budget, run_dir, cfg)
+
         return budget.recommended_batch_size
 
     except Exception as e:
@@ -256,7 +276,17 @@ def load_teacher(
     in_channels: int,
     device: torch.device,
 ) -> nn.Module:
-    """Load teacher model using its frozen config and the registry."""
+    """Load a teacher model from its checkpoint for knowledge distillation.
+
+    Uses the model registry (``registry.get(model_type).factory()``) to
+    construct the architecture, then loads weights from *teacher_path*.
+    Dimensions come from the **frozen config.json** saved alongside the
+    checkpoint — never from the student config — preventing shape mismatches
+    when teacher and student have different hidden sizes.
+
+    The returned model is moved to *device*, set to eval mode, and has all
+    parameters frozen (``requires_grad=False``).
+    """
     from src.models.registry import get as registry_get
 
     checkpoint = torch.load(teacher_path, map_location="cpu", weights_only=True)

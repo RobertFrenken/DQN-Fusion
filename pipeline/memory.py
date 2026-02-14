@@ -3,11 +3,17 @@
 Batch size computation through layered estimation:
 1. Static (fast): Model parameters, embeddings, optimizer states, CUDA overhead
 2. Measured (default): Forward hooks to measure actual activation memory
+
+Includes batch size caching: ``save_budget_cache`` / ``load_budget_cache``
+persist the ``MemoryBudget`` to ``memory_cache.json`` in the run directory,
+keyed by a config fingerprint for invalidation on config changes.
 """
 from __future__ import annotations
 
+import json as _json
 import logging
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import TYPE_CHECKING, Optional, List
 
 import torch
@@ -269,6 +275,69 @@ def compute_batch_size(
 
     log.info("Memory budget: %s", budget)
     return budget
+
+
+def _config_hash(cfg) -> str:
+    """Compute a short fingerprint of a PipelineConfig for cache invalidation."""
+    return str(hash(str(cfg.model_dump())))
+
+
+def save_budget_cache(budget: MemoryBudget, run_dir: Path, cfg) -> None:
+    """Persist a MemoryBudget to ``memory_cache.json`` for future runs."""
+    cache_path = run_dir / "memory_cache.json"
+    data = {
+        "config_hash": _config_hash(cfg),
+        "recommended_batch_size": budget.recommended_batch_size,
+        "total_gpu_mb": budget.total_gpu_mb,
+        "model_params_mb": budget.model_params_mb,
+        "embedding_mb": budget.embedding_mb,
+        "optimizer_mb": budget.optimizer_mb,
+        "gradient_mb": budget.gradient_mb,
+        "activation_mb": budget.activation_mb,
+        "teacher_mb": budget.teacher_mb,
+        "per_graph_mb": budget.per_graph_mb,
+        "available_for_data_mb": budget.available_for_data_mb,
+        "estimation_mode": budget.estimation_mode,
+    }
+    try:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        cache_path.write_text(_json.dumps(data, indent=2))
+        log.info("Saved memory budget cache: %s", cache_path)
+    except Exception as e:
+        log.warning("Failed to save memory cache: %s", e)
+
+
+def load_budget_cache(run_dir: Path, cfg) -> Optional[MemoryBudget]:
+    """Load a cached MemoryBudget if the config hash matches.
+
+    Returns None on cache miss or hash mismatch.
+    """
+    cache_path = run_dir / "memory_cache.json"
+    if not cache_path.exists():
+        return None
+    try:
+        data = _json.loads(cache_path.read_text())
+        if data.get("config_hash") != _config_hash(cfg):
+            log.info("Memory cache stale (config changed), re-computing")
+            return None
+        budget = MemoryBudget(
+            total_gpu_mb=data["total_gpu_mb"],
+            model_params_mb=data["model_params_mb"],
+            embedding_mb=data["embedding_mb"],
+            optimizer_mb=data["optimizer_mb"],
+            gradient_mb=data["gradient_mb"],
+            activation_mb=data["activation_mb"],
+            teacher_mb=data["teacher_mb"],
+            per_graph_mb=data["per_graph_mb"],
+            available_for_data_mb=data["available_for_data_mb"],
+            recommended_batch_size=data["recommended_batch_size"],
+            estimation_mode=data["estimation_mode"],
+        )
+        log.info("Loaded cached memory budget: batch_size=%d", budget.recommended_batch_size)
+        return budget
+    except Exception as e:
+        log.warning("Failed to load memory cache: %s", e)
+        return None
 
 
 def log_memory_state(prefix: str = "") -> None:
