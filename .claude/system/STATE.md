@@ -1,6 +1,6 @@
 # Current State
 
-**Date**: 2026-02-14
+**Date**: 2026-02-15
 
 ## What's Working
 
@@ -15,11 +15,11 @@
 **Tests**: 78 passing (preprocessing tests are slow, e2e tests have pre-existing config.json assertion issue)
 
 ### Pipeline System
-- Pipeline system (`pipeline/`) fully operational with Snakemake + MLflow
+- Pipeline system (`pipeline/`) fully operational with Snakemake + project DB
 - CUDA multiprocessing fixes in place (clone-before-to, spawn context)
-- MLflow tracking at `sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db`
 - CLI: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>`
-- End-to-end validated: resolve() → config freeze → MLflow → graph loading → training
+- End-to-end validated: resolve() → config freeze → DB recording → graph loading → training
+- Snakemake `onsuccess` auto-exports dashboard data after pipeline runs
 
 ### Snakemake Features
 - **Retries with resource scaling**: `retries: 2` on all training rules, `mem_mb=128GB * attempt`
@@ -33,6 +33,13 @@
 - **Project DB**: `data/project.db` — 6 datasets, 140 runs, 7830 metrics
   - Write-through from cli.py + backfill via `populate()`
 - **Analytics**: sweep, leaderboard, compare, config_diff, dataset_summary
+
+### Dashboard (GitHub Pages)
+- **Live**: https://robertfrenken.github.io/DQN-Fusion/
+- **Stack**: Static JSON + D3.js, deployed from `docs/` on `main`
+- **Data**: 540 leaderboard entries, 140 runs, 6 datasets, 30 per-run metrics
+- **Auto-export**: `scripts/export_dashboard.sh` runs in Snakemake `onsuccess`
+- **Manual export**: `bash scripts/export_dashboard.sh` (or `--dry-run`, `--no-push`)
 
 ### GAT Architecture (Bug 3.7 Fixed)
 - Large GAT: `fc_layers: 1` (343k params) — removed bloated 1.3M-param hidden FC layer
@@ -54,6 +61,7 @@ Essential (imported by pipeline):
 
 ## Recently Completed
 
+- **Dashboard deployment** (2026-02-15): GitHub Pages dashboard live at https://robertfrenken.github.io/DQN-Fusion/. Auto-export via Snakemake `onsuccess`. Fixed orphaned `data/automotive` submodule ref that was breaking Pages builds and causing constant git noise.
 - **Legacy path migration** (2026-02-14): All 70 `teacher_*/student_*` dirs renamed to `{model_type}_{scale}_{stage}[_{aux}]` format across 6 datasets. DB run_ids updated. 18 config.json `teacher_path` values rewritten. No legacy dirs remain.
 
 ## Next Steps
@@ -72,6 +80,6 @@ Essential (imported by pipeline):
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
 - **Snakemake cache**: `/fs/scratch/PAS1266/snakemake-cache/`
-- **MLflow DB**: `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db` (auto-backed up to `~/backups/`)
 - **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics)
+- **Dashboard**: https://robertfrenken.github.io/DQN-Fusion/ (GitHub Pages from `docs/`)
 - **Conda**: `module load miniconda3/24.1.2-py310 && conda activate gnn-experiments`

@@ -57,6 +57,9 @@ python -m pipeline.cli state            # Shorthand for state_sync update
 # Export dashboard data (DB → static JSON)
 python -m pipeline.export                                    # Default: docs/dashboard/data/
 python -m pipeline.export --output-dir docs/dashboard/data   # Explicit output dir
+bash scripts/export_dashboard.sh              # Export + commit + push to Pages
+bash scripts/export_dashboard.sh --no-push    # Export + commit only
+bash scripts/export_dashboard.sh --dry-run    # Export only (no git)
 
 # Datasette (interactive DB browsing, inside tmux on login node)
 datasette data/project.db --port 8001
@@ -109,6 +112,7 @@ data/
   parquet/          # Columnar format (from ingest), queryable via Datasette or SQL
   cache/            # Preprocessed graph cache (.pt, .pkl, metadata)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json
+scripts/            # Automation (export_dashboard.sh)
 docs/dashboard/     # GitHub Pages D3.js dashboard (static JSON + HTML)
 profiles/slurm/     # SLURM submission profile for Snakemake
 ```
@@ -169,7 +173,7 @@ These fix real crashes -- do not violate:
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
 - **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics, epoch_metrics)
-- **Dashboard**: `docs/dashboard/` (GitHub Pages — static JSON + D3.js)
+- **Dashboard**: https://robertfrenken.github.io/DQN-Fusion/ (GitHub Pages from `docs/`)
 
 ## Session Modes
 
@@ -200,7 +204,7 @@ All tracking uses the project SQLite DB (`data/project.db`) as the single source
 - **Write-through**: `cli.py` records run start/end + metrics directly to DB
 - **Epoch metrics**: `epoch_metrics` table captures per-epoch training curves
 - **Backfill**: `python -m pipeline.db populate` scans filesystem for existing outputs
-- **Dashboard**: `python -m pipeline.export` generates static JSON; deploy via GitHub Pages
+- **Dashboard**: `python -m pipeline.export` generates static JSON; `scripts/export_dashboard.sh` commits + pushes to GitHub Pages. Auto-runs in Snakemake `onsuccess`.
 - **Interactive**: `datasette data/project.db` for ad-hoc SQL browsing
 
 ## Detailed Documentation
