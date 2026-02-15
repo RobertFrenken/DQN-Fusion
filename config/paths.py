@@ -35,12 +35,14 @@ _datasets_cache: list[str] | None = None
 
 
 def get_datasets() -> list[str]:
-    """Read dataset names from config/datasets.yaml (cached after first call)."""
+    """Read dataset names from config/datasets.yaml (cached after first call).
+
+    Uses Pydantic-validated catalog loader for early error detection.
+    """
     global _datasets_cache
     if _datasets_cache is None:
-        import yaml
-        with open(CATALOG_PATH) as f:
-            catalog = yaml.safe_load(f)
+        from .catalog import load_catalog
+        catalog = load_catalog()
         _datasets_cache = list(catalog.keys())
     return _datasets_cache
 

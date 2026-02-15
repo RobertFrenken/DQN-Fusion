@@ -28,14 +28,7 @@
             <p class="description">Best validation metrics per model configuration</p>
             <div class="controls">
                 <label>Metric:
-                    <select id="lb-metric">
-                        <option value="f1" selected>F1</option>
-                        <option value="accuracy">Accuracy</option>
-                        <option value="precision">Precision</option>
-                        <option value="recall">Recall</option>
-                        <option value="auc">AUC</option>
-                        <option value="mcc">MCC</option>
-                    </select>
+                    <select id="lb-metric"><!-- populated dynamically --></select>
                 </label>
             </div>
             <div id="lb-table-container"></div>
@@ -47,11 +40,7 @@
             <p class="description">F1 score across datasets per model configuration</p>
             <div class="controls">
                 <label>Metric:
-                    <select id="dc-metric">
-                        <option value="f1" selected>F1</option>
-                        <option value="accuracy">Accuracy</option>
-                        <option value="auc">AUC</option>
-                    </select>
+                    <select id="dc-metric"><!-- populated dynamically --></select>
                 </label>
             </div>
             <div id="dc-chart"></div>

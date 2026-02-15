@@ -26,7 +26,12 @@ log = logging.getLogger(__name__)
 
 
 def load_catalog() -> dict:
-    """Load the dataset catalog from config/datasets.yaml."""
+    """Load the dataset catalog from config/datasets.yaml.
+
+    Returns raw dicts (not Pydantic models) for backward compatibility
+    with callers that access entries as dicts. Validation is done by
+    config.catalog.load_catalog().
+    """
     with open(CATALOG_PATH) as f:
         return yaml.safe_load(f)
 

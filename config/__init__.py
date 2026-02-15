@@ -40,6 +40,8 @@ from .paths import (
     log_path_str,
 )
 from .constants import (
+    SCHEMA_VERSION,
+    PREPROCESSING_VERSION,
     DB_PATH,
     PARQUET_ROOT,
     ROW_GROUP_SIZE,

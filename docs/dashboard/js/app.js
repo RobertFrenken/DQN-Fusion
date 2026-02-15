@@ -2,10 +2,21 @@
 
 (async function() {
     const BASE = 'data/';
+    const EXPECTED_MAJOR_VERSION = '1';
 
     async function loadJSON(path) {
         try {
-            return await d3.json(BASE + path);
+            const raw = await d3.json(BASE + path);
+            if (!raw) return [];
+            // Unwrap versioned envelope (backwards-compatible with old format)
+            if (raw.schema_version != null) {
+                const major = String(raw.schema_version).split('.')[0];
+                if (major !== EXPECTED_MAJOR_VERSION) {
+                    console.warn(`Schema version mismatch: expected major ${EXPECTED_MAJOR_VERSION}, got ${raw.schema_version}`);
+                }
+                return raw.data ?? raw;
+            }
+            return raw;
         } catch (e) {
             console.warn(`Failed to load ${path}:`, e.message);
             return [];
@@ -13,12 +24,33 @@
     }
 
     // Load all data files in parallel
-    const [leaderboard, runs, datasets, kdTransfer] = await Promise.all([
+    const [leaderboard, runs, datasets, kdTransfer, metricCatalog] = await Promise.all([
         loadJSON('leaderboard.json'),
         loadJSON('runs.json'),
         loadJSON('datasets.json'),
         loadJSON('kd_transfer.json'),
+        loadJSON('metrics/metric_catalog.json'),
     ]);
+
+    // --- Populate metric dropdowns dynamically ---
+    function populateMetricSelect(selectId, defaultMetrics, selectedDefault) {
+        const select = document.getElementById(selectId);
+        if (!select) return;
+        // Use catalog if available, else fall back to defaults
+        const metrics = metricCatalog.length > 0 ? metricCatalog : defaultMetrics;
+        select.innerHTML = '';
+        metrics.forEach(m => {
+            const opt = document.createElement('option');
+            opt.value = m;
+            opt.textContent = m.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase());
+            if (m === selectedDefault) opt.selected = true;
+            select.appendChild(opt);
+        });
+    }
+
+    // Populate leaderboard and dataset comparison metric selects from catalog
+    populateMetricSelect('lb-metric', ['f1', 'accuracy', 'precision', 'recall', 'auc', 'mcc'], 'f1');
+    populateMetricSelect('dc-metric', ['f1', 'accuracy', 'auc'], 'f1');
 
     // --- Leaderboard ---
     const lbMetricSelect = document.getElementById('lb-metric');

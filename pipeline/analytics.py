@@ -30,6 +30,13 @@ from .db import DB_PATH, get_connection
 _SAFE_PARAM = re.compile(r"^[a-zA-Z_][a-zA-Z0-9_]*$")
 
 
+def _get_core_metrics(conn: sqlite3.Connection) -> list[str]:
+    """Discover available metric names from the DB instead of hardcoding."""
+    return [r[0] for r in conn.execute(
+        "SELECT DISTINCT metric_name FROM metrics ORDER BY metric_name"
+    ).fetchall()]
+
+
 def _validate_param(name: str) -> str:
     """Validate parameter name to prevent SQL injection in json_extract paths."""
     if not _SAFE_PARAM.match(name):
@@ -252,18 +259,23 @@ def dataset_summary(
         (dataset,),
     ).fetchall()
 
+    # Use dynamic metric discovery instead of hardcoded list
+    core_metrics = _get_core_metrics(conn)
+    if not core_metrics:
+        core_metrics = ['f1', 'accuracy', 'auc', 'mcc']
+    placeholders = ",".join("?" for _ in core_metrics)
     best = conn.execute(
-        """
+        f"""
         SELECT m.metric_name, m.run_id, m.model, m.scenario,
                ROUND(MAX(m.value), 6) AS best_value
         FROM metrics m
         JOIN runs r ON r.run_id = m.run_id
         WHERE r.dataset = ?
-          AND m.metric_name IN ('f1', 'accuracy', 'auc', 'mcc')
+          AND m.metric_name IN ({placeholders})
         GROUP BY m.metric_name
         ORDER BY m.metric_name
         """,
-        (dataset,),
+        (dataset, *core_metrics),
     ).fetchall()
 
     conn.close()

@@ -10,11 +10,55 @@ import json
 import logging
 from pathlib import Path
 
+from config.constants import SCHEMA_VERSION
 from .db import get_connection
 
 log = logging.getLogger(__name__)
 
 DEFAULT_OUTPUT_DIR = Path("docs/dashboard/data")
+
+
+def _versioned_envelope(data: list | dict) -> dict:
+    """Wrap export data with schema version and timestamp."""
+    from datetime import datetime, timezone
+    return {
+        "schema_version": SCHEMA_VERSION,
+        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "data": data,
+    }
+
+
+REQUIRED_COLUMNS = {
+    "runs": {"run_id", "dataset", "model_type", "scale", "has_kd", "status", "started_at"},
+    "metrics": {"run_id", "model", "scenario", "metric_name", "value"},
+}
+
+
+def _validate_schema(conn):
+    """Verify DB schema has all required columns before exporting."""
+    for table, expected in REQUIRED_COLUMNS.items():
+        actual = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        missing = expected - actual
+        if missing:
+            raise RuntimeError(f"DB schema mismatch: {table} missing columns {missing}")
+
+
+def export_metric_catalog(output_dir: Path) -> Path:
+    """Export distinct metric names for dynamic dashboard dropdown."""
+    conn = get_connection()
+    conn.row_factory = _dict_factory
+    rows = conn.execute(
+        "SELECT DISTINCT metric_name FROM metrics ORDER BY metric_name"
+    ).fetchall()
+    conn.close()
+
+    catalog = [r["metric_name"] for r in rows]
+    metrics_dir = output_dir / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    out = metrics_dir / "metric_catalog.json"
+    out.write_text(json.dumps(_versioned_envelope(catalog), indent=2))
+    log.info("Exported %d metric names → %s", len(catalog), out)
+    return out
 
 
 def export_leaderboard(output_dir: Path) -> Path:
@@ -37,7 +81,7 @@ def export_leaderboard(output_dir: Path) -> Path:
     conn.close()
 
     out = output_dir / "leaderboard.json"
-    out.write_text(json.dumps(rows, indent=2))
+    out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
     log.info("Exported %d leaderboard entries → %s", len(rows), out)
     return out
 
@@ -56,7 +100,7 @@ def export_runs(output_dir: Path) -> Path:
     conn.close()
 
     out = output_dir / "runs.json"
-    out.write_text(json.dumps(rows, indent=2))
+    out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
     log.info("Exported %d runs → %s", len(rows), out)
     return out
 
@@ -80,7 +124,7 @@ def export_metrics(output_dir: Path) -> Path:
         ).fetchall()
         # Use sanitized filename
         fname = rid.replace("/", "_") + ".json"
-        (metrics_dir / fname).write_text(json.dumps(rows, indent=2))
+        (metrics_dir / fname).write_text(json.dumps(_versioned_envelope(rows), indent=2))
 
     conn.close()
     log.info("Exported metrics for %d runs → %s", len(run_ids), metrics_dir)
@@ -101,7 +145,7 @@ def export_datasets(output_dir: Path) -> Path:
     conn.close()
 
     out = output_dir / "datasets.json"
-    out.write_text(json.dumps(rows, indent=2))
+    out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
     log.info("Exported %d datasets → %s", len(rows), out)
     return out
 
@@ -145,7 +189,7 @@ def export_kd_transfer(output_dir: Path) -> Path:
     conn.close()
 
     out = output_dir / "kd_transfer.json"
-    out.write_text(json.dumps(rows, indent=2))
+    out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
     log.info("Exported %d KD transfer pairs → %s", len(rows), out)
     return out
 
@@ -168,7 +212,7 @@ def export_training_curves(output_dir: Path) -> Path:
             (rid,),
         ).fetchall()
         fname = rid.replace("/", "_") + ".json"
-        (curves_dir / fname).write_text(json.dumps(rows, indent=2))
+        (curves_dir / fname).write_text(json.dumps(_versioned_envelope(rows), indent=2))
 
     conn.close()
     log.info("Exported training curves for %d runs → %s", len(run_ids), curves_dir)
@@ -178,12 +222,21 @@ def export_training_curves(output_dir: Path) -> Path:
 def export_all(output_dir: Path) -> None:
     """Run all exports."""
     output_dir.mkdir(parents=True, exist_ok=True)
+
+    # Pre-flight: validate DB schema before exporting
+    conn = get_connection()
+    try:
+        _validate_schema(conn)
+    finally:
+        conn.close()
+
     lb = export_leaderboard(output_dir)
     runs = export_runs(output_dir)
     metrics = export_metrics(output_dir)
     ds = export_datasets(output_dir)
     kd = export_kd_transfer(output_dir)
     curves = export_training_curves(output_dir)
+    export_metric_catalog(output_dir)
 
     # Validation summary
     for name, path in [

@@ -20,16 +20,42 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import functools
 import json
 import logging
 import sqlite3
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config.constants import DB_PATH
+from config.constants import DB_PATH, SCHEMA_VERSION
 from config.paths import EXPERIMENT_ROOT
 
 log = logging.getLogger(__name__)
+
+
+def _retry_on_locked(func):
+    """Retry DB writes on sqlite3.OperationalError containing 'locked'.
+
+    Retries 5 times with exponential backoff (0.5s, 1s, 2s, 4s, 8s).
+    """
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        delays = [0.5, 1.0, 2.0, 4.0, 8.0]
+        for attempt, delay in enumerate(delays):
+            try:
+                return func(*args, **kwargs)
+            except sqlite3.OperationalError as e:
+                if "locked" not in str(e).lower():
+                    raise
+                if attempt == len(delays) - 1:
+                    log.error("DB locked after %d retries: %s", len(delays), e)
+                    raise
+                log.warning("DB locked (attempt %d/%d), retrying in %.1fs...",
+                            attempt + 1, len(delays), delay)
+                time.sleep(delay)
+        return func(*args, **kwargs)  # final attempt without catch
+    return wrapper
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS datasets (
@@ -58,6 +84,7 @@ CREATE TABLE IF NOT EXISTS runs (
     has_kd         INTEGER,
     status         TEXT,
     teacher_run    TEXT,
+    schema_version TEXT DEFAULT '1.0.0',
     started_at     TEXT,
     completed_at   TEXT,
     config_json    TEXT
@@ -100,6 +127,9 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     if "use_kd" in cols and "has_kd" not in cols:
         conn.execute("ALTER TABLE runs RENAME COLUMN use_kd TO has_kd")
         log.info("Migrated: renamed use_kd -> has_kd")
+    if "schema_version" not in cols:
+        conn.execute("ALTER TABLE runs ADD COLUMN schema_version TEXT DEFAULT '1.0.0'")
+        log.info("Migrated: added schema_version column to runs table")
     # epoch_metrics table is created by SCHEMA (CREATE IF NOT EXISTS)
 
 
@@ -109,7 +139,7 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA busy_timeout=15000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     _migrate_schema(conn)
@@ -150,6 +180,7 @@ def register_datasets(stats_list: list[dict], db_path: Path | None = None) -> No
         conn.close()
 
 
+@_retry_on_locked
 def record_run_start(
     run_id: str,
     dataset: str,
@@ -164,20 +195,29 @@ def record_run_start(
     """Record the start of a run. Called from cli.py before stage dispatch."""
     conn = get_connection(db_path)
     try:
+        # Warn if overwriting a completed run
+        existing = conn.execute(
+            "SELECT status FROM runs WHERE run_id = ?", (run_id,)
+        ).fetchone()
+        if existing and existing[0] == "complete":
+            log.warning("Overwriting completed run %s in DB", run_id)
+
         now = datetime.now(timezone.utc).isoformat()
         conn.execute(
             """INSERT OR REPLACE INTO runs
                (run_id, dataset, model_type, scale, stage, has_kd, status,
-                teacher_run, started_at, completed_at, config_json)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
+                teacher_run, schema_version, started_at, completed_at, config_json)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, ?)""",
             (run_id, dataset, model_type, scale, stage,
-             1 if has_kd else 0, "running", teacher_run, now, config_json),
+             1 if has_kd else 0, "running", teacher_run, SCHEMA_VERSION,
+             now, config_json),
         )
         conn.commit()
     finally:
         conn.close()
 
 
+@_retry_on_locked
 def record_run_end(
     run_id: str,
     success: bool,
@@ -202,6 +242,7 @@ def record_run_end(
         conn.close()
 
 
+@_retry_on_locked
 def record_epoch_metrics(
     run_id: str,
     epoch: int,

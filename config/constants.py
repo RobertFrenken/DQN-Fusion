@@ -6,6 +6,12 @@ These are structural/environmental constants that rarely change.
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
+# Schema / versioning
+# ---------------------------------------------------------------------------
+SCHEMA_VERSION = "1.0.0"  # MAJOR.MINOR.PATCH — bump MAJOR on breaking DB changes
+PREPROCESSING_VERSION = "1.1.0"  # Bump when graph construction logic changes
+
+# ---------------------------------------------------------------------------
 # Filesystem paths
 # ---------------------------------------------------------------------------
 CATALOG_PATH = Path(__file__).parent / "datasets.yaml"

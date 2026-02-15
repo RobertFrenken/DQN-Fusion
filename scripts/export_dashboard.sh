@@ -58,6 +58,16 @@ if $NO_PUSH; then
     exit 0
 fi
 
-# --- Push ---
-git push origin "$BRANCH"
-echo "Pushed to ${BRANCH}."
+# --- Push with retry ---
+MAX_RETRIES=3
+for i in $(seq 1 $MAX_RETRIES); do
+    git pull --rebase origin "$BRANCH" 2>/dev/null || true
+    if git push origin "$BRANCH" 2>/dev/null; then
+        echo "Pushed to ${BRANCH}."
+        exit 0
+    fi
+    echo "Push attempt $i/$MAX_RETRIES failed. Retrying in ${i}s..."
+    sleep "$i"
+done
+echo "ERROR: Dashboard push failed after $MAX_RETRIES attempts." >&2
+exit 1

@@ -20,7 +20,9 @@ from config.constants import (
     NODE_FEATURE_COUNT,
     EDGE_FEATURE_COUNT,
     MMAP_TENSOR_LIMIT,
+    PREPROCESSING_VERSION,
 )
+import config.constants as constants
 from src.preprocessing.preprocessing import GraphDataset
 
 logger = logging.getLogger(__name__)
@@ -161,6 +163,28 @@ def _load_cached_data(cache_file, id_mapping_file, dataset_name):
                 expected = metadata.get("num_graphs", 0)
                 actual = len(graphs)
                 version = metadata.get("preprocessing_version", "unknown")
+
+                # Check preprocessing params match current config
+                stale_reasons = []
+                if version != PREPROCESSING_VERSION:
+                    stale_reasons.append(f"version {version} != {PREPROCESSING_VERSION}")
+                for key in ("window_size", "stride", "node_feature_dim", "edge_feature_dim"):
+                    cached_val = metadata.get(key)
+                    const_name = key.upper()
+                    # Map metadata keys to constant names
+                    const_map = {
+                        "WINDOW_SIZE": "DEFAULT_WINDOW_SIZE",
+                        "STRIDE": "DEFAULT_STRIDE",
+                        "NODE_FEATURE_DIM": "NODE_FEATURE_COUNT",
+                        "EDGE_FEATURE_DIM": "EDGE_FEATURE_COUNT",
+                    }
+                    actual_const = const_map.get(const_name, const_name)
+                    current_val = getattr(constants, actual_const, None)
+                    if cached_val is not None and current_val is not None and cached_val != current_val:
+                        stale_reasons.append(f"{key}: {cached_val} != {current_val}")
+                if stale_reasons:
+                    logger.warning("Cache stale (%s). Rebuilding.", "; ".join(stale_reasons))
+                    return None, None
 
                 if expected > 0 and actual < expected * 0.1:
                     logger.warning(
@@ -325,7 +349,7 @@ def _write_cache_metadata(cache_dir, dataset_name, graphs, id_mapping, csv_files
         "node_feature_dim": NODE_FEATURE_COUNT,
         "edge_feature_dim": EDGE_FEATURE_COUNT,
         "source_csv_count": len(csv_files),
-        "preprocessing_version": "1.0",
+        "preprocessing_version": PREPROCESSING_VERSION,
         "torch_version": torch.__version__,
         "pyg_version": torch_geometric.__version__,
     }

@@ -17,9 +17,10 @@ mp.set_start_method('spawn', force=True)
 import argparse
 import json
 import logging
+from datetime import datetime
 from pathlib import Path
 
-from config import PipelineConfig, STAGES, config_path, run_id
+from config import PipelineConfig, STAGES, config_path, run_id, stage_dir
 from config.resolver import resolve
 from .validate import validate
 from .db import record_run_start, record_run_end, get_connection
@@ -153,6 +154,14 @@ def main(argv: list[str] | None = None) -> None:
 
     # ---- Validate ----
     validate(cfg, args.stage)
+
+    # ---- Archive completed run if re-running same config ----
+    sdir = stage_dir(cfg, args.stage)
+    if (sdir / "metrics.json").exists():
+        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+        archive = sdir.parent / f"{sdir.name}.archive_{ts}"
+        sdir.rename(archive)
+        log.warning("Archived completed run → %s", archive)
 
     # ---- Save frozen config ----
     cfg_out = config_path(cfg, args.stage)

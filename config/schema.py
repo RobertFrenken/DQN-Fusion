@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field, model_validator
 
@@ -43,7 +43,7 @@ class DQNArchitecture(BaseModel, frozen=True):
 
 class AuxiliaryConfig(BaseModel, frozen=True):
     """One auxiliary loss modifier (KD, PINN, etc.). Flat with defaults."""
-    type: str = "kd"
+    type: Literal["kd"] = "kd"  # Extend Literal as new auxiliaries are added
     model_path: str = ""
     alpha: float = Field(0.7, ge=0, le=1)
     # KD-specific (defaults are safe no-ops for non-KD types)
@@ -128,6 +128,7 @@ class PipelineConfig(BaseModel, frozen=True):
     preprocessing: PreprocessingConfig = PreprocessingConfig()
 
     # --- Infrastructure ---
+    schema_version: str = "1.0.0"
     experiment_root: str = "experimentruns"
     device: str = "cuda"
     num_workers: int = 8
