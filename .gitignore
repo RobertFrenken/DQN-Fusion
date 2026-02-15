@@ -1,6 +1,7 @@
 # ===== DATASETS =====
 # Raw CAN data is large - tracked by DVC, not git
 datasets/
+data/automotive/
 *.csv
 *.log
 *.can
