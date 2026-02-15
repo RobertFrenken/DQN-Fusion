@@ -33,6 +33,7 @@ CLI       = f"{PY} -m pipeline.cli"
 # After all rules succeed: populate project DB from filesystem outputs.
 onsuccess:
     shell("{PY} -m pipeline.db populate")
+    shell("bash scripts/export_dashboard.sh --no-push")
 
 include: "rules/common.smk"
 include: "rules/targets.smk"
