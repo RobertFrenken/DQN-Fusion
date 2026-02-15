@@ -1,0 +1,1568 @@
+[
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "accuracy",
+    "value": 0.9997999399819946
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "auc",
+    "value": 0.9997962433319828
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "balanced_accuracy",
+    "value": 0.9997613934621808
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "detection_rate",
+    "value": 0.9995227869243617
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "f1",
+    "value": 0.9997613365155131
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "fnr",
+    "value": 0.0004772130756382725
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "fpr",
+    "value": 0.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "kappa",
+    "value": 0.9995891305740734
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "mcc",
+    "value": 0.9995892149462465
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "miss_rate",
+    "value": 0.0004772130756382725
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "pr_auc",
+    "value": 0.9998451898984334
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "precision",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "recall",
+    "value": 0.9995227869243617
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "specificity",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "tnr",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_01_DoS",
+    "metric_name": "tpr",
+    "value": 0.9995227869243617
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "accuracy",
+    "value": 0.9996999099729919
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "auc",
+    "value": 0.9995258071831081
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "balanced_accuracy",
+    "value": 0.9997073741708935
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "detection_rate",
+    "value": 0.999414748341787
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "f1",
+    "value": 0.9997072885159528
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "fnr",
+    "value": 0.0005852516582130316
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "fpr",
+    "value": 0.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "kappa",
+    "value": 0.9993994383904908
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "mcc",
+    "value": 0.9993996186193594
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "miss_rate",
+    "value": 0.0005852516582130316
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "pr_auc",
+    "value": 0.9997491405810682
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "precision",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "recall",
+    "value": 0.999414748341787
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "specificity",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "tnr",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "tpr",
+    "value": 0.999414748341787
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "accuracy",
+    "value": 0.9973992197659298
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "auc",
+    "value": 0.9968314951323257
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "balanced_accuracy",
+    "value": 0.9976508854354897
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "detection_rate",
+    "value": 0.9953017708709794
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "f1",
+    "value": 0.9976453541025176
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "fnr",
+    "value": 0.0046982291290206
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "fpr",
+    "value": 0.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "kappa",
+    "value": 0.994741011157865
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "mcc",
+    "value": 0.9947547672011926
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "miss_rate",
+    "value": 0.0046982291290206
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "pr_auc",
+    "value": 0.9984320842334088
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "precision",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "recall",
+    "value": 0.9953017708709794
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "specificity",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "tnr",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "tpr",
+    "value": 0.9953017708709794
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "accuracy",
+    "value": 0.9994998499549865
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "auc",
+    "value": 0.9993618622552841
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "balanced_accuracy",
+    "value": 0.9995387453874538
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "detection_rate",
+    "value": 0.9990774907749077
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "f1",
+    "value": 0.9995385325334564
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "fnr",
+    "value": 0.0009225092250922509
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "fpr",
+    "value": 0.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "kappa",
+    "value": 0.9989926216615667
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "mcc",
+    "value": 0.9989931285563615
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "miss_rate",
+    "value": 0.0009225092250922509
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "pr_auc",
+    "value": 0.999666067229896
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "precision",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "recall",
+    "value": 0.9990774907749077
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "specificity",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "tnr",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "tpr",
+    "value": 0.9990774907749077
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "accuracy",
+    "value": 0.9994843234323433
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "auc",
+    "value": 0.9988755579533821
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "balanced_accuracy",
+    "value": 0.9991382281971735
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "detection_rate",
+    "value": 0.9982764563943468
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "f1",
+    "value": 0.9991374849059859
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "fnr",
+    "value": 0.001723543605653223
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "fpr",
+    "value": 0.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "kappa",
+    "value": 0.9987697030233634
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "mcc",
+    "value": 0.9987704589084394
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "miss_rate",
+    "value": 0.001723543605653223
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "n_samples",
+    "value": 29088.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "pr_auc",
+    "value": 0.9990010051346645
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "precision",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "recall",
+    "value": 0.9982764563943468
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "specificity",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "tnr",
+    "value": 1.0
+  },
+  {
+    "model": "fusion",
+    "scenario": "val",
+    "metric_name": "tpr",
+    "value": 0.9982764563943468
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "accuracy",
+    "value": 0.9998999699909973
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "auc",
+    "value": 0.9999999178069109
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "balanced_accuracy",
+    "value": 0.9998806967310905
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "detection_rate",
+    "value": 0.9997613934621808
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "f1",
+    "value": 0.9998806824961222
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "fnr",
+    "value": 0.00023860653781913624
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "fpr",
+    "value": 0.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "kappa",
+    "value": 0.9997945721047083
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "mcc",
+    "value": 0.9997945932006844
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "miss_rate",
+    "value": 0.00023860653781913624
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "pr_auc",
+    "value": 0.9999998861745778
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "precision",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "recall",
+    "value": 0.9997613934621808
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "specificity",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "tnr",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_01_DoS",
+    "metric_name": "tpr",
+    "value": 0.9997613934621808
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "accuracy",
+    "value": 0.9997999399819946
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "auc",
+    "value": 0.9998140074795906
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "balanced_accuracy",
+    "value": 0.999804916113929
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "detection_rate",
+    "value": 0.9996098322278579
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "f1",
+    "value": 0.9998048780487805
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "fnr",
+    "value": 0.0003901677721420211
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "fpr",
+    "value": 0.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "kappa",
+    "value": 0.999599623549216
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "mcc",
+    "value": 0.9995997036677864
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "miss_rate",
+    "value": 0.0003901677721420211
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "pr_auc",
+    "value": 0.9999037684404803
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "precision",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "recall",
+    "value": 0.9996098322278579
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "specificity",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "tnr",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "tpr",
+    "value": 0.9996098322278579
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "accuracy",
+    "value": 0.9985995798739622
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "auc",
+    "value": 0.9998750113469616
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "balanced_accuracy",
+    "value": 0.9987134104524524
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "detection_rate",
+    "value": 0.9976508854354897
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "f1",
+    "value": 0.9987337192474675
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "fnr",
+    "value": 0.0023491145645103
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "fpr",
+    "value": 0.00022406453058480843
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "kappa",
+    "value": 0.9971673774365233
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "mcc",
+    "value": 0.9971703166005782
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "miss_rate",
+    "value": 0.0023491145645103
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "pr_auc",
+    "value": 0.999912575221112
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "precision",
+    "value": 0.9998189061934082
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "recall",
+    "value": 0.9976508854354897
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "specificity",
+    "value": 0.9997759354694152
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "tnr",
+    "value": 0.9997759354694152
+  },
+  {
+    "model": "gat",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "tpr",
+    "value": 0.9976508854354897
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "accuracy",
+    "value": 0.9995998799639892
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "auc",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "balanced_accuracy",
+    "value": 0.9996309963099631
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "detection_rate",
+    "value": 0.9992619926199262
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "f1",
+    "value": 0.9996308600959763
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "fnr",
+    "value": 0.0007380073800738007
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "fpr",
+    "value": 0.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "kappa",
+    "value": 0.9991940836371408
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "mcc",
+    "value": 0.999194408126169
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "miss_rate",
+    "value": 0.0007380073800738007
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "pr_auc",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "precision",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "recall",
+    "value": 0.9992619926199262
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "specificity",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "tnr",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "tpr",
+    "value": 0.9992619926199262
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "accuracy",
+    "value": 0.9997249724972497
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "auc",
+    "value": 0.999999813990879
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "balanced_accuracy",
+    "value": 0.9995403883718258
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "detection_rate",
+    "value": 0.9990807767436516
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "f1",
+    "value": 0.9995401770318427
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "fnr",
+    "value": 0.0009192232563483856
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "fpr",
+    "value": 0.0
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "kappa",
+    "value": 0.9993439928740414
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "mcc",
+    "value": 0.9993442079056306
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "miss_rate",
+    "value": 0.0009192232563483856
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "n_samples",
+    "value": 29088.0
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "pr_auc",
+    "value": 0.9999995646713719
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "precision",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "recall",
+    "value": 0.9990807767436516
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "specificity",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "tnr",
+    "value": 1.0
+  },
+  {
+    "model": "gat",
+    "scenario": "val",
+    "metric_name": "tpr",
+    "value": 0.9990807767436516
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "accuracy",
+    "value": 0.8760628188456537
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "auc",
+    "value": 0.9897898511754392
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "balanced_accuracy",
+    "value": 0.8929349943899108
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "detection_rate",
+    "value": 0.9973753280839895
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "f1",
+    "value": 0.8709240545890197
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "fnr",
+    "value": 0.0026246719160104987
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "fpr",
+    "value": 0.2115053393041681
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "kappa",
+    "value": 0.7553633522726544
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "mcc",
+    "value": 0.7781631840080132
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "miss_rate",
+    "value": 0.0026246719160104987
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "pr_auc",
+    "value": 0.9795426952862187
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "precision",
+    "value": 0.7729289940828402
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "recall",
+    "value": 0.9973753280839895
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "specificity",
+    "value": 0.7884946606958319
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "threshold_from_val",
+    "value": 0.039774391800165176
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "tnr",
+    "value": 0.7884946606958319
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_01_DoS",
+    "metric_name": "tpr",
+    "value": 0.9973753280839895
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "accuracy",
+    "value": 0.8641592477743323
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "auc",
+    "value": 0.9998663128696972
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "balanced_accuracy",
+    "value": 0.8606035721617737
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "detection_rate",
+    "value": 1.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "f1",
+    "value": 0.8830318690783807
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "fnr",
+    "value": 0.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "fpr",
+    "value": 0.27879285567645246
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "kappa",
+    "value": 0.7262432558097704
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "mcc",
+    "value": 0.7550884164294444
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "miss_rate",
+    "value": 0.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "pr_auc",
+    "value": 0.9998900969594637
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "precision",
+    "value": 0.7905613818630475
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "recall",
+    "value": 1.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "specificity",
+    "value": 0.7212071443235475
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "threshold_from_val",
+    "value": 0.039774391800165176
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "tnr",
+    "value": 0.7212071443235475
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_02_fuzzing",
+    "metric_name": "tpr",
+    "value": 1.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "accuracy",
+    "value": 0.6916074822446734
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "auc",
+    "value": 0.8547256926221714
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "balanced_accuracy",
+    "value": 0.7119526361430907
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "detection_rate",
+    "value": 0.5220455366823274
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "f1",
+    "value": 0.6520708723620359
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "fnr",
+    "value": 0.47795446331767255
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "fpr",
+    "value": 0.09814026439614609
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "kappa",
+    "value": 0.4045470783805799
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "mcc",
+    "value": 0.44721104554484203
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "miss_rate",
+    "value": 0.47795446331767255
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "pr_auc",
+    "value": 0.8605469885969474
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "precision",
+    "value": 0.8683498647430117
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "recall",
+    "value": 0.5220455366823274
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "specificity",
+    "value": 0.9018597356038539
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "threshold_from_val",
+    "value": 0.039774391800165176
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "tnr",
+    "value": 0.9018597356038539
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_03_gear_spoofing",
+    "metric_name": "tpr",
+    "value": 0.5220455366823274
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "accuracy",
+    "value": 0.8507552265679704
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "auc",
+    "value": 0.9312617959039542
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "balanced_accuracy",
+    "value": 0.8496524012651094
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "detection_rate",
+    "value": 0.862730627306273
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "f1",
+    "value": 0.8624123939505718
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "fnr",
+    "value": 0.13726937269372694
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "fpr",
+    "value": 0.1634258247760542
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "kappa",
+    "value": 0.6993523331414685
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "mcc",
+    "value": 0.6993525603184141
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "miss_rate",
+    "value": 0.13726937269372694
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "n_samples",
+    "value": 9997.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "pr_auc",
+    "value": 0.9317303160137602
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "precision",
+    "value": 0.862094395280236
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "recall",
+    "value": 0.862730627306273
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "specificity",
+    "value": 0.8365741752239458
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "threshold_from_val",
+    "value": 0.039774391800165176
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "tnr",
+    "value": 0.8365741752239458
+  },
+  {
+    "model": "vgae",
+    "scenario": "test_04_rpm_spoofing",
+    "metric_name": "tpr",
+    "value": 0.862730627306273
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "accuracy",
+    "value": 0.7686331133113311
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "auc",
+    "value": 0.8808079227259491
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "balanced_accuracy",
+    "value": 0.7848179017207282
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "detection_rate",
+    "value": 0.8251177754797197
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "f1",
+    "value": 0.6809216764650105
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "fnr",
+    "value": 0.17488222452028035
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "fpr",
+    "value": 0.25548197203826345
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "kappa",
+    "value": 0.5079881665772354
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "mcc",
+    "value": 0.5275015852532637
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "miss_rate",
+    "value": 0.17488222452028035
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "n_samples",
+    "value": 29088.0
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "optimal_threshold",
+    "value": 0.039774391800165176
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "pr_auc",
+    "value": 0.7930192810833885
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "precision",
+    "value": 0.5796270885462911
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "recall",
+    "value": 0.8251177754797197
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "specificity",
+    "value": 0.7445180279617366
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "tnr",
+    "value": 0.7445180279617366
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "tpr",
+    "value": 0.8251177754797197
+  },
+  {
+    "model": "vgae",
+    "scenario": "val",
+    "metric_name": "youden_j",
+    "value": 0.5697507063484997
+  }
+]

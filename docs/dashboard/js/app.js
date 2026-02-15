@@ -80,8 +80,18 @@
     // --- Navigation ---
     document.querySelectorAll('nav a').forEach(link => {
         link.addEventListener('click', (e) => {
+            e.preventDefault();
             document.querySelectorAll('nav a').forEach(l => l.classList.remove('active'));
             e.target.classList.add('active');
+            // Show only the target panel
+            const targetId = e.target.getAttribute('href').slice(1);
+            document.querySelectorAll('main > section').forEach(s => {
+                s.style.display = s.id === targetId ? '' : 'none';
+            });
         });
+    });
+    // Show only the first panel on load
+    document.querySelectorAll('main > section').forEach((s, i) => {
+        s.style.display = i === 0 ? '' : 'none';
     });
 })();
