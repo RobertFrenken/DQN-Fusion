@@ -7,7 +7,6 @@ import sys
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
-import mlflow
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
@@ -41,34 +40,57 @@ if str(_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 
 class MemoryMonitorCallback(pl.Callback):
-    """Log memory usage to MLflow at epoch boundaries."""
+    """Log memory usage at epoch boundaries and record to project DB."""
 
-    def __init__(self, log_every_n_epochs: int = 5, predicted_peak_mb: float = 0.0):
+    def __init__(
+        self,
+        log_every_n_epochs: int = 5,
+        predicted_peak_mb: float = 0.0,
+        run_id: str = "",
+    ):
         super().__init__()
         self.log_every_n_epochs = log_every_n_epochs
         self.predicted_peak_mb = predicted_peak_mb
+        self.run_id = run_id
         self._logged_first_epoch = False
+
+    def _record_epoch(self, epoch: int, extra: dict[str, float] | None = None):
+        """Record epoch metrics to project DB if run_id is set."""
+        if not self.run_id:
+            return
+        metrics = log_memory_metrics(step=epoch)
+        if extra:
+            metrics.update(extra)
+        try:
+            from pipeline.db import record_epoch_metrics
+            record_epoch_metrics(self.run_id, epoch, metrics)
+        except Exception as e:
+            log.warning("Failed to record epoch metrics: %s", e)
 
     def on_train_start(self, trainer, pl_module):
         log.info("Memory at train start: %s", get_memory_summary())
-        log_memory_metrics(step=0)
+        self._record_epoch(0)
 
     def on_train_epoch_end(self, trainer, pl_module):
         epoch = trainer.current_epoch
+        extra: dict[str, float] = {}
+
+        # Collect trainer-logged metrics (val_loss, val_f1, train_loss, lr, etc.)
+        for key in ("train_loss", "val_loss", "val_f1", "val_accuracy", "lr"):
+            val = trainer.callback_metrics.get(key)
+            if val is not None:
+                extra[key] = float(val)
+
         if epoch % self.log_every_n_epochs == 0:
-            log_memory_metrics(step=epoch)
+            self._record_epoch(epoch, extra)
 
         # Log predicted vs actual peak memory after the first epoch
         if not self._logged_first_epoch and epoch == 0 and torch.cuda.is_available():
             self._logged_first_epoch = True
             peak_mb = torch.cuda.max_memory_allocated() / (1024 ** 2)
-            mlflow.log_metric("memory_peak_actual_mb", peak_mb)
             if self.predicted_peak_mb > 0:
-                mlflow.log_metric("memory_peak_predicted_mb", self.predicted_peak_mb)
                 ratio = peak_mb / self.predicted_peak_mb
                 error_pct = abs(1.0 - ratio) * 100
-                mlflow.log_metric("memory/prediction_ratio", ratio)
-                mlflow.log_metric("memory/prediction_error_pct", error_pct)
                 log.info("Memory prediction: ratio=%.3f error=%.1f%%", ratio, error_pct)
             torch.cuda.reset_peak_memory_stats()
             log.info("Epoch 0 peak memory: actual=%.1fMB predicted=%.1fMB",
@@ -76,7 +98,7 @@ class MemoryMonitorCallback(pl.Callback):
 
     def on_train_end(self, trainer, pl_module):
         log.info("Memory at train end: %s", get_memory_summary())
-        log_memory_metrics(step=trainer.current_epoch)
+        self._record_epoch(trainer.current_epoch)
 
 
 # ---------------------------------------------------------------------------
@@ -469,14 +491,17 @@ def make_trainer(
     cfg: PipelineConfig,
     stage: str,
     predicted_peak_mb: float = 0.0,
+    run_id_str: str = "",
 ) -> pl.Trainer:
     """Create a Lightning Trainer with standard callbacks."""
+    from config import run_id as _run_id
+
     t = cfg.training
     out = stage_dir(cfg, stage)
     out.mkdir(parents=True, exist_ok=True)
     torch.backends.cudnn.benchmark = t.cudnn_benchmark
 
-    mlflow.pytorch.autolog(log_models=False)
+    rid = run_id_str or _run_id(cfg, stage)
 
     return pl.Trainer(
         default_root_dir=str(out),
@@ -499,6 +524,7 @@ def make_trainer(
             MemoryMonitorCallback(
                 log_every_n_epochs=t.test_every_n_epochs,
                 predicted_peak_mb=predicted_peak_mb,
+                run_id=rid,
             ),
         ],
         log_every_n_steps=t.log_every_n_steps,

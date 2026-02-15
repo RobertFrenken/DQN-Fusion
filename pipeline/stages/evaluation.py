@@ -6,7 +6,6 @@ import logging
 import pickle
 from pathlib import Path
 
-import mlflow
 import numpy as np
 import torch
 import torch.nn.functional as F
@@ -160,25 +159,6 @@ def evaluate(cfg: PipelineConfig) -> dict:
 
     if test_metrics:
         all_metrics["test"] = test_metrics
-
-    # Log core metrics to MLflow
-    for model_name, model_metrics in all_metrics.items():
-        if model_name == "test":
-            continue
-        if "core" in model_metrics:
-            for k, v in model_metrics["core"].items():
-                if isinstance(v, (int, float)):
-                    mlflow.log_metric(f"{model_name}_{k}", v)
-
-    # Log flattened test-scenario metrics to MLflow
-    for model_name, scenarios in test_metrics.items():
-        for scenario, sm in scenarios.items():
-            for section in ("core", "additional"):
-                for name, value in sm.get(section, {}).items():
-                    if isinstance(value, (int, float)):
-                        mlflow.log_metric(
-                            f"test.{model_name}.{scenario}.{name}", value
-                        )
 
     # Save all metrics
     out = stage_dir(cfg, "evaluation")

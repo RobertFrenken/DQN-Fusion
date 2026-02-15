@@ -55,6 +55,4 @@ from .constants import (
     SLURM_ACCOUNT,
     SLURM_PARTITION,
     SLURM_GPU_TYPE,
-    TRACKING_URI,
-    EXPERIMENT_NAME,
 )

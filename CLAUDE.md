@@ -54,9 +54,9 @@ python -m pipeline.state_sync preview   # Preview regenerated sections
 python -m pipeline.state_sync update    # Write updated STATE.md in-place
 python -m pipeline.cli state            # Shorthand for state_sync update
 
-# MLflow UI (inside tmux on login node)
-mlflow ui --backend-store-uri sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db --host 0.0.0.0 --port 5000
-# Local: ssh -L 5000:localhost:5000 rf15@pitzer.osc.edu → http://localhost:5000
+# Export dashboard data (DB → static JSON)
+python -m pipeline.export                                    # Default: docs/dashboard/data/
+python -m pipeline.export --output-dir docs/dashboard/data   # Explicit output dir
 
 # Datasette (interactive DB browsing, inside tmux on login node)
 datasette data/project.db --port 8001
@@ -92,7 +92,8 @@ config/             # Layer 1: Inert, declarative (no imports from pipeline/ or 
 pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from src/)
   cli.py            # Entry point + write-through DB recording
   stages/           # Stage implementations (training, fusion, evaluation)
-  tracking.py       # MLflow integration
+  tracking.py       # Memory monitoring utilities
+  export.py         # DB → static JSON export for dashboard
   memory.py         # GPU memory management
   ingest.py         # CSV → Parquet conversion + dataset registration
   db.py             # SQLite project DB + write-through record_run_start/end
@@ -103,11 +104,12 @@ src/                # Layer 3: Domain (models, training, preprocessing; imports 
   training/         # load_dataset(), graph caching
   preprocessing/    # Graph construction from CAN CSVs
 data/
-  project.db        # SQLite DB: queryable datasets, runs, metrics
+  project.db        # SQLite DB: queryable datasets, runs, metrics, epoch_metrics
   automotive/       # 6 datasets (DVC-tracked): hcrl_ch, hcrl_sa, set_01-04
   parquet/          # Columnar format (from ingest), queryable via Datasette or SQL
   cache/            # Preprocessed graph cache (.pt, .pkl, metadata)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json
+docs/dashboard/     # GitHub Pages D3.js dashboard (static JSON + HTML)
 profiles/slurm/     # SLURM submission profile for Snakemake
 ```
 
@@ -154,7 +156,7 @@ These fix real crashes -- do not violate:
 - Auxiliaries: `cfg.auxiliaries` is a list of `AuxiliaryConfig`. KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
 - Constants: domain/infrastructure constants live in `config/constants.py` (not in PipelineConfig). Hyperparameters live in PipelineConfig.
 - Write-through DB: `cli.py` records run start/end directly to project DB. `populate()` is a backfill/recovery tool only.
-- Triple storage: Snakemake owns filesystem paths (DAG triggers), MLflow owns metadata (tracking/UI), project DB owns structured results (write-through from cli.py).
+- Dual storage: Snakemake owns filesystem paths (DAG triggers), project DB owns structured results (write-through from cli.py). Dashboard exports static JSON for GitHub Pages.
 - Data layer: Parquet (columnar storage) + SQLite (project DB) + Datasette (interactive browsing). All serverless.
 - Dataset catalog: `config/datasets.yaml` — single place to register new datasets.
 - Delete unused code completely. No compatibility shims or `# removed` comments.
@@ -163,11 +165,11 @@ These fix real crashes -- do not violate:
 
 - **Cluster**: OSC (Ohio Supercomputer Center), RHEL 9, SLURM
 - **GPU**: V100 (account PAS3209, gpu partition)
-- **Python**: conda `gnn-experiments` (PyTorch, PyG, Lightning, MLflow, Pydantic v2, Datasette)
+- **Python**: conda `gnn-experiments` (PyTorch, PyG, Lightning, Pydantic v2, Datasette)
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
-- **MLflow DB**: `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db` (auto-backed up to `~/backups/` on pipeline success)
-- **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics)
+- **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics, epoch_metrics)
+- **Dashboard**: `docs/dashboard/` (GitHub Pages — static JSON + D3.js)
 
 ## Session Modes
 
@@ -194,14 +196,12 @@ Mode context files live in `.claude/system/modes/`. Switching modes loads the re
 
 ## Experiment Tracking
 
-Default backend: MLflow. WandB support prepared via `TRACKING_BACKEND` constant.
-
-```bash
-# Switch tracking backend (env var)
-export KD_GAT_TRACKING_BACKEND=wandb   # or "mlflow" (default) or "both"
-export KD_GAT_WANDB_PROJECT=kd-gat
-export KD_GAT_WANDB_ENTITY=your-entity
-```
+All tracking uses the project SQLite DB (`data/project.db`) as the single source of truth:
+- **Write-through**: `cli.py` records run start/end + metrics directly to DB
+- **Epoch metrics**: `epoch_metrics` table captures per-epoch training curves
+- **Backfill**: `python -m pipeline.db populate` scans filesystem for existing outputs
+- **Dashboard**: `python -m pipeline.export` generates static JSON; deploy via GitHub Pages
+- **Interactive**: `datasette data/project.db` for ad-hoc SQL browsing
 
 ## Detailed Documentation
 
@@ -209,4 +209,5 @@ export KD_GAT_WANDB_ENTITY=your-entity
 - `.claude/system/CONVENTIONS.md` -- Code style, iteration hygiene, git rules
 - `.claude/system/STATE.md` -- Current session state (updated each session)
 - `.claude/system/modes/` -- Mode-specific context files (mlops, research, writing, data)
-- `docs/user_guides/` -- Snakemake guide, MLflow usage, Datasette usage, terminal setup
+- `docs/user_guides/` -- Snakemake guide, Datasette usage, terminal setup
+- `docs/dashboard/` -- D3.js dashboard (GitHub Pages)

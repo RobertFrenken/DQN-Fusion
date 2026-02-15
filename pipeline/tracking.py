@@ -1,202 +1,28 @@
-"""MLflow experiment tracking integration.
+"""Memory monitoring utilities for training stages.
 
-Replaces the custom SQLite registry with MLflow tracking.
-Uses deterministic run IDs for compatibility with Snakemake's DAG.
+Provides CPU and GPU memory metrics collection and human-readable summaries.
+Tracking is handled by the project database (pipeline/db.py).
 """
 from __future__ import annotations
 
 import logging
-import time
-from pathlib import Path
-from typing import TYPE_CHECKING, Any
 
-import mlflow
 import psutil
 import torch
 
-if TYPE_CHECKING:
-    from config import PipelineConfig
-
-from config.constants import TRACKING_URI, EXPERIMENT_NAME
-
 log = logging.getLogger(__name__)
-
-_tracking_initialized = False
-
-
-def setup_tracking() -> None:
-    """Initialize MLflow tracking URI and experiment.
-
-    Must be called before any tracking operations.
-    Creates the experiment if it doesn't exist.
-
-    Handles concurrent initialization from multiple SLURM jobs
-    by retrying on SQLite "table already exists" errors.
-    """
-    global _tracking_initialized
-    if _tracking_initialized:
-        return
-
-    mlflow.set_tracking_uri(TRACKING_URI)
-
-    # Concurrent SLURM jobs may race to create the DB schema.
-    # MLflow's _initialize_tables uses CREATE TABLE (not IF NOT EXISTS),
-    # so a second process can crash. Retry after a short sleep.
-    max_retries = 3
-    for attempt in range(max_retries):
-        try:
-            experiment = mlflow.get_experiment_by_name(EXPERIMENT_NAME)
-            if experiment is None:
-                mlflow.create_experiment(EXPERIMENT_NAME)
-            _tracking_initialized = True
-            return
-        except Exception as e:
-            if "already exists" in str(e) and attempt < max_retries - 1:
-                log.warning("MLflow DB init race (attempt %d/%d), retrying: %s",
-                            attempt + 1, max_retries, e)
-                time.sleep(2 * (attempt + 1))
-            else:
-                raise
-
-
-def start_run(cfg: PipelineConfig, stage: str, run_name: str) -> None:
-    """Start an MLflow run with deterministic run name.
-
-    Args:
-        cfg: Pipeline configuration
-        stage: Training stage (autoencoder, curriculum, etc.)
-        run_name: Deterministic run ID (dataset/model_type_scale_stage[_aux])
-    """
-    # Ensure tracking is set up
-    setup_tracking()
-
-    # Start the run with deterministic run name
-    mlflow.start_run(
-        experiment_id=mlflow.get_experiment_by_name(EXPERIMENT_NAME).experiment_id,
-        run_name=run_name,
-    )
-
-    # Log configuration parameters (flatten nested config for MLflow)
-    config_dict = cfg.model_dump()
-    flat_params = _flatten_dict(config_dict)
-    mlflow.log_params(flat_params)
-
-    # Set metadata tags
-    mlflow.set_tag("stage", stage)
-    mlflow.set_tag("dataset", cfg.dataset)
-    mlflow.set_tag("model_type", cfg.model_type)
-    mlflow.set_tag("scale", cfg.scale)
-    mlflow.set_tag("has_kd", cfg.has_kd)
-    mlflow.set_tag("model_arch", _get_model_arch(stage))
-
-    # Set teacher relationship for KD runs
-    if cfg.has_kd and cfg.kd and cfg.kd.model_path:
-        teacher_id = _extract_teacher_id(cfg.kd.model_path)
-        if teacher_id:
-            mlflow.set_tag("teacher_run_id", teacher_id)
-
-    # Log start time
-    mlflow.set_tag("start_time", time.strftime("%Y-%m-%d %H:%M:%S"))
-
-
-def _flatten_dict(d: dict, prefix: str = "") -> dict:
-    """Flatten nested dict for MLflow params (which only accept flat dicts)."""
-    items = {}
-    for k, v in d.items():
-        key = f"{prefix}{k}" if prefix else k
-        if isinstance(v, dict):
-            items.update(_flatten_dict(v, f"{key}."))
-        elif isinstance(v, list):
-            items[key] = str(v)
-        else:
-            items[key] = v
-    return items
-
-
-def end_run(result: dict[str, Any] | None = None, success: bool = True) -> None:
-    """End the current MLflow run and log results.
-
-    Args:
-        result: Dictionary of metrics to log. Must be a flat {str: numeric} dict.
-                Nested dicts (e.g. from evaluation) are skipped with a warning.
-        success: Whether the run completed successfully
-    """
-    if result:
-        # Only log flat numeric metrics; skip nested dicts (e.g. evaluation output)
-        flat = {k: v for k, v in result.items() if isinstance(v, (int, float))}
-        if flat:
-            mlflow.log_metrics(flat)
-        if len(flat) < len(result):
-            log.info("Skipped %d non-numeric metric entries in end_run",
-                     len(result) - len(flat))
-
-    # Log completion status
-    mlflow.set_tag("status", "complete" if success else "failed")
-    mlflow.set_tag("end_time", time.strftime("%Y-%m-%d %H:%M:%S"))
-
-    # End the run
-    mlflow.end_run()
-
-
-def log_run_artifacts(run_dir: Path) -> None:
-    """Log key files as MLflow artifacts for UI browsing."""
-    for name in ("config.json", "best_model.pt", "metrics.json"):
-        artifact = run_dir / name
-        if artifact.exists():
-            try:
-                mlflow.log_artifact(str(artifact))
-            except Exception as e:
-                log.warning("Failed to log artifact %s: %s", artifact, e)
-
-
-def log_failure(error_msg: str) -> None:
-    """Log a failed run with error message.
-
-    Args:
-        error_msg: Error message or exception string
-    """
-    mlflow.set_tag("status", "failed")
-    mlflow.set_tag("error_msg", error_msg)
-    mlflow.set_tag("end_time", time.strftime("%Y-%m-%d %H:%M:%S"))
-    mlflow.end_run()
-
-
-def _get_model_arch(stage: str) -> str:
-    """Get model architecture from stage name."""
-    from config import STAGES
-    _, model_arch, _ = STAGES.get(stage, ("unknown", "unknown", "unknown"))
-    return model_arch
-
-
-def _extract_teacher_id(teacher_path: str) -> str | None:
-    """Extract teacher run ID from checkpoint path.
-
-    Example:
-        experimentruns/hcrl_sa/vgae_large_autoencoder/best_model.pt
-        -> "hcrl_sa/vgae_large_autoencoder"
-    """
-    try:
-        path = Path(teacher_path)
-        # Assume path is: {root}/{dataset}/{run_name}/best_model.pt
-        if len(path.parts) >= 3:
-            dataset = path.parts[-3]
-            run_name = path.parts[-2]
-            return f"{dataset}/{run_name}"
-    except Exception as e:
-        log.debug("Could not extract teacher ID from %s: %s", teacher_path, e)
-    return None
 
 
 def log_memory_metrics(step: int | None = None) -> dict[str, float]:
-    """Log current CPU and GPU memory usage to MLflow.
+    """Collect current CPU and GPU memory usage.
 
     Args:
-        step: Optional step number for metric logging
+        step: Optional step number (included in returned dict if provided)
 
     Returns:
-        Dictionary of memory metrics (useful for logging elsewhere)
+        Dictionary of memory metrics
     """
-    metrics = {}
+    metrics: dict[str, float] = {}
 
     # CPU memory
     mem = psutil.virtual_memory()
@@ -210,20 +36,10 @@ def log_memory_metrics(step: int | None = None) -> dict[str, float]:
         metrics["gpu_mem_reserved_gb"] = torch.cuda.memory_reserved() / (1024 ** 3)
         metrics["gpu_mem_max_allocated_gb"] = torch.cuda.max_memory_allocated() / (1024 ** 3)
 
-        # Per-GPU stats if multiple GPUs
         num_gpus = torch.cuda.device_count()
         if num_gpus > 1:
             for i in range(num_gpus):
                 metrics[f"gpu{i}_mem_allocated_gb"] = torch.cuda.memory_allocated(i) / (1024 ** 3)
-
-    # Log to MLflow
-    try:
-        if step is not None:
-            mlflow.log_metrics(metrics, step=step)
-        else:
-            mlflow.log_metrics(metrics)
-    except Exception as e:
-        log.warning("Failed to log memory metrics to MLflow: %s", e)
 
     return metrics
 

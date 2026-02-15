@@ -125,8 +125,8 @@ def _osc_environment_section() -> str:
         "- **Home**: `/users/PAS2022/rf15/` (NFS, permanent)\n",
         "- **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)\n",
         "- **Snakemake cache**: `/fs/scratch/PAS1266/snakemake-cache/`\n",
-        "- **MLflow DB**: `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db` (auto-backed up to `~/backups/`)\n",
-        "- **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics)\n",
+        "- **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics, epoch_metrics)\n",
+        "- **Dashboard**: `docs/dashboard/` (GitHub Pages — static JSON + D3.js)\n",
         "- **Conda**: `module load miniconda3/24.1.2-py310 && conda activate gnn-experiments`\n",
     ]
     return "".join(lines)

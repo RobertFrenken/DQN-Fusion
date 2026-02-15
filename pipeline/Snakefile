@@ -30,14 +30,8 @@ import os as _os, sys as _sys
 PY        = _os.environ.get("KD_GAT_PYTHON", _sys.executable)
 CLI       = f"{PY} -m pipeline.cli"
 
-# Pre-initialize MLflow DB on the login node before any SLURM jobs start.
-# Prevents race condition when multiple jobs try to CREATE TABLE concurrently.
-onstart:
-    shell("{PY} -c 'from pipeline.tracking import setup_tracking; setup_tracking()'")
-
-# After all rules succeed: backup MLflow DB and populate project DB.
+# After all rules succeed: populate project DB from filesystem outputs.
 onsuccess:
-    shell("mkdir -p ~/backups && cp /fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db ~/backups/mlflow_$(date +%Y%m%d).db")
     shell("{PY} -m pipeline.db populate")
 
 include: "rules/common.smk"

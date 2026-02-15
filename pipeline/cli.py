@@ -22,7 +22,6 @@ from pathlib import Path
 from config import PipelineConfig, STAGES, config_path, run_id
 from config.resolver import resolve
 from .validate import validate
-from .tracking import start_run, end_run, log_failure, log_run_artifacts
 from .db import record_run_start, record_run_end
 
 
@@ -160,17 +159,14 @@ def main(argv: list[str] | None = None) -> None:
     cfg.save(cfg_out)
     log.info("Frozen config: %s", cfg_out)
 
-    # ---- Start MLflow tracking ----
-    run_name = run_id(cfg, args.stage)
-    start_run(cfg, args.stage, run_name)
-    log.info("MLflow run started: %s", run_name)
-
     # ---- Record run start in project DB ----
+    run_name = run_id(cfg, args.stage)
     record_run_start(
         run_id=run_name, dataset=cfg.dataset, model_type=cfg.model_type,
         scale=cfg.scale, stage=args.stage, has_kd=cfg.has_kd,
         config_json=cfg.model_dump_json(indent=2),
     )
+    log.info("Run started: %s", run_name)
 
     # ---- Dispatch ----
     try:
@@ -178,19 +174,13 @@ def main(argv: list[str] | None = None) -> None:
         result = STAGE_FNS[args.stage](cfg)
         log.info("Stage '%s' complete. Result: %s", args.stage, result)
 
-        # ---- Log artifacts and results to MLflow ----
-        from config import stage_dir
-        log_run_artifacts(stage_dir(cfg, args.stage))
-        end_run(result if isinstance(result, dict) else None, success=True)
         record_run_end(run_name, success=True,
                        metrics=result if isinstance(result, dict) else None)
-        log.info("MLflow run completed successfully")
+        log.info("Run completed successfully")
 
     except Exception as e:
-        # ---- Log failure to MLflow ----
-        log_failure(str(e))
         record_run_end(run_name, success=False)
-        log.error("MLflow run failed: %s", str(e))
+        log.error("Run failed: %s", str(e))
         raise
 
 

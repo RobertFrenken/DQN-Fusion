@@ -4,7 +4,6 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import mlflow
 import torch
 import pytorch_lightning as pl
 
@@ -86,13 +85,6 @@ def train_fusion(cfg: PipelineConfig) -> Path:
             acc = metrics.get("accuracy", 0)
             log.info("Episode %d/%d  reward=%.1f  val_acc=%.4f",
                      ep + 1, cfg.fusion.episodes, total_reward, acc)
-
-            mlflow.log_metrics({
-                "total_reward": total_reward,
-                "val_accuracy": acc,
-                "epsilon": agent.epsilon,
-                "best_accuracy": best_acc,
-            }, step=ep + 1)
 
             if acc > best_acc:
                 best_acc = acc

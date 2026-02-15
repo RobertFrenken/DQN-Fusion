@@ -1,13 +1,15 @@
-"""SQLite project database for structured experiment tracking.
+"""SQLite project database — single source of truth for experiment tracking.
 
-Provides a queryable store for dataset metadata, training runs, and evaluation
-metrics -- complementing MLflow (which tracks live params/metrics) and the
-filesystem (which Snakemake uses for DAG triggers).
+Provides a queryable store for dataset metadata, training runs, evaluation
+metrics, and per-epoch training curves. The project DB is written to directly
+from cli.py (write-through) and can be backfilled from the filesystem via
+populate(). Datasette provides interactive browsing.
 
 Tables:
-    datasets -- one row per dataset (stats from cache + catalog)
-    runs     -- one row per training/evaluation run
-    metrics  -- flattened evaluation metrics (model x scenario x metric)
+    datasets      -- one row per dataset (stats from cache + catalog)
+    runs          -- one row per training/evaluation run
+    metrics       -- flattened evaluation metrics (model x scenario x metric)
+    epoch_metrics -- per-epoch training metrics (loss, F1, lr, memory)
 
 Usage:
     python -m pipeline.db init          # Create schema
@@ -58,7 +60,6 @@ CREATE TABLE IF NOT EXISTS runs (
     teacher_run    TEXT,
     started_at     TEXT,
     completed_at   TEXT,
-    mlflow_run_id  TEXT,
     config_json    TEXT
 );
 
@@ -69,6 +70,14 @@ CREATE TABLE IF NOT EXISTS metrics (
     metric_name  TEXT,
     value        REAL,
     PRIMARY KEY (run_id, model, scenario, metric_name)
+);
+
+CREATE TABLE IF NOT EXISTS epoch_metrics (
+    run_id      TEXT REFERENCES runs(run_id),
+    epoch       INTEGER,
+    metric_name TEXT,
+    value       REAL,
+    PRIMARY KEY (run_id, epoch, metric_name)
 );
 """
 
@@ -87,6 +96,7 @@ def _migrate_schema(conn: sqlite3.Connection) -> None:
     if "use_kd" in cols and "has_kd" not in cols:
         conn.execute("ALTER TABLE runs RENAME COLUMN use_kd TO has_kd")
         log.info("Migrated: renamed use_kd -> has_kd")
+    # epoch_metrics table is created by SCHEMA (CREATE IF NOT EXISTS)
 
 
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
@@ -180,6 +190,31 @@ def record_run_end(
         if metrics and success:
             _insert_metrics_from_dict(conn, run_id, metrics)
 
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def record_epoch_metrics(
+    run_id: str,
+    epoch: int,
+    metrics: dict[str, float],
+    db_path: Path | None = None,
+) -> None:
+    """Record per-epoch training metrics (loss, F1, lr, memory, etc.).
+
+    Called from training callbacks at the end of each validation epoch.
+    """
+    conn = get_connection(db_path)
+    try:
+        for name, value in metrics.items():
+            if isinstance(value, (int, float)):
+                conn.execute(
+                    """INSERT OR REPLACE INTO epoch_metrics
+                       (run_id, epoch, metric_name, value)
+                       VALUES (?, ?, ?, ?)""",
+                    (run_id, epoch, name, float(value)),
+                )
         conn.commit()
     finally:
         conn.close()

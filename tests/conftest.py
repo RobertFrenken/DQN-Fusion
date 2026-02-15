@@ -1,8 +1,6 @@
 """Shared fixtures for training smoke and e2e tests."""
 from __future__ import annotations
 
-from unittest.mock import MagicMock
-
 import pytest
 import torch
 from torch_geometric.data import Data
@@ -74,23 +72,3 @@ E2E_OVERRIDES = dict(
 )
 
 
-# ---------------------------------------------------------------------------
-# MLflow mock (autouse in smoke/e2e tests)
-# ---------------------------------------------------------------------------
-
-@pytest.fixture(autouse=True)
-def mock_mlflow(monkeypatch):
-    """Disable all MLflow calls during tests."""
-    mock = MagicMock()
-    monkeypatch.setattr("mlflow.start_run", mock)
-    monkeypatch.setattr("mlflow.end_run", mock)
-    monkeypatch.setattr("mlflow.log_metric", mock)
-    monkeypatch.setattr("mlflow.log_metrics", mock)
-    monkeypatch.setattr("mlflow.log_param", mock)
-    monkeypatch.setattr("mlflow.log_params", mock)
-    monkeypatch.setattr("mlflow.log_artifact", mock)
-    monkeypatch.setattr("mlflow.set_tag", mock)
-    monkeypatch.setattr("mlflow.set_tags", mock)
-    monkeypatch.setattr("mlflow.set_experiment", mock)
-    monkeypatch.setattr("mlflow.pytorch.autolog", mock)
-    return mock

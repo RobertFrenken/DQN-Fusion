@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>KD-GAT Dashboard</title>
+    <link rel="stylesheet" href="css/style.css">
+    <script src="https://d3js.org/d3.v7.min.js"></script>
+</head>
+<body>
+    <header>
+        <h1>KD-GAT: CAN Bus Intrusion Detection</h1>
+        <p class="subtitle">Knowledge Distillation + Graph Attention Networks</p>
+    </header>
+
+    <nav>
+        <a href="#leaderboard" class="active">Leaderboard</a>
+        <a href="#dataset-comparison">Dataset Comparison</a>
+        <a href="#kd-transfer">KD Transfer</a>
+        <a href="#training-curves">Training Curves</a>
+        <a href="#run-timeline">Run Timeline</a>
+    </nav>
+
+    <main>
+        <!-- Leaderboard -->
+        <section id="leaderboard" class="panel">
+            <h2>Leaderboard</h2>
+            <p class="description">Best validation metrics per model configuration</p>
+            <div class="controls">
+                <label>Metric:
+                    <select id="lb-metric">
+                        <option value="f1" selected>F1</option>
+                        <option value="accuracy">Accuracy</option>
+                        <option value="precision">Precision</option>
+                        <option value="recall">Recall</option>
+                        <option value="auc">AUC</option>
+                        <option value="mcc">MCC</option>
+                    </select>
+                </label>
+            </div>
+            <div id="lb-table-container"></div>
+        </section>
+
+        <!-- Dataset Comparison -->
+        <section id="dataset-comparison" class="panel">
+            <h2>Dataset Comparison</h2>
+            <p class="description">F1 score across datasets per model configuration</p>
+            <div class="controls">
+                <label>Metric:
+                    <select id="dc-metric">
+                        <option value="f1" selected>F1</option>
+                        <option value="accuracy">Accuracy</option>
+                        <option value="auc">AUC</option>
+                    </select>
+                </label>
+            </div>
+            <div id="dc-chart"></div>
+        </section>
+
+        <!-- KD Transfer -->
+        <section id="kd-transfer" class="panel">
+            <h2>Knowledge Distillation Transfer</h2>
+            <p class="description">Teacher vs Student performance (points above diagonal = student exceeds teacher)</p>
+            <div id="kd-chart"></div>
+        </section>
+
+        <!-- Training Curves -->
+        <section id="training-curves" class="panel">
+            <h2>Training Curves</h2>
+            <p class="description">Per-epoch metrics over training</p>
+            <div class="controls">
+                <label>Metric:
+                    <select id="tc-metric">
+                        <option value="val_loss" selected>Val Loss</option>
+                        <option value="train_loss">Train Loss</option>
+                        <option value="val_f1">Val F1</option>
+                        <option value="val_accuracy">Val Accuracy</option>
+                    </select>
+                </label>
+                <label>Run:
+                    <select id="tc-run"></select>
+                </label>
+            </div>
+            <div id="tc-chart"></div>
+        </section>
+
+        <!-- Run Timeline -->
+        <section id="run-timeline" class="panel">
+            <h2>Run Timeline</h2>
+            <p class="description">Experiment runs over time</p>
+            <div id="rt-chart"></div>
+        </section>
+    </main>
+
+    <footer>
+        <p>Generated from <code>data/project.db</code> via <code>python -m pipeline.export</code></p>
+    </footer>
+
+    <script src="js/charts.js"></script>
+    <script src="js/app.js"></script>
+</body>
+</html>
