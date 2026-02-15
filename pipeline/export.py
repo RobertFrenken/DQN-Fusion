@@ -117,19 +117,29 @@ def export_kd_transfer(output_dir: Path) -> Path:
             student.dataset,
             student.model_type,
             student.scale     AS student_scale,
-            student.teacher_run,
+            teacher.run_id    AS teacher_run,
             sm.metric_name,
             ROUND(sm.value, 6) AS student_value,
             ROUND(tm.value, 6) AS teacher_value
         FROM runs student
-        JOIN runs teacher ON teacher.run_id = student.teacher_run
         JOIN metrics sm ON sm.run_id = student.run_id AND sm.scenario = 'val'
+        JOIN runs teacher ON teacher.dataset = student.dataset
+                          AND teacher.stage = 'evaluation'
+                          AND teacher.has_kd = 0
         JOIN metrics tm ON tm.run_id = teacher.run_id
                        AND tm.scenario = 'val'
                        AND tm.metric_name = sm.metric_name
                        AND tm.model = sm.model
         WHERE student.has_kd = 1
+          AND student.stage = 'evaluation'
           AND sm.metric_name IN ('f1', 'accuracy', 'auc')
+          AND (
+            (student.model_type = 'unknown' AND teacher.model_type = 'unknown'
+             AND student.scale = 'student' AND teacher.scale = 'teacher')
+            OR
+            (student.model_type != 'unknown' AND teacher.model_type = student.model_type
+             AND student.scale = 'small' AND teacher.scale = 'large')
+          )
         ORDER BY student.dataset, sm.metric_name
     """).fetchall()
     conn.close()
@@ -168,12 +178,20 @@ def export_training_curves(output_dir: Path) -> Path:
 def export_all(output_dir: Path) -> None:
     """Run all exports."""
     output_dir.mkdir(parents=True, exist_ok=True)
-    export_leaderboard(output_dir)
-    export_runs(output_dir)
-    export_metrics(output_dir)
-    export_datasets(output_dir)
-    export_kd_transfer(output_dir)
-    export_training_curves(output_dir)
+    lb = export_leaderboard(output_dir)
+    runs = export_runs(output_dir)
+    metrics = export_metrics(output_dir)
+    ds = export_datasets(output_dir)
+    kd = export_kd_transfer(output_dir)
+    curves = export_training_curves(output_dir)
+
+    # Validation summary
+    for name, path in [
+        ("leaderboard", lb), ("runs", runs), ("datasets", ds), ("kd_transfer", kd),
+    ]:
+        if path.stat().st_size < 10:
+            log.warning("EMPTY EXPORT: %s (%s)", name, path)
+
     log.info("All exports complete → %s", output_dir)
 
 

@@ -68,8 +68,13 @@ datasette data/project.db --port 8001
 # Snakemake report (after eval runs)
 snakemake -s pipeline/Snakefile --report report.html
 
-# Run tests
+# Run tests (slurm-marked tests auto-skip on login nodes)
 python -m pytest tests/ -v
+
+# Run heavy tests on SLURM compute node
+bash scripts/run_tests_slurm.sh                         # all tests
+bash scripts/run_tests_slurm.sh -k "test_full_pipeline"  # specific test
+bash scripts/run_tests_slurm.sh -m slurm                 # only slurm-marked
 
 # Check SLURM jobs
 squeue -u $USER
@@ -99,7 +104,7 @@ pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from
   export.py         # DB → static JSON export for dashboard
   memory.py         # GPU memory management
   ingest.py         # CSV → Parquet conversion + dataset registration
-  db.py             # SQLite project DB + write-through record_run_start/end
+  db.py             # SQLite project DB (WAL mode) + write-through + backfill migrations
   analytics.py      # Post-run analysis: sweeps, leaderboards, comparisons
   Snakefile         # All stages + evaluation + preprocessing cache + retries + group jobs
 src/                # Layer 3: Domain (models, training, preprocessing; imports config/)
@@ -112,7 +117,7 @@ data/
   parquet/          # Columnar format (from ingest), queryable via Datasette or SQL
   cache/            # Preprocessed graph cache (.pt, .pkl, metadata)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json
-scripts/            # Automation (export_dashboard.sh)
+scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh)
 docs/dashboard/     # GitHub Pages D3.js dashboard (static JSON + HTML)
 profiles/slurm/     # SLURM submission profile for Snakemake
 ```
@@ -159,7 +164,8 @@ These fix real crashes -- do not violate:
 - Sub-configs: `cfg.vgae`, `cfg.gat`, `cfg.dqn`, `cfg.training`, `cfg.fusion` — nested Pydantic models. Always use nested access (`cfg.vgae.latent_dim`), never flat.
 - Auxiliaries: `cfg.auxiliaries` is a list of `AuxiliaryConfig`. KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
 - Constants: domain/infrastructure constants live in `config/constants.py` (not in PipelineConfig). Hyperparameters live in PipelineConfig.
-- Write-through DB: `cli.py` records run start/end directly to project DB. `populate()` is a backfill/recovery tool only.
+- Write-through DB: `cli.py` records run start/end directly to project DB (including teacher_run propagation for KD eval runs). `populate()` is a backfill/recovery tool that also runs legacy migrations, timestamp backfill, and teacher_run backfill.
+- SQLite: WAL mode + 5s busy timeout for concurrent SLURM jobs. Foreign keys enabled. Indices on `metrics(run_id)`, `metrics(run_id, scenario, metric_name)`, `epoch_metrics(run_id, epoch)`.
 - Dual storage: Snakemake owns filesystem paths (DAG triggers), project DB owns structured results (write-through from cli.py). Dashboard exports static JSON for GitHub Pages.
 - Data layer: Parquet (columnar storage) + SQLite (project DB) + Datasette (interactive browsing). All serverless.
 - Dataset catalog: `config/datasets.yaml` — single place to register new datasets.
@@ -203,7 +209,7 @@ Mode context files live in `.claude/system/modes/`. Switching modes loads the re
 All tracking uses the project SQLite DB (`data/project.db`) as the single source of truth:
 - **Write-through**: `cli.py` records run start/end + metrics directly to DB
 - **Epoch metrics**: `epoch_metrics` table captures per-epoch training curves
-- **Backfill**: `python -m pipeline.db populate` scans filesystem for existing outputs
+- **Backfill**: `python -m pipeline.db populate` scans filesystem + runs migrations (legacy naming, timestamps, teacher_run)
 - **Dashboard**: `python -m pipeline.export` generates static JSON; `scripts/export_dashboard.sh` commits + pushes to GitHub Pages. Auto-runs in Snakemake `onsuccess`.
 - **Interactive**: `datasette data/project.db` for ad-hoc SQL browsing
 

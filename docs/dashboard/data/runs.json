@@ -2,8 +2,8 @@
   {
     "run_id": "hcrl_ch/student_autoencoder",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -14,8 +14,8 @@
   {
     "run_id": "hcrl_ch/student_autoencoder_kd",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 1,
     "status": "complete",
@@ -26,8 +26,8 @@
   {
     "run_id": "hcrl_ch/student_curriculum",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -38,8 +38,8 @@
   {
     "run_id": "hcrl_ch/student_curriculum_kd",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 1,
     "status": "complete",
@@ -50,8 +50,8 @@
   {
     "run_id": "hcrl_ch/student_evaluation",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -62,20 +62,20 @@
   {
     "run_id": "hcrl_ch/student_evaluation_kd",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 1,
     "status": "complete",
-    "teacher_run": "",
+    "teacher_run": "hcrl_ch/teacher_curriculum",
     "started_at": null,
     "completed_at": null
   },
   {
     "run_id": "hcrl_ch/student_fusion",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -86,8 +86,8 @@
   {
     "run_id": "hcrl_ch/student_fusion_kd",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 1,
     "status": "complete",
@@ -98,8 +98,8 @@
   {
     "run_id": "hcrl_ch/teacher_autoencoder",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "vgae",
+    "scale": "large",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -110,8 +110,8 @@
   {
     "run_id": "hcrl_ch/teacher_curriculum",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "gat",
+    "scale": "large",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -122,8 +122,8 @@
   {
     "run_id": "hcrl_ch/teacher_evaluation",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "eval",
+    "scale": "large",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -134,8 +134,8 @@
   {
     "run_id": "hcrl_ch/teacher_fusion",
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "dqn",
+    "scale": "large",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -146,8 +146,8 @@
   {
     "run_id": "hcrl_sa/student_autoencoder",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -158,8 +158,8 @@
   {
     "run_id": "hcrl_sa/student_autoencoder_kd",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 1,
     "status": "complete",
@@ -170,8 +170,8 @@
   {
     "run_id": "hcrl_sa/student_curriculum",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -182,8 +182,8 @@
   {
     "run_id": "hcrl_sa/student_curriculum_kd",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 1,
     "status": "complete",
@@ -194,8 +194,8 @@
   {
     "run_id": "hcrl_sa/student_evaluation",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -206,20 +206,20 @@
   {
     "run_id": "hcrl_sa/student_evaluation_kd",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 1,
     "status": "complete",
-    "teacher_run": "",
+    "teacher_run": "hcrl_sa/teacher_curriculum",
     "started_at": null,
     "completed_at": null
   },
   {
     "run_id": "hcrl_sa/student_fusion",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -230,8 +230,8 @@
   {
     "run_id": "hcrl_sa/student_fusion_kd",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 1,
     "status": "complete",
@@ -242,8 +242,8 @@
   {
     "run_id": "hcrl_sa/teacher_autoencoder",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "vgae",
+    "scale": "large",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -254,8 +254,8 @@
   {
     "run_id": "hcrl_sa/teacher_curriculum",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "gat",
+    "scale": "large",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -266,8 +266,8 @@
   {
     "run_id": "hcrl_sa/teacher_evaluation",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "eval",
+    "scale": "large",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -278,8 +278,8 @@
   {
     "run_id": "hcrl_sa/teacher_fusion",
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "dqn",
+    "scale": "large",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -290,8 +290,8 @@
   {
     "run_id": "set_01/student_autoencoder",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -302,8 +302,8 @@
   {
     "run_id": "set_01/student_autoencoder_kd",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 1,
     "status": "complete",
@@ -314,8 +314,8 @@
   {
     "run_id": "set_01/student_curriculum",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -326,8 +326,8 @@
   {
     "run_id": "set_01/student_curriculum_kd",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 1,
     "status": "complete",
@@ -338,8 +338,8 @@
   {
     "run_id": "set_01/student_evaluation",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -350,20 +350,20 @@
   {
     "run_id": "set_01/student_evaluation_kd",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 1,
     "status": "complete",
-    "teacher_run": "",
+    "teacher_run": "set_01/teacher_curriculum",
     "started_at": null,
     "completed_at": null
   },
   {
     "run_id": "set_01/student_fusion",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -374,8 +374,8 @@
   {
     "run_id": "set_01/student_fusion_kd",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 1,
     "status": "complete",
@@ -386,8 +386,8 @@
   {
     "run_id": "set_01/teacher_autoencoder",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "vgae",
+    "scale": "large",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -398,8 +398,8 @@
   {
     "run_id": "set_01/teacher_curriculum",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "gat",
+    "scale": "large",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -410,8 +410,8 @@
   {
     "run_id": "set_01/teacher_evaluation",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "eval",
+    "scale": "large",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -422,8 +422,8 @@
   {
     "run_id": "set_01/teacher_fusion",
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "dqn",
+    "scale": "large",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -434,8 +434,8 @@
   {
     "run_id": "set_02/student_autoencoder",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -446,8 +446,8 @@
   {
     "run_id": "set_02/student_autoencoder_kd",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 1,
     "status": "complete",
@@ -458,8 +458,8 @@
   {
     "run_id": "set_02/student_curriculum",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -470,8 +470,8 @@
   {
     "run_id": "set_02/student_curriculum_kd",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 1,
     "status": "complete",
@@ -482,8 +482,8 @@
   {
     "run_id": "set_02/student_evaluation",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -494,8 +494,8 @@
   {
     "run_id": "set_02/student_fusion",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -506,8 +506,8 @@
   {
     "run_id": "set_02/student_fusion_kd",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 1,
     "status": "complete",
@@ -518,8 +518,8 @@
   {
     "run_id": "set_02/teacher_autoencoder",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "vgae",
+    "scale": "large",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -530,8 +530,8 @@
   {
     "run_id": "set_02/teacher_curriculum",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "gat",
+    "scale": "large",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -542,8 +542,8 @@
   {
     "run_id": "set_02/teacher_evaluation",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "eval",
+    "scale": "large",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -554,8 +554,8 @@
   {
     "run_id": "set_02/teacher_fusion",
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "dqn",
+    "scale": "large",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -566,8 +566,8 @@
   {
     "run_id": "set_03/student_autoencoder",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -578,8 +578,8 @@
   {
     "run_id": "set_03/student_autoencoder_kd",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 1,
     "status": "complete",
@@ -590,8 +590,8 @@
   {
     "run_id": "set_03/student_curriculum",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -602,8 +602,8 @@
   {
     "run_id": "set_03/student_curriculum_kd",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 1,
     "status": "complete",
@@ -614,8 +614,8 @@
   {
     "run_id": "set_03/student_evaluation",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -626,8 +626,8 @@
   {
     "run_id": "set_03/student_fusion",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -638,8 +638,8 @@
   {
     "run_id": "set_03/student_fusion_kd",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 1,
     "status": "complete",
@@ -650,8 +650,8 @@
   {
     "run_id": "set_03/teacher_autoencoder",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "vgae",
+    "scale": "large",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -662,8 +662,8 @@
   {
     "run_id": "set_03/teacher_curriculum",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "gat",
+    "scale": "large",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -674,8 +674,8 @@
   {
     "run_id": "set_03/teacher_evaluation",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "eval",
+    "scale": "large",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -686,8 +686,8 @@
   {
     "run_id": "set_03/teacher_fusion",
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "dqn",
+    "scale": "large",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -698,8 +698,8 @@
   {
     "run_id": "set_04/student_autoencoder",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -710,8 +710,8 @@
   {
     "run_id": "set_04/student_autoencoder_kd",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "vgae",
+    "scale": "small",
     "stage": "autoencoder",
     "has_kd": 1,
     "status": "complete",
@@ -722,8 +722,8 @@
   {
     "run_id": "set_04/student_curriculum",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -734,8 +734,8 @@
   {
     "run_id": "set_04/student_curriculum_kd",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "gat",
+    "scale": "small",
     "stage": "curriculum",
     "has_kd": 1,
     "status": "complete",
@@ -746,8 +746,8 @@
   {
     "run_id": "set_04/student_evaluation",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "complete",
@@ -758,20 +758,20 @@
   {
     "run_id": "set_04/student_evaluation_kd",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "eval",
+    "scale": "small",
     "stage": "evaluation",
     "has_kd": 1,
     "status": "complete",
-    "teacher_run": "",
+    "teacher_run": "set_04/teacher_curriculum",
     "started_at": null,
     "completed_at": null
   },
   {
     "run_id": "set_04/student_fusion",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -782,8 +782,8 @@
   {
     "run_id": "set_04/student_fusion_kd",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
+    "model_type": "dqn",
+    "scale": "small",
     "stage": "fusion",
     "has_kd": 1,
     "status": "complete",
@@ -794,8 +794,8 @@
   {
     "run_id": "set_04/teacher_autoencoder",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "vgae",
+    "scale": "large",
     "stage": "autoencoder",
     "has_kd": 0,
     "status": "complete",
@@ -806,8 +806,8 @@
   {
     "run_id": "set_04/teacher_curriculum",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "gat",
+    "scale": "large",
     "stage": "curriculum",
     "has_kd": 0,
     "status": "complete",
@@ -818,8 +818,8 @@
   {
     "run_id": "set_04/teacher_evaluation",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "eval",
+    "scale": "large",
     "stage": "evaluation",
     "has_kd": 0,
     "status": "unknown",
@@ -830,8 +830,8 @@
   {
     "run_id": "set_04/teacher_fusion",
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "teacher",
+    "model_type": "dqn",
+    "scale": "large",
     "stage": "fusion",
     "has_kd": 0,
     "status": "complete",
@@ -849,7 +849,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T20:41:15.615312+00:00"
   },
   {
     "run_id": "hcrl_ch/dqn_small_fusion",
@@ -861,7 +861,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T05:56:16.113969+00:00"
   },
   {
     "run_id": "hcrl_ch/dqn_small_fusion_kd",
@@ -873,7 +873,7 @@
     "status": "complete",
     "teacher_run": "hcrl_ch/dqn_large_fusion",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T22:02:16.580220+00:00"
   },
   {
     "run_id": "hcrl_ch/eval_large_evaluation",
@@ -885,7 +885,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T21:04:51.637157+00:00"
   },
   {
     "run_id": "hcrl_ch/eval_small_evaluation",
@@ -897,7 +897,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:07:25.771235+00:00"
   },
   {
     "run_id": "hcrl_ch/eval_small_evaluation_kd",
@@ -907,9 +907,9 @@
     "stage": "evaluation",
     "has_kd": 1,
     "status": "complete",
-    "teacher_run": "",
+    "teacher_run": "hcrl_ch/teacher_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T22:23:07.375202+00:00"
   },
   {
     "run_id": "hcrl_ch/gat_large_curriculum",
@@ -921,7 +921,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:58:34.991956+00:00"
   },
   {
     "run_id": "hcrl_ch/gat_small_curriculum",
@@ -933,7 +933,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T04:24:14.808193+00:00"
   },
   {
     "run_id": "hcrl_ch/gat_small_curriculum_kd",
@@ -945,7 +945,7 @@
     "status": "complete",
     "teacher_run": "hcrl_ch/gat_large_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:44:56.834728+00:00"
   },
   {
     "run_id": "hcrl_ch/vgae_large_autoencoder",
@@ -957,7 +957,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:31:51.049070+00:00"
   },
   {
     "run_id": "hcrl_ch/vgae_small_autoencoder",
@@ -969,7 +969,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-01-29T04:21:33.986244+00:00"
   },
   {
     "run_id": "hcrl_ch/vgae_small_autoencoder_kd",
@@ -981,7 +981,7 @@
     "status": "complete",
     "teacher_run": "hcrl_ch/vgae_large_autoencoder",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:16:09.226711+00:00"
   },
   {
     "run_id": "hcrl_sa/dqn_large_fusion",
@@ -993,7 +993,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:29:51.619842+00:00"
   },
   {
     "run_id": "hcrl_sa/dqn_small_fusion",
@@ -1005,7 +1005,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T16:20:02.312454+00:00"
   },
   {
     "run_id": "hcrl_sa/dqn_small_fusion_kd",
@@ -1017,7 +1017,7 @@
     "status": "complete",
     "teacher_run": "hcrl_sa/dqn_large_fusion",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:57:46.197032+00:00"
   },
   {
     "run_id": "hcrl_sa/eval_large_evaluation",
@@ -1029,7 +1029,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:34:41.397117+00:00"
   },
   {
     "run_id": "hcrl_sa/eval_small_evaluation",
@@ -1041,7 +1041,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T17:50:42.363186+00:00"
   },
   {
     "run_id": "hcrl_sa/eval_small_evaluation_kd",
@@ -1051,9 +1051,9 @@
     "stage": "evaluation",
     "has_kd": 1,
     "status": "complete",
-    "teacher_run": "",
+    "teacher_run": "hcrl_sa/teacher_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:02:10.511662+00:00"
   },
   {
     "run_id": "hcrl_sa/gat_large_curriculum",
@@ -1065,7 +1065,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T17:57:06.323122+00:00"
   },
   {
     "run_id": "hcrl_sa/gat_small_curriculum",
@@ -1077,7 +1077,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-03T22:10:23.582925+00:00"
   },
   {
     "run_id": "hcrl_sa/gat_small_curriculum_kd",
@@ -1089,7 +1089,7 @@
     "status": "complete",
     "teacher_run": "hcrl_sa/gat_large_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:04:39.399033+00:00"
   },
   {
     "run_id": "hcrl_sa/vgae_large_autoencoder",
@@ -1101,7 +1101,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T17:52:49.692354+00:00"
   },
   {
     "run_id": "hcrl_sa/vgae_small_autoencoder",
@@ -1113,7 +1113,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-03T22:05:18.487894+00:00"
   },
   {
     "run_id": "hcrl_sa/vgae_small_autoencoder_kd",
@@ -1125,7 +1125,7 @@
     "status": "complete",
     "teacher_run": "hcrl_sa/vgae_large_autoencoder",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T17:59:28.952035+00:00"
   },
   {
     "run_id": "set_01/dqn_large_fusion",
@@ -1137,7 +1137,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T20:34:42.095410+00:00"
   },
   {
     "run_id": "set_01/dqn_small_fusion",
@@ -1149,7 +1149,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T05:49:01.300903+00:00"
   },
   {
     "run_id": "set_01/dqn_small_fusion_kd",
@@ -1161,7 +1161,7 @@
     "status": "complete",
     "teacher_run": "set_01/dqn_large_fusion",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T22:00:11.722272+00:00"
   },
   {
     "run_id": "set_01/eval_large_evaluation",
@@ -1173,7 +1173,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T22:10:38.785913+00:00"
   },
   {
     "run_id": "set_01/eval_small_evaluation",
@@ -1185,7 +1185,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:16:09.652779+00:00"
   },
   {
     "run_id": "set_01/eval_small_evaluation_kd",
@@ -1195,9 +1195,9 @@
     "stage": "evaluation",
     "has_kd": 1,
     "status": "complete",
-    "teacher_run": "",
+    "teacher_run": "set_01/teacher_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T23:30:23.576715+00:00"
   },
   {
     "run_id": "set_01/gat_large_curriculum",
@@ -1209,7 +1209,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:53:08.790027+00:00"
   },
   {
     "run_id": "set_01/gat_small_curriculum",
@@ -1221,7 +1221,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T04:12:41.595274+00:00"
   },
   {
     "run_id": "set_01/gat_small_curriculum_kd",
@@ -1233,7 +1233,7 @@
     "status": "complete",
     "teacher_run": "set_01/gat_large_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:29:59.729711+00:00"
   },
   {
     "run_id": "set_01/vgae_large_autoencoder",
@@ -1245,7 +1245,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:33:03.321778+00:00"
   },
   {
     "run_id": "set_01/vgae_small_autoencoder",
@@ -1257,7 +1257,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-01-29T04:22:26.261016+00:00"
   },
   {
     "run_id": "set_01/vgae_small_autoencoder_kd",
@@ -1269,7 +1269,7 @@
     "status": "complete",
     "teacher_run": "set_01/vgae_large_autoencoder",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:15:45.337962+00:00"
   },
   {
     "run_id": "set_02/dqn_large_fusion",
@@ -1281,7 +1281,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T21:25:32.908147+00:00"
   },
   {
     "run_id": "set_02/dqn_small_fusion",
@@ -1293,7 +1293,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T06:20:16.055072+00:00"
   },
   {
     "run_id": "set_02/dqn_small_fusion_kd",
@@ -1305,7 +1305,7 @@
     "status": "complete",
     "teacher_run": "set_02/dqn_large_fusion",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T23:03:00.285841+00:00"
   },
   {
     "run_id": "set_02/eval_large_evaluation",
@@ -1317,7 +1317,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T23:14:52.079044+00:00"
   },
   {
     "run_id": "set_02/eval_small_evaluation",
@@ -1329,7 +1329,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:27:33.145887+00:00"
   },
   {
     "run_id": "set_02/gat_large_curriculum",
@@ -1341,7 +1341,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:41:13.901909+00:00"
   },
   {
     "run_id": "set_02/gat_small_curriculum",
@@ -1353,7 +1353,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T04:32:59.901513+00:00"
   },
   {
     "run_id": "set_02/gat_small_curriculum_kd",
@@ -1365,7 +1365,7 @@
     "status": "complete",
     "teacher_run": "set_02/gat_large_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T20:56:58.539439+00:00"
   },
   {
     "run_id": "set_02/vgae_large_autoencoder",
@@ -1377,7 +1377,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:07:58.920904+00:00"
   },
   {
     "run_id": "set_02/vgae_small_autoencoder",
@@ -1389,7 +1389,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-01-29T04:39:48.655257+00:00"
   },
   {
     "run_id": "set_02/vgae_small_autoencoder_kd",
@@ -1401,7 +1401,7 @@
     "status": "complete",
     "teacher_run": "set_02/vgae_large_autoencoder",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T20:19:52.324493+00:00"
   },
   {
     "run_id": "set_03/dqn_large_fusion",
@@ -1413,7 +1413,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T21:10:04.606264+00:00"
   },
   {
     "run_id": "set_03/dqn_small_fusion",
@@ -1425,7 +1425,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T05:57:45.894234+00:00"
   },
   {
     "run_id": "set_03/dqn_small_fusion_kd",
@@ -1437,7 +1437,7 @@
     "status": "complete",
     "teacher_run": "set_03/dqn_large_fusion",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T22:34:18.313076+00:00"
   },
   {
     "run_id": "set_03/eval_large_evaluation",
@@ -1449,7 +1449,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T22:44:44.430769+00:00"
   },
   {
     "run_id": "set_03/eval_small_evaluation",
@@ -1461,7 +1461,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:12:23.735031+00:00"
   },
   {
     "run_id": "set_03/gat_large_curriculum",
@@ -1473,7 +1473,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:22:04.657622+00:00"
   },
   {
     "run_id": "set_03/gat_small_curriculum",
@@ -1485,7 +1485,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T04:16:44.224464+00:00"
   },
   {
     "run_id": "set_03/gat_small_curriculum_kd",
@@ -1497,7 +1497,7 @@
     "status": "complete",
     "teacher_run": "set_03/gat_large_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T20:30:27.931753+00:00"
   },
   {
     "run_id": "set_03/vgae_large_autoencoder",
@@ -1509,7 +1509,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:00:35.030653+00:00"
   },
   {
     "run_id": "set_03/vgae_small_autoencoder",
@@ -1521,7 +1521,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-01-29T04:44:30.514089+00:00"
   },
   {
     "run_id": "set_03/vgae_small_autoencoder_kd",
@@ -1533,7 +1533,7 @@
     "status": "complete",
     "teacher_run": "set_03/vgae_large_autoencoder",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T20:08:35.411438+00:00"
   },
   {
     "run_id": "set_04/dqn_large_fusion",
@@ -1545,7 +1545,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T20:28:34.738645+00:00"
   },
   {
     "run_id": "set_04/dqn_small_fusion",
@@ -1557,7 +1557,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T05:46:54.504096+00:00"
   },
   {
     "run_id": "set_04/dqn_small_fusion_kd",
@@ -1569,7 +1569,7 @@
     "status": "complete",
     "teacher_run": "set_04/dqn_large_fusion",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T21:52:38.070024+00:00"
   },
   {
     "run_id": "set_04/eval_large_evaluation",
@@ -1581,7 +1581,7 @@
     "status": "unknown",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T20:28:56.194528+00:00"
   },
   {
     "run_id": "set_04/eval_small_evaluation",
@@ -1593,7 +1593,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:26:24.326491+00:00"
   },
   {
     "run_id": "set_04/eval_small_evaluation_kd",
@@ -1603,9 +1603,9 @@
     "stage": "evaluation",
     "has_kd": 1,
     "status": "complete",
-    "teacher_run": "",
+    "teacher_run": "set_04/teacher_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T23:32:05.294882+00:00"
   },
   {
     "run_id": "set_04/gat_large_curriculum",
@@ -1617,7 +1617,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:49:07.285682+00:00"
   },
   {
     "run_id": "set_04/gat_small_curriculum",
@@ -1629,7 +1629,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-04T04:12:06.680609+00:00"
   },
   {
     "run_id": "set_04/gat_small_curriculum_kd",
@@ -1641,7 +1641,7 @@
     "status": "complete",
     "teacher_run": "set_04/gat_large_curriculum",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:26:35.201927+00:00"
   },
   {
     "run_id": "set_04/vgae_large_autoencoder",
@@ -1653,7 +1653,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T18:32:03.656908+00:00"
   },
   {
     "run_id": "set_04/vgae_small_autoencoder",
@@ -1665,7 +1665,7 @@
     "status": "complete",
     "teacher_run": "",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-01-29T04:21:24.982209+00:00"
   },
   {
     "run_id": "set_04/vgae_small_autoencoder_kd",
@@ -1677,6 +1677,6 @@
     "status": "complete",
     "teacher_run": "set_04/vgae_large_autoencoder",
     "started_at": null,
-    "completed_at": null
+    "completed_at": "2026-02-06T19:15:33.449595+00:00"
   }
 ]

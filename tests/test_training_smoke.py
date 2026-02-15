@@ -7,6 +7,7 @@ Run:  python -m pytest tests/test_training_smoke.py -v -m "not slow"
 """
 from __future__ import annotations
 
+import pytest
 import torch
 import pytorch_lightning as pl
 from torch_geometric.loader import DataLoader
@@ -14,6 +15,7 @@ from torch_geometric.loader import DataLoader
 from tests.conftest import _make_graph, _make_dataset, NUM_IDS, IN_CHANNELS, SMOKE_OVERRIDES
 
 
+@pytest.mark.slurm
 class TestVGAESmoke:
     """VGAE module trains and produces finite loss."""
 
@@ -83,6 +85,7 @@ class TestVGAESmoke:
         assert torch.isfinite(trainer.callback_metrics["train_loss"])
 
 
+@pytest.mark.slurm
 class TestGATSmoke:
     """GAT module trains and produces finite loss."""
 
@@ -159,6 +162,7 @@ class TestGATSmoke:
             assert out.shape == (1, 2), f"fc_layers={fc_layers} gave wrong shape: {out.shape}"
 
 
+@pytest.mark.slurm
 class TestDQNSmoke:
     """DQN trains and produces finite loss."""
 

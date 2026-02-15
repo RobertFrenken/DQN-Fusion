@@ -28,33 +28,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.999484
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.999759
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.999725
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -79,33 +52,6 @@
     "model": "fusion",
     "metric_name": "auc",
     "best_value": 0.999678
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.998876
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.999678
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.999556
   },
   {
     "dataset": "hcrl_ch",
@@ -136,33 +82,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.999137
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.999598
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.99954
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -190,33 +109,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.99877
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.999426
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.999344
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -238,33 +130,6 @@
     "model_type": "eval",
     "scale": "small",
     "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
     "model": "fusion",
     "metric_name": "precision",
     "best_value": 1.0
@@ -298,33 +163,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.998276
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.999196
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.999081
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -349,33 +187,6 @@
     "model": "gat",
     "metric_name": "accuracy",
     "best_value": 0.999759
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.999725
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.999759
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.999725
   },
   {
     "dataset": "hcrl_ch",
@@ -406,33 +217,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.999998
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.999943
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -457,33 +241,6 @@
     "model": "gat",
     "metric_name": "f1",
     "best_value": 0.999598
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.99954
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.999598
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.99954
   },
   {
     "dataset": "hcrl_ch",
@@ -514,33 +271,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.999344
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.999426
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.999344
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -562,33 +292,6 @@
     "model_type": "eval",
     "scale": "small",
     "has_kd": 1,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
     "model": "gat",
     "metric_name": "precision",
     "best_value": 1.0
@@ -622,33 +325,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.999081
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.999196
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.999081
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -673,33 +349,6 @@
     "model": "vgae",
     "metric_name": "accuracy",
     "best_value": 0.737589
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.768633
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.737589
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.755397
   },
   {
     "dataset": "hcrl_ch",
@@ -730,33 +379,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.880808
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.864026
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.875961
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -781,33 +403,6 @@
     "model": "vgae",
     "metric_name": "f1",
     "best_value": 0.659985
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.680922
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.659985
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.677923
   },
   {
     "dataset": "hcrl_ch",
@@ -838,33 +433,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.527502
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.495546
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.524555
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -892,33 +460,6 @@
   },
   {
     "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.579627
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.53892
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.559307
-  },
-  {
-    "dataset": "hcrl_ch",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -943,33 +484,6 @@
     "model": "vgae",
     "metric_name": "recall",
     "best_value": 0.851201
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.825118
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.851201
-  },
-  {
-    "dataset": "hcrl_ch",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.860393
   },
   {
     "dataset": "hcrl_sa",
@@ -1000,33 +514,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.999466
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.996797
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.999466
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1051,33 +538,6 @@
     "model": "fusion",
     "metric_name": "auc",
     "best_value": 0.976132
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.996954
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.976132
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.996766
   },
   {
     "dataset": "hcrl_sa",
@@ -1108,33 +568,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.998004
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.987903
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.998004
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1162,33 +595,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.997698
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.986153
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.997698
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1210,33 +616,6 @@
     "model_type": "eval",
     "scale": "small",
     "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
     "model": "fusion",
     "metric_name": "precision",
     "best_value": 1.0
@@ -1270,33 +649,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.996016
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.976096
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.996016
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1324,33 +676,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.999466
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1372,33 +697,6 @@
     "model_type": "eval",
     "scale": "small",
     "has_kd": 1,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
     "model": "gat",
     "metric_name": "auc",
     "best_value": 1.0
@@ -1432,33 +730,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.998004
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1486,33 +757,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.997698
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1534,33 +778,6 @@
     "model_type": "eval",
     "scale": "small",
     "has_kd": 1,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
     "model": "gat",
     "metric_name": "precision",
     "best_value": 1.0
@@ -1594,33 +811,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 1.0
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.996016
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1645,33 +835,6 @@
     "model": "vgae",
     "metric_name": "accuracy",
     "best_value": 0.838761
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.67165
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.838761
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.81527
   },
   {
     "dataset": "hcrl_sa",
@@ -1702,33 +865,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.877553
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.948325
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.938542
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1753,33 +889,6 @@
     "model": "vgae",
     "metric_name": "f1",
     "best_value": 0.603675
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.422535
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.603675
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.57072
   },
   {
     "dataset": "hcrl_sa",
@@ -1810,33 +919,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.366488
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.568337
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.534133
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1864,33 +946,6 @@
   },
   {
     "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.276413
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.450098
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.414414
-  },
-  {
-    "dataset": "hcrl_sa",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -1912,33 +967,6 @@
     "model_type": "eval",
     "scale": "small",
     "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.916335
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.896414
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.916335
-  },
-  {
-    "dataset": "hcrl_sa",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
     "model": "vgae",
     "metric_name": "recall",
     "best_value": 0.916335
@@ -1972,33 +1000,6 @@
   },
   {
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.99
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.973867
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.9979
-  },
-  {
-    "dataset": "set_01",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -2023,33 +1024,6 @@
     "model": "fusion",
     "metric_name": "auc",
     "best_value": 0.875589
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.851015
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.875589
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.938212
   },
   {
     "dataset": "set_01",
@@ -2080,33 +1054,6 @@
   },
   {
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.733096
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.534994
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.944978
-  },
-  {
-    "dataset": "set_01",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -2131,33 +1078,6 @@
     "model": "fusion",
     "metric_name": "mcc",
     "best_value": 0.549269
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.729023
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.549269
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.944421
   },
   {
     "dataset": "set_01",
@@ -2188,33 +1108,6 @@
   },
   {
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 0.772983
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 0.411872
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 0.976534
-  },
-  {
-    "dataset": "set_01",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -2239,33 +1132,6 @@
     "model": "fusion",
     "metric_name": "recall",
     "best_value": 0.763113
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.697124
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.763113
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.915398
   },
   {
     "dataset": "set_01",
@@ -2296,33 +1162,6 @@
   },
   {
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.863724
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.94864
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.980343
-  },
-  {
-    "dataset": "set_01",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -2347,33 +1186,6 @@
     "model": "gat",
     "metric_name": "auc",
     "best_value": 0.98986
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.98092
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.98986
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.999361
   },
   {
     "dataset": "set_01",
@@ -2404,33 +1216,6 @@
   },
   {
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.21532
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.419162
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.664786
-  },
-  {
-    "dataset": "set_01",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -2455,33 +1240,6 @@
     "model": "gat",
     "metric_name": "mcc",
     "best_value": 0.488718
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.312402
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.488718
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.696595
   },
   {
     "dataset": "set_01",
@@ -2512,33 +1270,6 @@
   },
   {
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 0.121427
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 0.26962
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 0.500425
-  },
-  {
-    "dataset": "set_01",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -2563,33 +1294,6 @@
     "model": "gat",
     "metric_name": "recall",
     "best_value": 0.941176
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.94958
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.941176
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.989916
   },
   {
     "dataset": "set_01",
@@ -2620,33 +1324,6 @@
   },
   {
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.778609
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.828083
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.828976
-  },
-  {
-    "dataset": "set_01",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -2671,33 +1348,6 @@
     "model": "vgae",
     "metric_name": "auc",
     "best_value": 0.745574
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.775978
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.745574
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.762
   },
   {
     "dataset": "set_01",
@@ -2728,33 +1378,6 @@
   },
   {
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.106332
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.113632
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.120789
-  },
-  {
-    "dataset": "set_01",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -2779,33 +1402,6 @@
     "model": "vgae",
     "metric_name": "mcc",
     "best_value": 0.143987
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.148917
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.143987
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.157391
   },
   {
     "dataset": "set_01",
@@ -2836,33 +1432,6 @@
   },
   {
     "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.057756
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.063236
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.067197
-  },
-  {
-    "dataset": "set_01",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -2889,33 +1458,6 @@
     "best_value": 0.559664
   },
   {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.668908
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.559664
-  },
-  {
-    "dataset": "set_01",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.596639
-  },
-  {
     "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
@@ -2932,24 +1474,6 @@
     "model": "fusion",
     "metric_name": "accuracy",
     "best_value": 0.978633
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.978633
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.998833
   },
   {
     "dataset": "set_02",
@@ -2971,24 +1495,6 @@
   },
   {
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.876795
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.994003
-  },
-  {
-    "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3004,24 +1510,6 @@
     "model": "fusion",
     "metric_name": "f1",
     "best_value": 0.861645
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.861645
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.993117
   },
   {
     "dataset": "set_02",
@@ -3043,24 +1531,6 @@
   },
   {
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.855532
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.992494
-  },
-  {
-    "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3076,24 +1546,6 @@
     "model": "fusion",
     "metric_name": "precision",
     "best_value": 0.960539
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 0.960539
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 0.998024
   },
   {
     "dataset": "set_02",
@@ -3115,24 +1567,6 @@
   },
   {
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.781213
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.988258
-  },
-  {
-    "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3148,24 +1582,6 @@
     "model": "gat",
     "metric_name": "accuracy",
     "best_value": 0.994595
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.994595
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.998624
   },
   {
     "dataset": "set_02",
@@ -3187,24 +1603,6 @@
   },
   {
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.999353
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.999559
-  },
-  {
-    "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3220,24 +1618,6 @@
     "model": "gat",
     "metric_name": "f1",
     "best_value": 0.969554
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.969554
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.992077
   },
   {
     "dataset": "set_02",
@@ -3259,24 +1639,6 @@
   },
   {
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.966861
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.991324
-  },
-  {
-    "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3292,24 +1654,6 @@
     "model": "gat",
     "metric_name": "precision",
     "best_value": 0.949065
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 0.949065
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 0.992358
   },
   {
     "dataset": "set_02",
@@ -3331,24 +1675,6 @@
   },
   {
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.990948
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.991796
-  },
-  {
-    "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3364,24 +1690,6 @@
     "model": "vgae",
     "metric_name": "accuracy",
     "best_value": 0.851474
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.851474
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.838378
   },
   {
     "dataset": "set_02",
@@ -3403,24 +1711,6 @@
   },
   {
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.820336
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.812445
-  },
-  {
-    "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3436,24 +1726,6 @@
     "model": "vgae",
     "metric_name": "f1",
     "best_value": 0.426089
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.426089
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.401347
   },
   {
     "dataset": "set_02",
@@ -3475,24 +1747,6 @@
   },
   {
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.378313
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.351371
-  },
-  {
-    "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3511,24 +1765,6 @@
   },
   {
     "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.320663
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.295854
-  },
-  {
-    "dataset": "set_02",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3544,24 +1780,6 @@
     "model": "vgae",
     "metric_name": "recall",
     "best_value": 0.634795
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.634795
-  },
-  {
-    "dataset": "set_02",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.623762
   },
   {
     "dataset": "set_03",
@@ -3583,24 +1801,6 @@
   },
   {
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.989967
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.9967
-  },
-  {
-    "dataset": "set_03",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3616,24 +1816,6 @@
     "model": "fusion",
     "metric_name": "auc",
     "best_value": 0.93039
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.93039
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.957271
   },
   {
     "dataset": "set_03",
@@ -3655,24 +1837,6 @@
   },
   {
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.860713
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.952654
-  },
-  {
-    "dataset": "set_03",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3688,24 +1852,6 @@
     "model": "fusion",
     "metric_name": "mcc",
     "best_value": 0.855513
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.855513
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.95141
   },
   {
     "dataset": "set_03",
@@ -3727,24 +1873,6 @@
   },
   {
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 0.857934
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 0.982249
-  },
-  {
-    "dataset": "set_03",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3760,24 +1888,6 @@
     "model": "fusion",
     "metric_name": "recall",
     "best_value": 0.86351
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.86351
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.924791
   },
   {
     "dataset": "set_03",
@@ -3799,24 +1909,6 @@
   },
   {
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.879711
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.968272
-  },
-  {
-    "dataset": "set_03",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3832,24 +1924,6 @@
     "model": "gat",
     "metric_name": "auc",
     "best_value": 0.975497
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.975497
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.99393
   },
   {
     "dataset": "set_03",
@@ -3871,24 +1945,6 @@
   },
   {
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.360026
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.686683
-  },
-  {
-    "dataset": "set_03",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3904,24 +1960,6 @@
     "model": "gat",
     "metric_name": "mcc",
     "best_value": 0.423004
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.423004
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.703655
   },
   {
     "dataset": "set_03",
@@ -3943,24 +1981,6 @@
   },
   {
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 0.222927
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 0.534228
-  },
-  {
-    "dataset": "set_03",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -3976,24 +1996,6 @@
     "model": "gat",
     "metric_name": "recall",
     "best_value": 0.935108
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.935108
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.960899
   },
   {
     "dataset": "set_03",
@@ -4015,24 +2017,6 @@
   },
   {
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.819356
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.621945
-  },
-  {
-    "dataset": "set_03",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -4048,24 +2032,6 @@
     "model": "vgae",
     "metric_name": "auc",
     "best_value": 0.842855
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.842855
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.730636
   },
   {
     "dataset": "set_03",
@@ -4087,24 +2053,6 @@
   },
   {
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.222165
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.120826
-  },
-  {
-    "dataset": "set_03",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -4120,24 +2068,6 @@
     "model": "vgae",
     "metric_name": "mcc",
     "best_value": 0.252276
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.252276
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.12854
   },
   {
     "dataset": "set_03",
@@ -4159,24 +2089,6 @@
   },
   {
     "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.131583
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.065963
-  },
-  {
-    "dataset": "set_03",
     "model_type": "eval",
     "scale": "large",
     "has_kd": 0,
@@ -4194,24 +2106,6 @@
     "best_value": 0.712978
   },
   {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.712978
-  },
-  {
-    "dataset": "set_03",
-    "model_type": "unknown",
-    "scale": "teacher",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.71797
-  },
-  {
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
@@ -4224,24 +2118,6 @@
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.989175
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "accuracy",
-    "best_value": 0.990768
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
     "has_kd": 1,
     "model": "fusion",
     "metric_name": "accuracy",
@@ -4267,24 +2143,6 @@
   },
   {
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.779109
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "auc",
-    "best_value": 0.758151
-  },
-  {
-    "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
     "has_kd": 0,
@@ -4296,24 +2154,6 @@
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.606241
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "f1",
-    "best_value": 0.676218
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
     "has_kd": 1,
     "model": "fusion",
     "metric_name": "f1",
@@ -4339,24 +2179,6 @@
   },
   {
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.708389
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "mcc",
-    "best_value": 0.646169
-  },
-  {
-    "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
     "has_kd": 0,
@@ -4368,24 +2190,6 @@
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 0.948837
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "precision",
-    "best_value": 0.983333
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
     "has_kd": 1,
     "model": "fusion",
     "metric_name": "precision",
@@ -4411,24 +2215,6 @@
   },
   {
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.515284
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "fusion",
-    "metric_name": "recall",
-    "best_value": 0.445415
-  },
-  {
-    "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
     "has_kd": 0,
@@ -4440,24 +2226,6 @@
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.694171
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "accuracy",
-    "best_value": 0.703321
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
     "has_kd": 1,
     "model": "gat",
     "metric_name": "accuracy",
@@ -4483,24 +2251,6 @@
   },
   {
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.959067
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "auc",
-    "best_value": 0.881922
-  },
-  {
-    "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
     "has_kd": 0,
@@ -4512,24 +2262,6 @@
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.095008
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "f1",
-    "best_value": 0.108287
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
     "has_kd": 1,
     "model": "gat",
     "metric_name": "f1",
@@ -4555,24 +2287,6 @@
   },
   {
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.193045
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "mcc",
-    "best_value": 0.159602
-  },
-  {
-    "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
     "has_kd": 0,
@@ -4584,24 +2298,6 @@
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 0.050288
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "precision",
-    "best_value": 0.05737
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
     "has_kd": 1,
     "model": "gat",
     "metric_name": "precision",
@@ -4627,24 +2323,6 @@
   },
   {
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.962882
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "gat",
-    "metric_name": "recall",
-    "best_value": 0.858079
-  },
-  {
-    "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
     "has_kd": 0,
@@ -4656,24 +2334,6 @@
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.892692
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "accuracy",
-    "best_value": 0.883665
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
     "has_kd": 1,
     "model": "vgae",
     "metric_name": "accuracy",
@@ -4699,24 +2359,6 @@
   },
   {
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.778812
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "auc",
-    "best_value": 0.824147
-  },
-  {
-    "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
     "has_kd": 0,
@@ -4728,24 +2370,6 @@
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.184415
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "f1",
-    "best_value": 0.157895
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
     "has_kd": 1,
     "model": "vgae",
     "metric_name": "f1",
@@ -4771,24 +2395,6 @@
   },
   {
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.197353
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "mcc",
-    "best_value": 0.23372
-  },
-  {
-    "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
     "has_kd": 0,
@@ -4807,24 +2413,6 @@
   },
   {
     "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.091313
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "precision",
-    "best_value": 0.107492
-  },
-  {
-    "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
     "has_kd": 0,
@@ -4836,24 +2424,6 @@
     "dataset": "set_04",
     "model_type": "eval",
     "scale": "small",
-    "has_kd": 1,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.648472
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
-    "has_kd": 0,
-    "model": "vgae",
-    "metric_name": "recall",
-    "best_value": 0.582969
-  },
-  {
-    "dataset": "set_04",
-    "model_type": "unknown",
-    "scale": "student",
     "has_kd": 1,
     "model": "vgae",
     "metric_name": "recall",

@@ -1,9 +1,37 @@
 """Shared fixtures for training smoke and e2e tests."""
 from __future__ import annotations
 
+import os
+
 import pytest
 import torch
 from torch_geometric.data import Data
+
+
+def pytest_addoption(parser):
+    parser.addoption(
+        "--run-slurm", action="store_true", default=False,
+        help="Run tests marked as needing SLURM compute node",
+    )
+
+
+def pytest_configure(config):
+    config.addinivalue_line(
+        "markers", "slurm: test requires SLURM compute node (CPU or GPU)"
+    )
+
+
+def pytest_collection_modifyitems(config, items):
+    on_compute = "SLURM_JOB_ID" in os.environ
+    run_slurm = config.getoption("--run-slurm", default=False)
+    if on_compute or run_slurm:
+        return
+    skip_slurm = pytest.mark.skip(
+        reason="Needs SLURM compute node (use --run-slurm or submit via sbatch)"
+    )
+    for item in items:
+        if "slurm" in item.keywords:
+            item.add_marker(skip_slurm)
 
 
 NUM_IDS = 20

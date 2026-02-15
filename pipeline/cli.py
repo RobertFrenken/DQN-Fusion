@@ -22,7 +22,7 @@ from pathlib import Path
 from config import PipelineConfig, STAGES, config_path, run_id
 from config.resolver import resolve
 from .validate import validate
-from .db import record_run_start, record_run_end
+from .db import record_run_start, record_run_end, get_connection
 
 
 def _parse_bool(v: str) -> bool:
@@ -161,10 +161,30 @@ def main(argv: list[str] | None = None) -> None:
 
     # ---- Record run start in project DB ----
     run_name = run_id(cfg, args.stage)
+
+    # Propagate teacher_run for KD evaluation runs from their training counterpart
+    teacher_run = ""
+    if cfg.has_kd and args.stage == "evaluation":
+        conn = get_connection()
+        try:
+            row = conn.execute(
+                """SELECT teacher_run FROM runs
+                   WHERE dataset = ? AND has_kd = 1 AND teacher_run != ''
+                     AND stage IN ('curriculum', 'fusion')
+                   LIMIT 1""",
+                (cfg.dataset,),
+            ).fetchone()
+            if row and row[0]:
+                teacher_run = row[0]
+                log.info("Propagated teacher_run=%s for eval KD run", teacher_run)
+        finally:
+            conn.close()
+
     record_run_start(
         run_id=run_name, dataset=cfg.dataset, model_type=cfg.model_type,
         scale=cfg.scale, stage=args.stage, has_kd=cfg.has_kd,
         config_json=cfg.model_dump_json(indent=2),
+        teacher_run=teacher_run,
     )
     log.info("Run started: %s", run_name)
 

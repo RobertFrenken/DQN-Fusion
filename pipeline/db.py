@@ -79,6 +79,10 @@ CREATE TABLE IF NOT EXISTS epoch_metrics (
     value       REAL,
     PRIMARY KEY (run_id, epoch, metric_name)
 );
+
+CREATE INDEX IF NOT EXISTS idx_metrics_run_id ON metrics(run_id);
+CREATE INDEX IF NOT EXISTS idx_metrics_scenario ON metrics(run_id, scenario, metric_name);
+CREATE INDEX IF NOT EXISTS idx_epoch_metrics_run ON epoch_metrics(run_id, epoch);
 """
 
 
@@ -104,6 +108,9 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     path = db_path or DB_PATH
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute("PRAGMA busy_timeout=5000")
+    conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     _migrate_schema(conn)
     return conn
@@ -453,6 +460,77 @@ def _populate_metrics(conn: sqlite3.Connection) -> int:
     return count
 
 
+def _backfill_timestamps(conn: sqlite3.Connection) -> int:
+    """Set completed_at from filesystem mtime for runs missing timestamps."""
+    rows = conn.execute(
+        "SELECT run_id FROM runs WHERE completed_at IS NULL"
+    ).fetchall()
+    count = 0
+    for (rid,) in rows:
+        run_dir = Path(EXPERIMENT_ROOT) / rid
+        for fname in ("metrics.json", "best_model.pt", "config.json"):
+            p = run_dir / fname
+            if p.exists():
+                mtime = datetime.fromtimestamp(p.stat().st_mtime, tz=timezone.utc)
+                conn.execute(
+                    "UPDATE runs SET completed_at = ? WHERE run_id = ?",
+                    (mtime.isoformat(), rid),
+                )
+                count += 1
+                break
+    if count:
+        log.info("Backfilled timestamps for %d runs", count)
+    return count
+
+
+def _backfill_teacher_run(conn: sqlite3.Connection) -> int:
+    """Fill teacher_run on KD eval runs from their training counterparts."""
+    cursor = conn.execute("""
+        UPDATE runs SET teacher_run = (
+            SELECT t.teacher_run FROM runs t
+            WHERE t.dataset = runs.dataset
+              AND t.has_kd = 1
+              AND t.teacher_run != ''
+              AND t.stage IN ('curriculum', 'fusion')
+              AND (t.model_type = runs.model_type OR t.scale = runs.scale)
+            LIMIT 1
+        )
+        WHERE has_kd = 1 AND stage = 'evaluation'
+          AND (teacher_run IS NULL OR teacher_run = '')
+    """)
+    count = cursor.rowcount
+    if count:
+        log.info("Backfilled teacher_run for %d KD eval runs", count)
+    return count
+
+
+def _migrate_legacy_runs(conn: sqlite3.Connection) -> int:
+    """Remap legacy student/teacher naming to proper model_type + scale."""
+    stage_to_model = {
+        "autoencoder": "vgae",
+        "curriculum": "gat",
+        "fusion": "dqn",
+        "evaluation": "eval",
+    }
+    count = 0
+    # Map scale: student→small, teacher→large
+    count += conn.execute(
+        "UPDATE runs SET scale = 'small' WHERE scale = 'student'"
+    ).rowcount
+    count += conn.execute(
+        "UPDATE runs SET scale = 'large' WHERE scale = 'teacher'"
+    ).rowcount
+    # Map model_type from stage
+    for stage, mtype in stage_to_model.items():
+        count += conn.execute(
+            "UPDATE runs SET model_type = ? WHERE model_type = 'unknown' AND stage = ?",
+            (mtype, stage),
+        ).rowcount
+    if count:
+        log.info("Migrated %d legacy run fields", count)
+    return count
+
+
 def populate(db_path: Path | None = None) -> dict[str, int]:
     """Populate the project DB from existing filesystem outputs."""
     conn = get_connection(db_path)
@@ -462,6 +540,9 @@ def populate(db_path: Path | None = None) -> dict[str, int]:
             "runs": _populate_runs(conn),
             "metrics": _populate_metrics(conn),
         }
+        _migrate_legacy_runs(conn)
+        _backfill_timestamps(conn)
+        _backfill_teacher_run(conn)
         conn.commit()
     finally:
         conn.close()

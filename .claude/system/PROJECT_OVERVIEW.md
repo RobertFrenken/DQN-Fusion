@@ -1,6 +1,6 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-02-14
+**Updated**: 2026-02-15
 
 ## What This Is
 
@@ -34,7 +34,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
 ### Layer 2: `pipeline/` (orchestration — imports config/ freely, lazy imports from src/)
 
-- `cli.py` — Arg parser (`--model`/`--scale`/`--auxiliaries`), MLflow run lifecycle, write-through DB recording, `STAGE_FNS` dispatch
+- `cli.py` — Arg parser (`--model`/`--scale`/`--auxiliaries`), MLflow run lifecycle, write-through DB recording (propagates teacher_run for KD eval runs), `STAGE_FNS` dispatch
 - `stages/` — Training logic split into modules:
   - `training.py` — VGAE (autoencoder) and GAT (curriculum) training
   - `fusion.py` — DQN fusion training (uses `cfg.dqn.*`, `cfg.fusion.*`)
@@ -45,7 +45,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 - `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
 - `memory.py` — Memory monitoring and GPU/CPU optimization
 - `ingest.py` — CSV→Parquet ingestion, validation against `config/datasets.yaml`, dataset registration
-- `db.py` — SQLite project DB (`data/project.db`): schema (model_type/scale/has_kd), write-through `record_run_start()`/`record_run_end()`, backfill `populate()`, CLI queries
+- `db.py` — SQLite project DB (`data/project.db`): WAL mode + busy timeout + foreign keys, schema (model_type/scale/has_kd) with indices on metrics/epoch_metrics, write-through `record_run_start()`/`record_run_end()`, backfill `populate()` (includes `_migrate_legacy_runs()`, `_backfill_timestamps()`, `_backfill_teacher_run()`), CLI queries
 - `analytics.py` — Post-run analysis: sweep, leaderboard, compare, config_diff, dataset_summary
 - `migrate_paths.py` — Legacy path migration tool (`teacher_*/student_*` → new format). Also rewrites `teacher_path` in config.json files. Migration completed 2026-02-14 (70 dirs across 6 datasets).
 - `Snakefile` — Snakemake workflow (`--model`/`--scale`/`--auxiliaries` CLI, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup, preprocessing cache rule, retries with resource scaling, evaluation group jobs)

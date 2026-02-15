@@ -12,7 +12,7 @@
 - Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
 - Legacy flat JSON loading via `PipelineConfig.load()` with automatic migration
 
-**Tests**: 78 passing (preprocessing tests are slow, e2e tests have pre-existing config.json assertion issue)
+**Tests**: 78 passing (slurm-marked tests auto-skip on login nodes)
 
 ### Pipeline System
 - Pipeline system (`pipeline/`) fully operational with Snakemake + project DB
@@ -30,16 +30,25 @@
 
 ### Data Management Layer
 - **Parquet ingestion**: All 6 datasets converted (`data/parquet/automotive/{dataset}/`)
-- **Project DB**: `data/project.db` — 6 datasets, 140 runs, 7830 metrics
+- **Project DB**: `data/project.db` — 6 datasets, 70 runs (legacy naming migrated), 3915 metrics
   - Write-through from cli.py + backfill via `populate()`
+  - WAL mode + 5s busy timeout for concurrent SLURM jobs
+  - Indices on metrics and epoch_metrics tables
+  - `populate()` runs: `_migrate_legacy_runs()`, `_backfill_timestamps()`, `_backfill_teacher_run()`
 - **Analytics**: sweep, leaderboard, compare, config_diff, dataset_summary
 
 ### Dashboard (GitHub Pages)
 - **Live**: https://robertfrenken.github.io/DQN-Fusion/
 - **Stack**: Static JSON + D3.js, deployed from `docs/` on `main`
-- **Data**: 540 leaderboard entries, 140 runs, 6 datasets, 30 per-run metrics
+- **Working tabs**: Leaderboard (270 entries), Dataset Comparison, KD Transfer (108 pairs), Run Timeline (70 timestamped runs)
+- **Training Curves**: Empty (epoch_metrics table has 0 rows — will auto-populate from next training runs)
 - **Auto-export**: `scripts/export_dashboard.sh` runs in Snakemake `onsuccess`
-- **Manual export**: `bash scripts/export_dashboard.sh` (or `--dry-run`, `--no-push`)
+- **Export validation**: `export_all()` logs warnings for empty exports
+
+### Test Infrastructure
+- `@pytest.mark.slurm` marker auto-skips heavy tests on login nodes
+- `scripts/run_tests_slurm.sh` submits pytest to SLURM compute nodes
+- `--run-slurm` pytest flag or `SLURM_JOB_ID` env var enables slurm-marked tests
 
 ### GAT Architecture (Bug 3.7 Fixed)
 - Large GAT: `fc_layers: 1` (343k params) — removed bloated 1.3M-param hidden FC layer
@@ -58,11 +67,14 @@ Essential (imported by pipeline):
 - **Old experiment checkpoints**: Pre-MLflow runs have no `config.json`
 - **Bug 3.6 (research)**: OOD generalization collapse — not a code bug, requires research
 - **E2E tests**: Pre-existing failure — `train_autoencoder()` doesn't write config.json (CLI does)
+- **Training curves tab**: Empty until next round of training runs populates `epoch_metrics` table
 
 ## Recently Completed
 
-- **Dashboard deployment** (2026-02-15): GitHub Pages dashboard live at https://robertfrenken.github.io/DQN-Fusion/. Auto-export via Snakemake `onsuccess`. Fixed orphaned `data/automotive` submodule ref that was breaking Pages builds and causing constant git noise.
-- **Legacy path migration** (2026-02-14): All 70 `teacher_*/student_*` dirs renamed to `{model_type}_{scale}_{stage}[_{aux}]` format across 6 datasets. DB run_ids updated. 18 config.json `teacher_path` values rewritten. No legacy dirs remain.
+- **Dashboard data pipeline fix** (2026-02-15): Fixed 3 broken dashboard tabs. KD transfer query rewritten to match student↔teacher by convention (108 pairs, was 0). Timestamps backfilled from filesystem mtime (70/70 runs). Teacher_run propagated to 8 KD eval runs. Legacy naming migrated (0 `model_type='unknown'` remaining). SQLite hardened with WAL mode, busy timeout, indices. Export validation added.
+- **SLURM test dispatch** (2026-02-15): Added `@pytest.mark.slurm` to E2E and smoke tests (auto-skip on login nodes). New `scripts/run_tests_slurm.sh` for compute node submission.
+- **Dashboard deployment** (2026-02-15): GitHub Pages dashboard live at https://robertfrenken.github.io/DQN-Fusion/. Auto-export via Snakemake `onsuccess`. Fixed orphaned `data/automotive` submodule ref.
+- **Legacy path migration** (2026-02-14): All 70 `teacher_*/student_*` dirs renamed to `{model_type}_{scale}_{stage}[_{aux}]` format across 6 datasets.
 
 ## Next Steps
 
@@ -80,6 +92,6 @@ Essential (imported by pipeline):
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
 - **Snakemake cache**: `/fs/scratch/PAS1266/snakemake-cache/`
-- **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics)
+- **Project DB**: `data/project.db` (SQLite WAL — datasets, runs, metrics, epoch_metrics)
 - **Dashboard**: https://robertfrenken.github.io/DQN-Fusion/ (GitHub Pages from `docs/`)
 - **Conda**: `module load miniconda3/24.1.2-py310 && conda activate gnn-experiments`

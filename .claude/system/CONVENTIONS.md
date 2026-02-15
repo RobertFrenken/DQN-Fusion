@@ -51,6 +51,8 @@ This keeps the codebase lean. Every PR should leave the code cleaner than it was
 - Always use `spawn` multiprocessing, never `fork` with CUDA.
 - Test on small datasets (`hcrl_ch`) before large ones (`set_02`+).
 - SLURM logs go to `slurm_logs/`, experiment outputs to `experimentruns/`.
+- Heavy tests use `@pytest.mark.slurm` — auto-skipped on login nodes, run via `scripts/run_tests_slurm.sh`.
+- SQLite uses WAL mode + 5s busy timeout for concurrent SLURM job writes.
 
 ## Session Management
 

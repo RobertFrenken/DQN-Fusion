@@ -45,6 +45,7 @@ def _apply_load_data_patches(stack, data):
     stack.enter_context(patch("pipeline.stages.evaluation.load_data", fake))
 
 
+@pytest.mark.slurm
 class TestAutoencoderE2E:
     """train_autoencoder produces checkpoint + config that load correctly."""
 
@@ -80,6 +81,7 @@ class TestAutoencoderE2E:
         model.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=True))
 
 
+@pytest.mark.slurm
 class TestCurriculumE2E:
     """train_curriculum loads VGAE, trains GAT, saves checkpoint."""
 
@@ -120,6 +122,7 @@ class TestCurriculumE2E:
         model.load_state_dict(torch.load(ckpt, map_location="cpu", weights_only=True))
 
 
+@pytest.mark.slurm
 class TestFusionE2E:
     """train_fusion loads VGAE+GAT, trains DQN, saves checkpoint."""
 
@@ -163,6 +166,7 @@ class TestFusionE2E:
 
 
 @pytest.mark.slow
+@pytest.mark.slurm
 class TestFullPipelineE2E:
     """Full 3-stage pipeline + evaluation in sequence."""
 
