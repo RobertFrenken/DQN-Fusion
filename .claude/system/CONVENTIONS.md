@@ -52,7 +52,9 @@ This keeps the codebase lean. Every PR should leave the code cleaner than it was
 - Test on small datasets (`hcrl_ch`) before large ones (`set_02`+).
 - SLURM logs go to `slurm_logs/`, experiment outputs to `experimentruns/`.
 - Heavy tests use `@pytest.mark.slurm` — auto-skipped on login nodes, run via `scripts/run_tests_slurm.sh`.
-- SQLite uses WAL mode + 5s busy timeout for concurrent SLURM job writes.
+- **Always run tests via SLURM** (`cpu` partition, 8 CPUs, 16GB) — login nodes are too slow (tests take 2-5 min on SLURM vs 10+ min on login). Submit with: `sbatch --account=PAS3209 --partition=cpu --time=15 --mem=16G --cpus-per-task=8 --job-name=pytest --output=slurm_logs/%j-pytest.out --wrap='module load miniconda3/24.1.2-py310 && source activate gnn-experiments && cd /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT && python -m pytest tests/ -v'`
+- Note: `serial` partition no longer exists on OSC Pitzer — use `cpu` partition instead. Update `scripts/run_tests_slurm.sh` accordingly.
+- SQLite uses WAL mode + 15s busy timeout + retry decorator for concurrent SLURM job writes.
 
 ## Session Management
 

@@ -12,7 +12,7 @@
 - Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
 - Legacy flat JSON loading via `PipelineConfig.load()` with automatic migration
 
-**Tests**: 78 passing (slurm-marked tests auto-skip on login nodes)
+**Tests**: 105+ passing, 4 pre-existing FK failures in `TestWriteThroughDB` (slurm-marked tests auto-skip on login nodes). Always run via SLURM `cpu` partition for speed.
 
 ### Pipeline System
 - Pipeline system (`pipeline/`) fully operational with Snakemake + project DB
@@ -32,7 +32,7 @@
 - **Parquet ingestion**: All 6 datasets converted (`data/parquet/automotive/{dataset}/`)
 - **Project DB**: `data/project.db` — 6 datasets, 70 runs (legacy naming migrated), 3915 metrics
   - Write-through from cli.py + backfill via `populate()`
-  - WAL mode + 5s busy timeout for concurrent SLURM jobs
+  - WAL mode + 15s busy timeout + `_retry_on_locked` decorator for concurrent SLURM jobs
   - Indices on metrics and epoch_metrics tables
   - `populate()` runs: `_migrate_legacy_runs()`, `_backfill_timestamps()`, `_backfill_teacher_run()`
 - **Analytics**: sweep, leaderboard, compare, config_diff, dataset_summary
@@ -68,9 +68,16 @@ Essential (imported by pipeline):
 - **Bug 3.6 (research)**: OOD generalization collapse — not a code bug, requires research
 - **E2E tests**: Pre-existing failure — `train_autoencoder()` doesn't write config.json (CLI does)
 - **Training curves tab**: Empty until next round of training runs populates `epoch_metrics` table
+- **TestWriteThroughDB**: 4 pre-existing test failures — FK constraint on `runs.dataset → datasets(name)` fires because tests insert runs without first inserting a dataset row. Needs fixture fix.
+- **`scripts/run_tests_slurm.sh`**: Uses `--partition=serial` which no longer exists — needs update to `cpu`
 
 ## Recently Completed
 
+- **Fragility fixes** (2026-02-15): Implemented 10-item fragility fix plan across 3 phases:
+  - **Phase 1 (Prerequisites)**: Schema versioning (`SCHEMA_VERSION` constant, `schema_version` column in runs table, versioned JSON export envelope). DB write retry (`_retry_on_locked` decorator with exponential backoff, `busy_timeout` 5s→15s).
+  - **Phase 2 (Tier 1)**: Overwrite protection (archive-on-collision before re-running same config). Cache staleness detection (`PREPROCESSING_VERSION` check + param validation on cache load). Export/dashboard schema coupling (pre-flight DB validation, `metric_catalog.json` export, dynamic metric dropdowns in JS, try/catch + defensive `??` in all chart functions). Push recovery (pull-rebase + 3x retry loop in `export_dashboard.sh`, tolerate failure in Snakefile `onsuccess`).
+  - **Phase 3 (Tier 2)**: Strict YAML mode (`_warn_unused_keys` on resolver). Dataset catalog validation (`config/catalog.py` with Pydantic `DatasetEntry` model). Dynamic metrics in analytics (`_get_core_metrics()` replaces hardcoded list). Aux type validation (`Literal["kd"]` on `AuxiliaryConfig.type`).
+  - New file: `config/catalog.py`. Modified 16 files total.
 - **Dashboard data pipeline fix** (2026-02-15): Fixed 3 broken dashboard tabs. KD transfer query rewritten to match student↔teacher by convention (108 pairs, was 0). Timestamps backfilled from filesystem mtime (70/70 runs). Teacher_run propagated to 8 KD eval runs. Legacy naming migrated (0 `model_type='unknown'` remaining). SQLite hardened with WAL mode, busy timeout, indices. Export validation added.
 - **SLURM test dispatch** (2026-02-15): Added `@pytest.mark.slurm` to E2E and smoke tests (auto-skip on login nodes). New `scripts/run_tests_slurm.sh` for compute node submission.
 - **Dashboard deployment** (2026-02-15): GitHub Pages dashboard live at https://robertfrenken.github.io/DQN-Fusion/. Auto-export via Snakemake `onsuccess`. Fixed orphaned `data/automotive` submodule ref.
@@ -78,9 +85,12 @@ Essential (imported by pipeline):
 
 ## Next Steps
 
-1. **Full pipeline GPU run**: `snakemake --profile profiles/slurm --config 'datasets=["hcrl_sa"]'`
-2. **Phase 3**: Model registry + dynamic fusion (see `.claude/plans/pipeline_redesign.md`)
-3. **Investigate OOD threshold calibration** (bug 3.6)
+1. **Fix `scripts/run_tests_slurm.sh`**: Update `--partition=serial` → `--partition=cpu` (serial no longer exists on Pitzer)
+2. **Fix TestWriteThroughDB**: Add dataset fixture to DB tests so FK constraint passes
+3. **Benchmark SLURM test speed**: Compare login node vs `cpu` partition (8 CPUs, 16GB) to quantify speedup
+4. **Full pipeline GPU run**: `snakemake --profile profiles/slurm --config 'datasets=["hcrl_sa"]'`
+5. **Phase 3**: Model registry + dynamic fusion (see `.claude/plans/pipeline_redesign.md`)
+6. **Investigate OOD threshold calibration** (bug 3.6)
 
 ## Filesystem
 
