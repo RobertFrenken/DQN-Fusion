@@ -1,0 +1,46 @@
+---
+name: run-tests
+description: Run the pytest test suite with optional pattern filtering
+---
+
+Run the project test suite.
+
+## Arguments
+
+`$ARGUMENTS` — Optional test file path or pytest `-k` pattern. If empty, runs all tests.
+
+## Execution Steps
+
+1. **Run pytest** with the conda environment's Python:
+   ```bash
+   PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT \
+     /users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pytest tests/ -v $ARGUMENTS 2>&1
+   ```
+
+   If `$ARGUMENTS` contains a file path (ends in `.py`), pass it as the test target:
+   ```bash
+   PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT \
+     /users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pytest $ARGUMENTS -v 2>&1
+   ```
+
+   If `$ARGUMENTS` is a keyword pattern (no `.py`), use `-k`:
+   ```bash
+   PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT \
+     /users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pytest tests/ -v -k "$ARGUMENTS" 2>&1
+   ```
+
+2. **Summarize results** in a table:
+   ```
+   Test Results: X passed, Y failed, Z skipped
+
+   Failed tests (if any):
+   - test_name: brief reason
+   ```
+
+3. **If tests fail**, read the relevant test file and source file to diagnose the issue. Suggest a fix if the cause is clear.
+
+## Notes
+
+- Preprocessing tests are slow (they build actual graphs). Use `-k "not preprocessing"` to skip them.
+- Layer boundary tests (`tests/test_layer_boundaries.py`) verify the 3-layer import hierarchy.
+- E2E tests have a known pre-existing assertion issue with config.json.

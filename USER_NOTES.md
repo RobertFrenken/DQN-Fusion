@@ -100,5 +100,9 @@ question, so I want it logged but not actively called upon if we are in
 training, cascading knowledge distillation, etc. I want claude to toggle between
 what kinds of contexts or what attention it should have depending on our session.
 
-.
+## Writing CUDA or Triton Kernels
+If batch size continues to be an issue, would trying to write custom functions
+in CUDA or Triton help with this? Could these tools have improvements in other
+areas, or could it help or be integrated with a snakemake process? Open
+questions as I am not familiar with how to do this.
 

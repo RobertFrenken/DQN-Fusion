@@ -169,9 +169,44 @@ These fix real crashes -- do not violate:
 - **MLflow DB**: `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db` (auto-backed up to `~/backups/` on pipeline success)
 - **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics)
 
+## Session Modes
+
+Switch Claude's focus with `/set-mode <mode>`:
+
+| Mode | Focus | Suppressed |
+|------|-------|------------|
+| `mlops` | Pipeline, Snakemake, SLURM, config, debugging | Research, writing |
+| `research` | OOD generalization, JumpReLU, cascading KD, literature | Pipeline ops, config |
+| `writing` | Paper drafting, documentation, results | Code changes, pipeline |
+| `data` | Ingestion, preprocessing, validation, cache | Research, writing |
+
+Mode context files live in `.claude/system/modes/`. Switching modes loads the relevant context into the conversation.
+
+## Skills
+
+| Skill | Usage | Description |
+|-------|-------|-------------|
+| `/set-mode` | `/set-mode mlops` | Switch session focus mode |
+| `/run-pipeline` | `/run-pipeline hcrl_sa large` | Submit Snakemake jobs to SLURM |
+| `/check-status` | `/check-status hcrl_sa` | Check SLURM queue, checkpoints, DB |
+| `/run-tests` | `/run-tests` or `/run-tests test_config` | Run pytest suite |
+| `/sync-state` | `/sync-state` | Update STATE.md from current outputs |
+
+## Experiment Tracking
+
+Default backend: MLflow. WandB support prepared via `TRACKING_BACKEND` constant.
+
+```bash
+# Switch tracking backend (env var)
+export KD_GAT_TRACKING_BACKEND=wandb   # or "mlflow" (default) or "both"
+export KD_GAT_WANDB_PROJECT=kd-gat
+export KD_GAT_WANDB_ENTITY=your-entity
+```
+
 ## Detailed Documentation
 
 - `.claude/system/PROJECT_OVERVIEW.md` -- Full architecture, models, memory optimization
 - `.claude/system/CONVENTIONS.md` -- Code style, iteration hygiene, git rules
 - `.claude/system/STATE.md` -- Current session state (updated each session)
+- `.claude/system/modes/` -- Mode-specific context files (mlops, research, writing, data)
 - `docs/user_guides/` -- Snakemake guide, MLflow usage, Datasette usage, terminal setup

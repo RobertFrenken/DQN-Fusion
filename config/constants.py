@@ -47,11 +47,19 @@ SLURM_PARTITION = os.getenv("KD_GAT_SLURM_PARTITION", "gpu")
 SLURM_GPU_TYPE = os.getenv("KD_GAT_GPU_TYPE", "v100")
 
 # ---------------------------------------------------------------------------
-# MLflow tracking
+# Experiment tracking
 # ---------------------------------------------------------------------------
 
+# Backend: "mlflow" (default), "wandb", or "both"
+TRACKING_BACKEND = os.getenv("KD_GAT_TRACKING_BACKEND", "mlflow")
+
+# MLflow
 TRACKING_URI = os.getenv(
     "MLFLOW_TRACKING_URI",
     "sqlite:////fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db"
 )
 EXPERIMENT_NAME = "kd-gat-pipeline"
+
+# WandB
+WANDB_PROJECT = os.getenv("KD_GAT_WANDB_PROJECT", "kd-gat")
+WANDB_ENTITY = os.getenv("KD_GAT_WANDB_ENTITY", "")
