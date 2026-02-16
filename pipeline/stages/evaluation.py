@@ -3,7 +3,6 @@ from __future__ import annotations
 
 import json
 import logging
-import pickle
 from pathlib import Path
 
 import numpy as np
@@ -215,36 +214,14 @@ def evaluate(cfg: PipelineConfig) -> dict:
 # ---------------------------------------------------------------------------
 
 def _load_test_data(cfg: PipelineConfig) -> dict:
-    """Load held-out test graphs per scenario."""
-    from src.preprocessing.preprocessing import graph_creation
+    """Load held-out test graphs per scenario (cached)."""
+    from src.training.datamodules import load_test_scenarios
 
-    mapping_file = cache_dir(cfg) / "id_mapping.pkl"
-    if not mapping_file.exists():
-        log.warning("No id_mapping at %s -- skipping test data", mapping_file)
-        return {}
-
-    with open(mapping_file, "rb") as f:
-        id_mapping = pickle.load(f)
-
-    ds_path = data_dir(cfg)
-    if not ds_path.exists():
-        log.warning("Dataset path %s not found -- skipping test data", ds_path)
-        return {}
-
-    scenarios: dict[str, list] = {}
-    for folder in sorted(ds_path.iterdir()):
-        if folder.is_dir() and folder.name.startswith("test_"):
-            name = folder.name
-            log.info("Loading test scenario: %s", name)
-            graphs = graph_creation(
-                str(ds_path), folder_type=name,
-                id_mapping=id_mapping, return_id_mapping=False,
-            )
-            if graphs:
-                scenarios[name] = graphs
-                log.info("  %s: %d graphs", name, len(graphs))
-
-    return scenarios
+    return load_test_scenarios(
+        cfg.dataset,
+        data_dir(cfg),
+        cache_dir(cfg),
+    )
 
 
 def _run_gat_inference(gat, data, device, capture_embeddings=False):

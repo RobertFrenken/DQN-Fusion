@@ -30,7 +30,7 @@
 
 ### Data Management Layer
 - **Parquet ingestion**: All 6 datasets converted (`data/parquet/automotive/{dataset}/`)
-- **Project DB**: `data/project.db` — 6 datasets, 70 runs, 3915 metrics, 18,290 epoch_metrics
+- **Project DB**: `data/project.db` — 6 datasets, 72 runs, 3915 metrics, 18,290 epoch_metrics
   - Write-through from cli.py + backfill via `populate()`
   - WAL mode + 15s busy timeout + `_retry_on_locked` decorator for concurrent SLURM jobs
   - Indices on metrics and epoch_metrics tables
@@ -84,10 +84,9 @@ Adding a new panel = adding an entry to `panelConfig.js`. BaseChart lifecycle: `
 ## Active `src/` Files
 
 Essential (imported by pipeline):
-- `src/models/` — vgae.py, gat.py, dqn.py (gradient checkpointing support)
-- `src/models/registry.py` — Model construction + fusion feature extraction
-- `src/preprocessing/preprocessing.py` — graph construction
-- `src/training/datamodules.py` — load_dataset()
+- `src/models/` — dqn.py, fusion_features.py, gat.py, registry.py, vgae.py
+- `src/preprocessing/` — preprocessing.py
+- `src/training/` — datamodules.py
 
 ## What's Not Working / Incomplete
 
@@ -128,14 +127,14 @@ Essential (imported by pipeline):
 
 ## Filesystem
 
-- **Inode usage**: 386k / 1M (cleaned from 763k on 2026-02-13)
-- **Conda envs**: Only `gnn-experiments` remains (removed py310, gnn-gpu, dfl, gpu_practice)
+- **Inode usage**: 387721 / 20863405
+- **Conda envs**: gnn-experiments
 
 ## OSC Environment
 
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
 - **Snakemake cache**: `/fs/scratch/PAS1266/snakemake-cache/`
-- **Project DB**: `data/project.db` (SQLite WAL — datasets, runs, metrics, epoch_metrics)
-- **Dashboard**: https://robertfrenken.github.io/DQN-Fusion/ (GitHub Pages from `docs/`)
+- **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics, epoch_metrics)
+- **Dashboard**: `docs/dashboard/` (GitHub Pages — static JSON + D3.js)
 - **Conda**: `module load miniconda3/24.1.2-py310 && conda activate gnn-experiments`

@@ -102,7 +102,7 @@ if $USE_GPU; then
     SBATCH_ARGS+=(--partition=gpu --gpus-per-node=1)
     info "Requesting GPU allocation"
 else
-    SBATCH_ARGS+=(--partition=serial)
+    SBATCH_ARGS+=(--partition=cpu)
     info "Requesting CPU-only allocation"
 fi
 

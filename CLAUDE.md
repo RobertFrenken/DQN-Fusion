@@ -40,6 +40,10 @@ python -m pipeline.db populate          # Populate project DB from existing outp
 python -m pipeline.db summary           # Show dataset/run/metric counts
 python -m pipeline.db query "SQL"       # Run arbitrary SQL on project DB
 
+# Test graph caching (builds test_*.pt per scenario per dataset)
+sbatch scripts/build_test_cache.sh                    # All datasets (set_01-04)
+sbatch scripts/build_test_cache.sh set_02 set_03      # Specific datasets
+
 # Experiment analytics (queries project DB)
 python -m pipeline.analytics sweep --param lr --metric f1
 python -m pipeline.analytics leaderboard --metric f1 --top 10
@@ -107,10 +111,10 @@ pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from
   ingest.py         # CSV → Parquet conversion + dataset registration
   db.py             # SQLite project DB (WAL mode) + write-through + backfill migrations (epoch_metrics, timestamps, teacher_run)
   analytics.py      # Post-run analysis: sweeps, leaderboards, comparisons
-  Snakefile         # All stages + evaluation + preprocessing cache + retries + group jobs
+  Snakefile         # All stages + evaluation + preprocessing cache + test cache + retries + group jobs
 src/                # Layer 3: Domain (models, training, preprocessing; imports config/)
   models/           # vgae.py, gat.py, dqn.py
-  training/         # load_dataset(), graph caching
+  training/         # load_dataset(), load_test_scenarios(), graph caching
   preprocessing/    # Graph construction from CAN CSVs
 data/
   project.db        # SQLite DB: queryable datasets, runs, metrics, epoch_metrics
@@ -118,7 +122,7 @@ data/
   parquet/          # Columnar format (from ingest), queryable via Datasette or SQL
   cache/            # Preprocessed graph cache (.pt, .pkl, metadata)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json, embeddings.npz, dqn_policy.json
-scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh)
+scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh, build_test_cache.sh)
 docs/dashboard/     # GitHub Pages D3.js dashboard (ES modules, config-driven panels)
   js/core/          # BaseChart, Registry, Theme
   js/charts/        # 8 chart types (Table, Bar, Scatter, Line, Timeline, Bubble, ForceGraph, Histogram)

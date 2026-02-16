@@ -297,6 +297,92 @@ def _process_dataset_from_scratch(
     return graphs, id_mapping
 
 
+def load_test_scenarios(
+    dataset_name: str,
+    dataset_path: Path,
+    cache_dir_path: Path,
+    force_rebuild_cache: bool = False,
+) -> dict[str, list]:
+    """Load held-out test scenarios with per-scenario caching.
+
+    Each test scenario (test_01_..., test_02_..., etc.) is cached as a
+    separate .pt file in the cache directory, using the training id_mapping
+    for consistent CAN ID encoding.
+
+    Returns:
+        Dict mapping scenario name → list of PyG Data objects.
+    """
+    import pickle
+    from src.preprocessing.preprocessing import graph_creation
+
+    id_mapping_file = cache_dir_path / "id_mapping.pkl"
+    if not id_mapping_file.exists():
+        logger.warning("No id_mapping at %s -- skipping test data", id_mapping_file)
+        return {}
+
+    with open(id_mapping_file, "rb") as f:
+        id_mapping = pickle.load(f)
+
+    if not dataset_path.exists():
+        logger.warning("Dataset path %s not found -- skipping test data", dataset_path)
+        return {}
+
+    scenarios: dict[str, list] = {}
+    for folder in sorted(dataset_path.iterdir()):
+        if not (folder.is_dir() and folder.name.startswith("test_")):
+            continue
+
+        name = folder.name
+        cache_file = cache_dir_path / f"{name}.pt"
+
+        # Try loading from cache
+        if not force_rebuild_cache and cache_file.exists():
+            try:
+                graphs = torch.load(cache_file, map_location="cpu", weights_only=False)
+                if hasattr(graphs, "data_list"):
+                    graphs = graphs.data_list
+                if not isinstance(graphs, list):
+                    graphs = list(graphs)
+                logger.info("Loaded %d cached test graphs for %s", len(graphs), name)
+                scenarios[name] = graphs
+                continue
+            except Exception as e:
+                logger.warning("Test cache load failed for %s: %s. Rebuilding.", name, e)
+
+        # Build from CSV and cache
+        logger.info("Building test graphs for %s", name)
+        graphs = graph_creation(
+            str(dataset_path),
+            folder_type=name,
+            id_mapping=id_mapping,
+            return_id_mapping=False,
+        )
+        if hasattr(graphs, "data_list"):
+            graphs = graphs.data_list
+        if not isinstance(graphs, list):
+            graphs = list(graphs)
+
+        if graphs:
+            # Save cache atomically
+            cache_dir_path.mkdir(parents=True, exist_ok=True)
+            tmp = cache_file.with_suffix(".tmp")
+            try:
+                torch.save(graphs, tmp, pickle_protocol=4)
+                with open(tmp, "rb") as fh:
+                    os.fsync(fh.fileno())
+                tmp.rename(cache_file)
+                logger.info("Cached %d test graphs for %s → %s", len(graphs), name, cache_file)
+            except Exception as e:
+                logger.warning("Failed to cache test graphs for %s: %s", name, e)
+                tmp.unlink(missing_ok=True)
+
+            scenarios[name] = graphs
+        else:
+            logger.warning("No graphs created for test scenario %s", name)
+
+    return scenarios
+
+
 def _compute_graph_stats(graphs) -> dict:
     """Compute per-graph statistics for batch size estimation."""
     import numpy as np

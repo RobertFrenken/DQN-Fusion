@@ -1,11 +1,11 @@
 {
   "schema_version": "1.0.0",
-  "exported_at": "2026-02-16T18:01:06.424484+00:00",
+  "exported_at": "2026-02-16T20:09:25.031878+00:00",
   "data": [
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
       "dataset": "hcrl_ch",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "accuracy",
@@ -15,7 +15,7 @@
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
       "dataset": "hcrl_ch",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "accuracy",
@@ -25,7 +25,7 @@
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
       "dataset": "hcrl_ch",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "accuracy",
@@ -35,7 +35,7 @@
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
       "dataset": "hcrl_ch",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "auc",
@@ -45,7 +45,7 @@
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
       "dataset": "hcrl_ch",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "auc",
@@ -55,7 +55,7 @@
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
       "dataset": "hcrl_ch",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "auc",
@@ -65,7 +65,7 @@
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
       "dataset": "hcrl_ch",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "f1",
@@ -75,7 +75,7 @@
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
       "dataset": "hcrl_ch",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "f1",
@@ -85,7 +85,7 @@
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
       "dataset": "hcrl_ch",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "f1",
@@ -95,7 +95,7 @@
     {
       "student_run": "hcrl_sa/eval_small_evaluation_kd",
       "dataset": "hcrl_sa",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_sa/eval_large_evaluation",
       "metric_name": "accuracy",
@@ -105,7 +105,7 @@
     {
       "student_run": "hcrl_sa/eval_small_evaluation_kd",
       "dataset": "hcrl_sa",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_sa/eval_large_evaluation",
       "metric_name": "accuracy",
@@ -115,7 +115,7 @@
     {
       "student_run": "hcrl_sa/eval_small_evaluation_kd",
       "dataset": "hcrl_sa",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_sa/eval_large_evaluation",
       "metric_name": "accuracy",
@@ -125,7 +125,7 @@
     {
       "student_run": "hcrl_sa/eval_small_evaluation_kd",
       "dataset": "hcrl_sa",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_sa/eval_large_evaluation",
       "metric_name": "auc",
@@ -135,7 +135,7 @@
     {
       "student_run": "hcrl_sa/eval_small_evaluation_kd",
       "dataset": "hcrl_sa",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_sa/eval_large_evaluation",
       "metric_name": "auc",
@@ -145,7 +145,7 @@
     {
       "student_run": "hcrl_sa/eval_small_evaluation_kd",
       "dataset": "hcrl_sa",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_sa/eval_large_evaluation",
       "metric_name": "auc",
@@ -155,7 +155,7 @@
     {
       "student_run": "hcrl_sa/eval_small_evaluation_kd",
       "dataset": "hcrl_sa",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_sa/eval_large_evaluation",
       "metric_name": "f1",
@@ -165,7 +165,7 @@
     {
       "student_run": "hcrl_sa/eval_small_evaluation_kd",
       "dataset": "hcrl_sa",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_sa/eval_large_evaluation",
       "metric_name": "f1",
@@ -175,7 +175,7 @@
     {
       "student_run": "hcrl_sa/eval_small_evaluation_kd",
       "dataset": "hcrl_sa",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "hcrl_sa/eval_large_evaluation",
       "metric_name": "f1",
@@ -185,7 +185,7 @@
     {
       "student_run": "set_01/eval_small_evaluation_kd",
       "dataset": "set_01",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "set_01/eval_large_evaluation",
       "metric_name": "accuracy",
@@ -195,7 +195,7 @@
     {
       "student_run": "set_01/eval_small_evaluation_kd",
       "dataset": "set_01",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "set_01/eval_large_evaluation",
       "metric_name": "accuracy",
@@ -205,7 +205,7 @@
     {
       "student_run": "set_01/eval_small_evaluation_kd",
       "dataset": "set_01",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "set_01/eval_large_evaluation",
       "metric_name": "accuracy",
@@ -215,7 +215,7 @@
     {
       "student_run": "set_01/eval_small_evaluation_kd",
       "dataset": "set_01",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "set_01/eval_large_evaluation",
       "metric_name": "auc",
@@ -225,7 +225,7 @@
     {
       "student_run": "set_01/eval_small_evaluation_kd",
       "dataset": "set_01",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "set_01/eval_large_evaluation",
       "metric_name": "auc",
@@ -235,7 +235,7 @@
     {
       "student_run": "set_01/eval_small_evaluation_kd",
       "dataset": "set_01",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "set_01/eval_large_evaluation",
       "metric_name": "auc",
@@ -245,7 +245,7 @@
     {
       "student_run": "set_01/eval_small_evaluation_kd",
       "dataset": "set_01",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "set_01/eval_large_evaluation",
       "metric_name": "f1",
@@ -255,7 +255,7 @@
     {
       "student_run": "set_01/eval_small_evaluation_kd",
       "dataset": "set_01",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "set_01/eval_large_evaluation",
       "metric_name": "f1",
@@ -265,7 +265,7 @@
     {
       "student_run": "set_01/eval_small_evaluation_kd",
       "dataset": "set_01",
-      "model_type": "eval",
+      "model_type": "vgae",
       "student_scale": "small",
       "teacher_run": "set_01/eval_large_evaluation",
       "metric_name": "f1",

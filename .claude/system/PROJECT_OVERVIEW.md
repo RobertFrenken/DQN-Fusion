@@ -48,7 +48,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 - `db.py` — SQLite project DB (`data/project.db`): WAL mode + busy timeout + foreign keys, schema (model_type/scale/has_kd) with indices on metrics/epoch_metrics, write-through `record_run_start()`/`record_run_end()`, backfill `populate()` (includes `_migrate_legacy_runs()` with stale entry cleanup, `_backfill_timestamps()` for started_at+completed_at, `_backfill_epoch_metrics()` from Lightning CSVs, `_backfill_teacher_run()`), CLI queries
 - `analytics.py` — Post-run analysis: sweep, leaderboard, compare, config_diff, dataset_summary
 - `migrate_paths.py` — Legacy path migration tool (`teacher_*/student_*` → new format). Also rewrites `teacher_path` in config.json files. Migration completed 2026-02-14 (70 dirs across 6 datasets).
-- `Snakefile` — Snakemake workflow (`--model`/`--scale`/`--auxiliaries` CLI, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup, preprocessing cache rule, retries with resource scaling, evaluation group jobs)
+- `Snakefile` — Snakemake workflow (`--model`/`--scale`/`--auxiliaries` CLI, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup, preprocessing + test cache rules (240 min, cpu partition), retries with resource scaling, evaluation group jobs)
 
 ### Layer 3: `src/` (domain — imports config.constants, never imports pipeline/)
 
@@ -80,7 +80,7 @@ pairs = extractors()                 # [("vgae", ext), ("gat", ext)] in registra
 
 `pipeline/stages/` imports from these `src/` modules:
 - `src.models.vgae`, `src.models.gat`, `src.models.dqn` — model architectures
-- `src.training.datamodules` — `load_dataset()`
+- `src.training.datamodules` — `load_dataset()`, `load_test_scenarios()`
 - `src.preprocessing.preprocessing` — `GraphDataset`, graph construction
 
 `load_dataset()` accepts direct `Path` arguments from `pipeline/paths.py`. No legacy adapters remain.
@@ -115,6 +115,7 @@ data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parqu
                                           (PyG Data objects, DVC-tracked)
                                           + id_mapping.pkl
                                           + cache_metadata.json
+                                          + test_*.pt (per-scenario test graphs)
                                     →  data/project.db
                                           (SQLite: datasets, runs, metrics tables)
 ```
