@@ -178,3 +178,39 @@ footer code {
     padding: 0.1rem 0.3rem;
     border-radius: 3px;
 }
+
+/* Force graph */
+.force-links line {
+    stroke: var(--border);
+    stroke-opacity: 0.4;
+}
+
+.force-nodes circle {
+    cursor: grab;
+    transition: r 0.15s;
+}
+
+.force-nodes circle:hover {
+    stroke: var(--accent);
+    stroke-width: 2;
+}
+
+/* Histogram bars */
+.bar-normal, .bar-attack {
+    transition: opacity 0.15s;
+}
+
+.bar-normal:hover, .bar-attack:hover {
+    opacity: 0.9 !important;
+}
+
+/* Bubble chart */
+circle[opacity] {
+    transition: opacity 0.15s;
+}
+
+/* Responsive: wrap nav on small screens */
+@media (max-width: 768px) {
+    nav { flex-wrap: wrap; }
+    .controls { flex-direction: column; gap: 0.5rem; }
+}

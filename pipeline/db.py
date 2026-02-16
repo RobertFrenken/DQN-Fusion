@@ -502,11 +502,13 @@ def _populate_metrics(conn: sqlite3.Connection) -> int:
 
 
 def _backfill_timestamps(conn: sqlite3.Connection) -> int:
-    """Set completed_at from filesystem mtime for runs missing timestamps."""
+    """Backfill started_at and completed_at from filesystem for runs missing timestamps."""
+    count = 0
+
+    # Backfill completed_at from file mtimes
     rows = conn.execute(
         "SELECT run_id FROM runs WHERE completed_at IS NULL"
     ).fetchall()
-    count = 0
     for (rid,) in rows:
         run_dir = Path(EXPERIMENT_ROOT) / rid
         for fname in ("metrics.json", "best_model.pt", "config.json"):
@@ -519,8 +521,114 @@ def _backfill_timestamps(conn: sqlite3.Connection) -> int:
                 )
                 count += 1
                 break
+
+    # Backfill started_at from lightning_logs dir ctime or config.json mtime
+    rows = conn.execute(
+        "SELECT run_id FROM runs WHERE started_at IS NULL"
+    ).fetchall()
+    for (rid,) in rows:
+        run_dir = Path(EXPERIMENT_ROOT) / rid
+        started = None
+
+        # Best proxy: lightning_logs directory creation time
+        lightning_dir = run_dir / "lightning_logs"
+        if lightning_dir.exists():
+            # Use the earliest version_* dir mtime as start proxy
+            version_dirs = [
+                d for d in lightning_dir.iterdir()
+                if d.is_dir() and d.name.startswith("version_")
+            ]
+            if version_dirs:
+                earliest = min(d.stat().st_mtime for d in version_dirs)
+                started = datetime.fromtimestamp(earliest, tz=timezone.utc)
+
+        # Fallback: config.json mtime (written at run start)
+        if started is None:
+            cfg_path = run_dir / "config.json"
+            if cfg_path.exists():
+                started = datetime.fromtimestamp(
+                    cfg_path.stat().st_mtime, tz=timezone.utc
+                )
+
+        if started is not None:
+            conn.execute(
+                "UPDATE runs SET started_at = ? WHERE run_id = ?",
+                (started.isoformat(), rid),
+            )
+            count += 1
+
     if count:
         log.info("Backfilled timestamps for %d runs", count)
+    return count
+
+
+def _backfill_epoch_metrics(conn: sqlite3.Connection) -> int:
+    """Backfill epoch_metrics table from Lightning CSV logs on disk.
+
+    Parses all experimentruns/{dataset}/{run}/lightning_logs/version_*/metrics.csv
+    files. Lightning CSVs have columns like epoch,step,train_loss,val_loss,val_acc
+    (varies by model type). Only the highest version_* directory is used per run.
+    """
+    import csv
+
+    exp_root = Path(EXPERIMENT_ROOT)
+    if not exp_root.exists():
+        return 0
+
+    count = 0
+    for ds_dir in sorted(exp_root.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+
+            run_id_val = f"{ds_dir.name}/{run_dir.name}"
+
+            # Find the highest version directory
+            lightning_dir = run_dir / "lightning_logs"
+            if not lightning_dir.exists():
+                continue
+
+            version_dirs = sorted(
+                [d for d in lightning_dir.iterdir() if d.is_dir() and d.name.startswith("version_")],
+                key=lambda d: int(d.name.split("_")[1]),
+            )
+            if not version_dirs:
+                continue
+
+            csv_path = version_dirs[-1] / "metrics.csv"
+            if not csv_path.exists():
+                continue
+
+            with open(csv_path, newline="") as f:
+                reader = csv.DictReader(f)
+                for row in reader:
+                    epoch_str = row.get("epoch", "")
+                    if not epoch_str:
+                        continue
+                    try:
+                        epoch = int(float(epoch_str))
+                    except (ValueError, TypeError):
+                        continue
+
+                    for col, val_str in row.items():
+                        if col in ("epoch", "step") or not val_str:
+                            continue
+                        try:
+                            value = float(val_str)
+                        except (ValueError, TypeError):
+                            continue
+                        conn.execute(
+                            """INSERT OR REPLACE INTO epoch_metrics
+                               (run_id, epoch, metric_name, value)
+                               VALUES (?, ?, ?, ?)""",
+                            (run_id_val, epoch, col, value),
+                        )
+                        count += 1
+
+    if count:
+        log.info("Backfilled %d epoch_metrics rows from Lightning CSVs", count)
     return count
 
 
@@ -546,7 +654,10 @@ def _backfill_teacher_run(conn: sqlite3.Connection) -> int:
 
 
 def _migrate_legacy_runs(conn: sqlite3.Connection) -> int:
-    """Remap legacy student/teacher naming to proper model_type + scale."""
+    """Remap legacy student/teacher naming to proper model_type + scale.
+
+    Also removes stale legacy-named run_ids whose directories no longer exist.
+    """
     stage_to_model = {
         "autoencoder": "vgae",
         "curriculum": "gat",
@@ -567,6 +678,22 @@ def _migrate_legacy_runs(conn: sqlite3.Connection) -> int:
             "UPDATE runs SET model_type = ? WHERE model_type = 'unknown' AND stage = ?",
             (mtype, stage),
         ).rowcount
+
+    # Remove stale run entries whose directories no longer exist
+    exp_root = Path(EXPERIMENT_ROOT)
+    all_runs = conn.execute("SELECT run_id FROM runs").fetchall()
+    stale = 0
+    for (rid,) in all_runs:
+        run_dir = exp_root / rid
+        if not run_dir.exists():
+            conn.execute("DELETE FROM metrics WHERE run_id = ?", (rid,))
+            conn.execute("DELETE FROM epoch_metrics WHERE run_id = ?", (rid,))
+            conn.execute("DELETE FROM runs WHERE run_id = ?", (rid,))
+            stale += 1
+    if stale:
+        log.info("Removed %d stale run entries (directories no longer exist)", stale)
+        count += stale
+
     if count:
         log.info("Migrated %d legacy run fields", count)
     return count
@@ -580,6 +707,7 @@ def populate(db_path: Path | None = None) -> dict[str, int]:
             "datasets": _populate_datasets_from_cache(conn),
             "runs": _populate_runs(conn),
             "metrics": _populate_metrics(conn),
+            "epoch_metrics": _backfill_epoch_metrics(conn),
         }
         _migrate_legacy_runs(conn)
         _backfill_timestamps(conn)

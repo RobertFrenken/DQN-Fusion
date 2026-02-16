@@ -55,13 +55,19 @@ def evaluate(cfg: PipelineConfig) -> dict:
     gat_stage = "curriculum"
     vgae_stage = "autoencoder"
 
+    # Artifact collectors for embeddings/policy export
+    artifacts: dict = {}
+
     # ---- GAT evaluation ----
     gat_ckpt = _cross_model_path(cfg, "gat", gat_stage, "best_model.pt")
     if gat_ckpt.exists():
         gat = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
 
-        p, l, s = _run_gat_inference(gat, val_data, device)
+        p, l, s, gat_emb = _run_gat_inference(gat, val_data, device, capture_embeddings=True)
         all_metrics["gat"] = _compute_metrics(l, p, s)
+        if gat_emb is not None:
+            artifacts["gat_emb"] = gat_emb
+            artifacts["gat_labels"] = l
         log.info("GAT val metrics: %s",
                  {k: f"{v:.4f}" for k, v in all_metrics["gat"]["core"].items()
                   if isinstance(v, float)})
@@ -69,7 +75,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
         if test_scenarios:
             test_metrics["gat"] = {}
             for scenario, tdata in test_scenarios.items():
-                tp, tl, ts = _run_gat_inference(gat, tdata, device)
+                tp, tl, ts, _ = _run_gat_inference(gat, tdata, device)
                 test_metrics["gat"][scenario] = _compute_metrics(tl, tp, ts)
                 log.info("GAT %s  acc=%.4f f1=%.4f",
                          scenario,
@@ -84,9 +90,13 @@ def evaluate(cfg: PipelineConfig) -> dict:
     if vgae_ckpt.exists():
         vgae = load_model(cfg, "vgae", vgae_stage, num_ids, in_ch, device)
 
-        errors_np, labels_np = _run_vgae_inference(vgae, val_data, device)
+        errors_np, labels_np, vgae_z = _run_vgae_inference(vgae, val_data, device, capture_embeddings=True)
         best_thresh, youden_j, vgae_preds = _vgae_threshold(labels_np, errors_np)
         all_metrics["vgae"] = _compute_metrics(labels_np, vgae_preds, errors_np)
+        if vgae_z is not None:
+            artifacts["vgae_z"] = vgae_z
+            artifacts["vgae_labels"] = labels_np
+            artifacts["vgae_errors"] = errors_np
         all_metrics["vgae"]["core"]["optimal_threshold"] = best_thresh
         all_metrics["vgae"]["core"]["youden_j"] = youden_j
         log.info("VGAE val metrics: %s",
@@ -96,7 +106,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
         if test_scenarios:
             test_metrics["vgae"] = {}
             for scenario, tdata in test_scenarios.items():
-                te, tl = _run_vgae_inference(vgae, tdata, device)
+                te, tl, _ = _run_vgae_inference(vgae, tdata, device)
                 tp = (te > best_thresh).astype(int)
                 test_metrics["vgae"][scenario] = _compute_metrics(tl, tp, te)
                 test_metrics["vgae"][scenario]["core"]["threshold_from_val"] = best_thresh
@@ -139,6 +149,9 @@ def evaluate(cfg: PipelineConfig) -> dict:
 
         fp, fl, fs = _run_fusion_inference(agent, val_cache)
         all_metrics["fusion"] = _compute_metrics(fl, fp, fs)
+        # Capture DQN policy (alpha distribution by class)
+        artifacts["dqn_alphas"] = fs.tolist()
+        artifacts["dqn_labels"] = fl.tolist()
         log.info("Fusion val metrics: %s",
                  {k: f"{v:.4f}" for k, v in all_metrics["fusion"]["core"].items()
                   if isinstance(v, float)})
@@ -165,8 +178,34 @@ def evaluate(cfg: PipelineConfig) -> dict:
     out.mkdir(parents=True, exist_ok=True)
     mp = metrics_path(cfg, "evaluation")
     mp.write_text(json.dumps(all_metrics, indent=2))
-
     log.info("All metrics saved to %s", mp)
+
+    # Save embeddings artifact (VGAE latent + GAT hidden)
+    embed_data = {}
+    for key in ("vgae_z", "gat_emb", "vgae_labels", "gat_labels", "vgae_errors"):
+        if key in artifacts:
+            embed_data[key] = artifacts[key]
+    if embed_data:
+        npz_path = out / "embeddings.npz"
+        np.savez_compressed(npz_path, **embed_data)
+        log.info("Saved embeddings → %s", npz_path)
+
+    # Save DQN policy artifact
+    if "dqn_alphas" in artifacts:
+        alphas = artifacts["dqn_alphas"]
+        labels = artifacts["dqn_labels"]
+        alpha_by_label = {"normal": [], "attack": []}
+        for a, lbl in zip(alphas, labels):
+            alpha_by_label["normal" if lbl == 0 else "attack"].append(a)
+        policy_data = {
+            "alphas": alphas,
+            "labels": labels,
+            "alpha_by_label": alpha_by_label,
+        }
+        policy_path = out / "dqn_policy.json"
+        policy_path.write_text(json.dumps(policy_data, indent=2))
+        log.info("Saved DQN policy → %s", policy_path)
+
     cleanup()
     return all_metrics
 
@@ -208,9 +247,14 @@ def _load_test_data(cfg: PipelineConfig) -> dict:
     return scenarios
 
 
-def _run_gat_inference(gat, data, device):
-    """Run GAT inference. Returns (preds, labels, scores) as numpy arrays."""
+def _run_gat_inference(gat, data, device, capture_embeddings=False):
+    """Run GAT inference. Returns (preds, labels, scores, embeddings) as numpy arrays.
+
+    When capture_embeddings=True, captures the hidden representation before
+    the final classification layer via the forward_embedding() method.
+    """
     preds, labels, scores = [], [], []
+    embeddings = [] if capture_embeddings else None
     with torch.no_grad():
         for g in data:
             g = g.clone().to(device)
@@ -219,22 +263,38 @@ def _run_gat_inference(gat, data, device):
             preds.append(logits.argmax(1)[0].item())
             labels.append(graph_label(g))
             scores.append(probs[0, 1].item())
-    return np.array(preds), np.array(labels), np.array(scores)
+            if capture_embeddings:
+                # Get hidden representations from last GAT layer (before FC)
+                xs = gat(g, return_intermediate=True)
+                # Use last layer's output, mean-pooled over nodes
+                emb = xs[-1].mean(dim=0).cpu().numpy()
+                embeddings.append(emb)
+    emb_array = np.array(embeddings) if capture_embeddings and embeddings else None
+    return np.array(preds), np.array(labels), np.array(scores), emb_array
 
 
-def _run_vgae_inference(vgae, data, device):
-    """Run VGAE reconstruction-error inference. Returns (errors, labels)."""
+def _run_vgae_inference(vgae, data, device, capture_embeddings=False):
+    """Run VGAE reconstruction-error inference. Returns (errors, labels, embeddings).
+
+    When capture_embeddings=True, captures z.mean(dim=0) (graph-level latent
+    embedding) per sample from the encoder's latent representation.
+    """
     errors, labels = [], []
+    embeddings = [] if capture_embeddings else None
     with torch.no_grad():
         for g in data:
             g = g.clone().to(device)
             batch_idx = (g.batch if hasattr(g, "batch") and g.batch is not None
                          else torch.zeros(g.x.size(0), dtype=torch.long, device=device))
-            cont, canid_logits, _, _, _ = vgae(g.x, g.edge_index, batch_idx)
+            cont, canid_logits, z_mean, z_logstd, _ = vgae(g.x, g.edge_index, batch_idx)
             err = F.mse_loss(cont, g.x[:, 1:]).item()
             errors.append(err)
             labels.append(graph_label(g))
-    return np.array(errors), np.array(labels)
+            if capture_embeddings and z_mean is not None:
+                # Graph-level embedding: mean pool over nodes
+                embeddings.append(z_mean.mean(dim=0).cpu().numpy())
+    emb_array = np.array(embeddings) if capture_embeddings and embeddings else None
+    return np.array(errors), np.array(labels), emb_array
 
 
 def _run_fusion_inference(agent, cache):

@@ -43,6 +43,25 @@ def _validate_schema(conn):
             raise RuntimeError(f"DB schema mismatch: {table} missing columns {missing}")
 
 
+def _validate_data(conn) -> None:
+    """Pre-export data quality checks. Warns but does not abort."""
+    epoch_count = conn.execute("SELECT COUNT(*) FROM epoch_metrics").fetchone()[0]
+    if epoch_count == 0:
+        log.warning("VALIDATION: epoch_metrics table has 0 rows — training curves will be empty")
+
+    null_started = conn.execute(
+        "SELECT COUNT(*) FROM runs WHERE started_at IS NULL"
+    ).fetchone()[0]
+    total_runs = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
+    if null_started > 0:
+        log.warning("VALIDATION: %d/%d runs have NULL started_at — run timeline will be sparse",
+                     null_started, total_runs)
+
+    metric_count = conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
+    if metric_count == 0:
+        log.warning("VALIDATION: metrics table has 0 rows — leaderboard will be empty")
+
+
 def export_metric_catalog(output_dir: Path) -> Path:
     """Export distinct metric names for dynamic dashboard dropdown."""
     conn = get_connection()
@@ -219,14 +238,208 @@ def export_training_curves(output_dir: Path) -> Path:
     return curves_dir
 
 
+def export_graph_samples(output_dir: Path) -> Path:
+    """Export a few cached PyG graphs per dataset as D3-compatible JSON."""
+    import torch
+
+    cache_root = Path("data/cache")
+    samples: list[dict] = []
+
+    for ds_dir in sorted(cache_root.iterdir()):
+        if not ds_dir.is_dir() or ds_dir.name.endswith(".dvc"):
+            continue
+        graphs_path = ds_dir / "processed_graphs.pt"
+        if not graphs_path.exists():
+            continue
+
+        try:
+            graphs = torch.load(graphs_path, map_location="cpu", weights_only=False)
+        except Exception as e:
+            log.warning("Could not load graphs from %s: %s", graphs_path, e)
+            continue
+
+        # Take up to 3 samples (1 normal, 1 attack if available, 1 random)
+        selected = graphs[:min(3, len(graphs))]
+        for idx, g in enumerate(selected):
+            edge_index = g.edge_index.tolist()
+            num_nodes = g.x.size(0) if hasattr(g, "x") else g.num_nodes
+            nodes = []
+            for nid in range(num_nodes):
+                node = {"id": nid}
+                if hasattr(g, "x"):
+                    node["features"] = g.x[nid].tolist()
+                nodes.append(node)
+            links = [
+                {"source": edge_index[0][i], "target": edge_index[1][i]}
+                for i in range(len(edge_index[0]))
+            ]
+            label = int(g.y.item()) if hasattr(g, "y") and g.y is not None else None
+            samples.append({
+                "dataset": ds_dir.name,
+                "sample_idx": idx,
+                "label": label,
+                "nodes": nodes,
+                "links": links,
+            })
+
+    out = output_dir / "graph_samples.json"
+    out.write_text(json.dumps(_versioned_envelope(samples), indent=2))
+    log.info("Exported %d graph samples → %s", len(samples), out)
+    return out
+
+
+def export_model_sizes(output_dir: Path) -> Path:
+    """Export parameter counts per model_type x scale from config resolution."""
+    from config import resolve
+    from config.constants import NODE_FEATURE_COUNT
+
+    sizes: list[dict] = []
+    # Representative num_ids and in_ch for param counting
+    num_ids = 30  # typical across datasets
+    in_ch = NODE_FEATURE_COUNT
+
+    for model_type in ("vgae", "gat", "dqn"):
+        for scale in ("large", "small"):
+            try:
+                cfg = resolve(model_type, scale, dataset="hcrl_sa")
+                from src.models.registry import get as get_model
+                entry = get_model(model_type)
+                model = entry.factory(cfg, num_ids, in_ch)
+                param_count = sum(p.numel() for p in model.parameters())
+                sizes.append({
+                    "model_type": model_type,
+                    "scale": scale,
+                    "param_count": param_count,
+                    "param_count_M": round(param_count / 1e6, 3),
+                })
+                del model
+            except Exception as e:
+                log.warning("Could not instantiate %s/%s for param count: %s",
+                            model_type, scale, e)
+
+    out = output_dir / "model_sizes.json"
+    out.write_text(json.dumps(_versioned_envelope(sizes), indent=2))
+    log.info("Exported %d model size entries → %s", len(sizes), out)
+    return out
+
+
+def export_embeddings(output_dir: Path) -> Path:
+    """Export dimensionality-reduced embeddings from evaluation runs."""
+    embed_dir = output_dir / "embeddings"
+    embed_dir.mkdir(parents=True, exist_ok=True)
+
+    exp_root = Path("experimentruns")
+    count = 0
+
+    for ds_dir in sorted(exp_root.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            npz_path = run_dir / "embeddings.npz"
+            if not npz_path.exists():
+                continue
+
+            import numpy as np
+            data = np.load(npz_path, allow_pickle=True)
+            run_id = f"{ds_dir.name}_{run_dir.name}"
+
+            for model_key in ("vgae_z", "gat_emb"):
+                if model_key not in data:
+                    continue
+                embeddings = data[model_key]
+                labels = data.get("labels", np.array([]))
+                errors = data.get("errors", np.array([]))
+                model_name = model_key.split("_")[0]
+
+                if embeddings.shape[0] < 3:
+                    continue
+
+                for method in ("umap", "pymde"):
+                    try:
+                        coords_2d = _reduce_embeddings(embeddings, method)
+                    except Exception as e:
+                        log.warning("Dimensionality reduction (%s) failed for %s/%s: %s",
+                                    method, run_id, model_name, e)
+                        continue
+
+                    records = []
+                    for i in range(len(coords_2d)):
+                        rec = {
+                            "dim0": float(coords_2d[i, 0]),
+                            "dim1": float(coords_2d[i, 1]),
+                        }
+                        if i < len(labels):
+                            rec["label"] = int(labels[i])
+                        if i < len(errors):
+                            rec["error"] = float(errors[i])
+                        records.append(rec)
+
+                    fname = f"{run_id}_{model_name}_{method}.json"
+                    (embed_dir / fname).write_text(
+                        json.dumps(_versioned_envelope(records), indent=2)
+                    )
+                    count += 1
+
+    log.info("Exported %d embedding projections → %s", count, embed_dir)
+    return embed_dir
+
+
+def _reduce_embeddings(embeddings, method: str):
+    """Reduce high-dimensional embeddings to 2D."""
+    import numpy as np
+
+    if method == "umap":
+        import umap
+        reducer = umap.UMAP(n_components=2, random_state=42)
+        return reducer.fit_transform(embeddings)
+    elif method == "pymde":
+        import pymde
+        import torch
+        data_t = torch.tensor(embeddings, dtype=torch.float32)
+        mde = pymde.preserve_neighbors(data_t, embedding_dim=2)
+        return mde.embed().numpy()
+    else:
+        raise ValueError(f"Unknown reduction method: {method}")
+
+
+def export_dqn_policy(output_dir: Path) -> Path:
+    """Export DQN alpha distributions from evaluation runs."""
+    policy_dir = output_dir / "dqn_policy"
+    policy_dir.mkdir(parents=True, exist_ok=True)
+
+    exp_root = Path("experimentruns")
+    count = 0
+
+    for ds_dir in sorted(exp_root.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            policy_path = run_dir / "dqn_policy.json"
+            if not policy_path.exists():
+                continue
+
+            run_id = f"{ds_dir.name}_{run_dir.name}"
+            import shutil
+            shutil.copy2(policy_path, policy_dir / f"{run_id}.json")
+            count += 1
+
+    log.info("Exported %d DQN policy files → %s", count, policy_dir)
+    return policy_dir
+
+
 def export_all(output_dir: Path) -> None:
     """Run all exports."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Pre-flight: validate DB schema before exporting
+    # Pre-flight: validate DB schema and data quality
     conn = get_connection()
     try:
         _validate_schema(conn)
+        _validate_data(conn)
     finally:
         conn.close()
 
@@ -238,7 +451,19 @@ def export_all(output_dir: Path) -> None:
     curves = export_training_curves(output_dir)
     export_metric_catalog(output_dir)
 
-    # Validation summary
+    # New exports (graceful — failures don't block other exports)
+    for name, func in [
+        ("graph_samples", export_graph_samples),
+        ("model_sizes", export_model_sizes),
+        ("embeddings", export_embeddings),
+        ("dqn_policy", export_dqn_policy),
+    ]:
+        try:
+            func(output_dir)
+        except Exception as e:
+            log.warning("Export %s failed (non-fatal): %s", name, e)
+
+    # Validation summary — check file sizes
     for name, path in [
         ("leaderboard", lb), ("runs", runs), ("datasets", ds), ("kd_transfer", kd),
     ]:

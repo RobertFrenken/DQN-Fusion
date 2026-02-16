@@ -1,1082 +1,276 @@
-[
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.999759,
-    "teacher_value": 0.999725
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.999759,
-    "teacher_value": 0.999725
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.737589,
-    "teacher_value": 0.755397
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.737589,
-    "teacher_value": 0.755397
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.999759,
-    "teacher_value": 0.999725
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.999759,
-    "teacher_value": 0.999725
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.999759,
-    "teacher_value": 0.999725
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.999759,
-    "teacher_value": 0.999725
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.737589,
-    "teacher_value": 0.755397
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.737589,
-    "teacher_value": 0.755397
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.999759,
-    "teacher_value": 0.999725
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.999759,
-    "teacher_value": 0.999725
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.999998,
-    "teacher_value": 0.999943
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.999998,
-    "teacher_value": 0.999943
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.864026,
-    "teacher_value": 0.875961
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.864026,
-    "teacher_value": 0.875961
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.999678,
-    "teacher_value": 0.999556
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.999678,
-    "teacher_value": 0.999556
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.999998,
-    "teacher_value": 0.999943
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.999998,
-    "teacher_value": 0.999943
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.864026,
-    "teacher_value": 0.875961
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.864026,
-    "teacher_value": 0.875961
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.999678,
-    "teacher_value": 0.999556
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.999678,
-    "teacher_value": 0.999556
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.999598,
-    "teacher_value": 0.99954
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.999598,
-    "teacher_value": 0.99954
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.659985,
-    "teacher_value": 0.677923
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.659985,
-    "teacher_value": 0.677923
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.999598,
-    "teacher_value": 0.99954
-  },
-  {
-    "student_run": "hcrl_ch/eval_small_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.999598,
-    "teacher_value": 0.99954
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.999598,
-    "teacher_value": 0.99954
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.999598,
-    "teacher_value": 0.99954
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.659985,
-    "teacher_value": 0.677923
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.659985,
-    "teacher_value": 0.677923
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.999598,
-    "teacher_value": 0.99954
-  },
-  {
-    "student_run": "hcrl_ch/student_evaluation_kd",
-    "dataset": "hcrl_ch",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_ch/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.999598,
-    "teacher_value": 0.99954
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 1.0,
-    "teacher_value": 0.999466
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 1.0,
-    "teacher_value": 0.999466
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.838761,
-    "teacher_value": 0.81527
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.838761,
-    "teacher_value": 0.81527
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.996797,
-    "teacher_value": 0.999466
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.996797,
-    "teacher_value": 0.999466
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 1.0,
-    "teacher_value": 0.999466
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 1.0,
-    "teacher_value": 0.999466
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.838761,
-    "teacher_value": 0.81527
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.838761,
-    "teacher_value": 0.81527
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.996797,
-    "teacher_value": 0.999466
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.996797,
-    "teacher_value": 0.999466
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 1.0,
-    "teacher_value": 1.0
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 1.0,
-    "teacher_value": 1.0
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.948325,
-    "teacher_value": 0.938542
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.948325,
-    "teacher_value": 0.938542
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.976132,
-    "teacher_value": 0.996766
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.976132,
-    "teacher_value": 0.996766
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 1.0,
-    "teacher_value": 1.0
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 1.0,
-    "teacher_value": 1.0
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.948325,
-    "teacher_value": 0.938542
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.948325,
-    "teacher_value": 0.938542
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.976132,
-    "teacher_value": 0.996766
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.976132,
-    "teacher_value": 0.996766
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 1.0,
-    "teacher_value": 0.998004
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 1.0,
-    "teacher_value": 0.998004
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.603675,
-    "teacher_value": 0.57072
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.603675,
-    "teacher_value": 0.57072
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.987903,
-    "teacher_value": 0.998004
-  },
-  {
-    "student_run": "hcrl_sa/eval_small_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.987903,
-    "teacher_value": 0.998004
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 1.0,
-    "teacher_value": 0.998004
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 1.0,
-    "teacher_value": 0.998004
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.603675,
-    "teacher_value": 0.57072
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.603675,
-    "teacher_value": 0.57072
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.987903,
-    "teacher_value": 0.998004
-  },
-  {
-    "student_run": "hcrl_sa/student_evaluation_kd",
-    "dataset": "hcrl_sa",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "hcrl_sa/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.987903,
-    "teacher_value": 0.998004
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.94864,
-    "teacher_value": 0.980343
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.94864,
-    "teacher_value": 0.980343
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.828083,
-    "teacher_value": 0.828976
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.828083,
-    "teacher_value": 0.828976
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.973867,
-    "teacher_value": 0.9979
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.973867,
-    "teacher_value": 0.9979
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.94864,
-    "teacher_value": 0.980343
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.94864,
-    "teacher_value": 0.980343
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.828083,
-    "teacher_value": 0.828976
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.828083,
-    "teacher_value": 0.828976
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.973867,
-    "teacher_value": 0.9979
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "accuracy",
-    "student_value": 0.973867,
-    "teacher_value": 0.9979
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.98986,
-    "teacher_value": 0.999361
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.98986,
-    "teacher_value": 0.999361
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.745574,
-    "teacher_value": 0.762
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.745574,
-    "teacher_value": 0.762
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.875589,
-    "teacher_value": 0.938212
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.875589,
-    "teacher_value": 0.938212
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.98986,
-    "teacher_value": 0.999361
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.98986,
-    "teacher_value": 0.999361
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.745574,
-    "teacher_value": 0.762
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.745574,
-    "teacher_value": 0.762
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.875589,
-    "teacher_value": 0.938212
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "auc",
-    "student_value": 0.875589,
-    "teacher_value": 0.938212
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.419162,
-    "teacher_value": 0.664786
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.419162,
-    "teacher_value": 0.664786
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.113632,
-    "teacher_value": 0.120789
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.113632,
-    "teacher_value": 0.120789
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.534994,
-    "teacher_value": 0.944978
-  },
-  {
-    "student_run": "set_01/eval_small_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.534994,
-    "teacher_value": 0.944978
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.419162,
-    "teacher_value": 0.664786
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.419162,
-    "teacher_value": 0.664786
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.113632,
-    "teacher_value": 0.120789
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.113632,
-    "teacher_value": 0.120789
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/eval_large_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.534994,
-    "teacher_value": 0.944978
-  },
-  {
-    "student_run": "set_01/student_evaluation_kd",
-    "dataset": "set_01",
-    "model_type": "eval",
-    "student_scale": "small",
-    "teacher_run": "set_01/teacher_evaluation",
-    "metric_name": "f1",
-    "student_value": 0.534994,
-    "teacher_value": 0.944978
-  }
-]
+{
+  "schema_version": "1.0.0",
+  "exported_at": "2026-02-16T18:01:06.424484+00:00",
+  "data": [
+    {
+      "student_run": "hcrl_ch/eval_small_evaluation_kd",
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_ch/eval_large_evaluation",
+      "metric_name": "accuracy",
+      "student_value": 0.999759,
+      "teacher_value": 0.999725
+    },
+    {
+      "student_run": "hcrl_ch/eval_small_evaluation_kd",
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_ch/eval_large_evaluation",
+      "metric_name": "accuracy",
+      "student_value": 0.737589,
+      "teacher_value": 0.755397
+    },
+    {
+      "student_run": "hcrl_ch/eval_small_evaluation_kd",
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_ch/eval_large_evaluation",
+      "metric_name": "accuracy",
+      "student_value": 0.999759,
+      "teacher_value": 0.999725
+    },
+    {
+      "student_run": "hcrl_ch/eval_small_evaluation_kd",
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_ch/eval_large_evaluation",
+      "metric_name": "auc",
+      "student_value": 0.999998,
+      "teacher_value": 0.999943
+    },
+    {
+      "student_run": "hcrl_ch/eval_small_evaluation_kd",
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_ch/eval_large_evaluation",
+      "metric_name": "auc",
+      "student_value": 0.864026,
+      "teacher_value": 0.875961
+    },
+    {
+      "student_run": "hcrl_ch/eval_small_evaluation_kd",
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_ch/eval_large_evaluation",
+      "metric_name": "auc",
+      "student_value": 0.999678,
+      "teacher_value": 0.999556
+    },
+    {
+      "student_run": "hcrl_ch/eval_small_evaluation_kd",
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_ch/eval_large_evaluation",
+      "metric_name": "f1",
+      "student_value": 0.999598,
+      "teacher_value": 0.99954
+    },
+    {
+      "student_run": "hcrl_ch/eval_small_evaluation_kd",
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_ch/eval_large_evaluation",
+      "metric_name": "f1",
+      "student_value": 0.659985,
+      "teacher_value": 0.677923
+    },
+    {
+      "student_run": "hcrl_ch/eval_small_evaluation_kd",
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_ch/eval_large_evaluation",
+      "metric_name": "f1",
+      "student_value": 0.999598,
+      "teacher_value": 0.99954
+    },
+    {
+      "student_run": "hcrl_sa/eval_small_evaluation_kd",
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_sa/eval_large_evaluation",
+      "metric_name": "accuracy",
+      "student_value": 1.0,
+      "teacher_value": 0.999466
+    },
+    {
+      "student_run": "hcrl_sa/eval_small_evaluation_kd",
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_sa/eval_large_evaluation",
+      "metric_name": "accuracy",
+      "student_value": 0.838761,
+      "teacher_value": 0.81527
+    },
+    {
+      "student_run": "hcrl_sa/eval_small_evaluation_kd",
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_sa/eval_large_evaluation",
+      "metric_name": "accuracy",
+      "student_value": 0.996797,
+      "teacher_value": 0.999466
+    },
+    {
+      "student_run": "hcrl_sa/eval_small_evaluation_kd",
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_sa/eval_large_evaluation",
+      "metric_name": "auc",
+      "student_value": 1.0,
+      "teacher_value": 1.0
+    },
+    {
+      "student_run": "hcrl_sa/eval_small_evaluation_kd",
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_sa/eval_large_evaluation",
+      "metric_name": "auc",
+      "student_value": 0.948325,
+      "teacher_value": 0.938542
+    },
+    {
+      "student_run": "hcrl_sa/eval_small_evaluation_kd",
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_sa/eval_large_evaluation",
+      "metric_name": "auc",
+      "student_value": 0.976132,
+      "teacher_value": 0.996766
+    },
+    {
+      "student_run": "hcrl_sa/eval_small_evaluation_kd",
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_sa/eval_large_evaluation",
+      "metric_name": "f1",
+      "student_value": 1.0,
+      "teacher_value": 0.998004
+    },
+    {
+      "student_run": "hcrl_sa/eval_small_evaluation_kd",
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_sa/eval_large_evaluation",
+      "metric_name": "f1",
+      "student_value": 0.603675,
+      "teacher_value": 0.57072
+    },
+    {
+      "student_run": "hcrl_sa/eval_small_evaluation_kd",
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "hcrl_sa/eval_large_evaluation",
+      "metric_name": "f1",
+      "student_value": 0.987903,
+      "teacher_value": 0.998004
+    },
+    {
+      "student_run": "set_01/eval_small_evaluation_kd",
+      "dataset": "set_01",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "set_01/eval_large_evaluation",
+      "metric_name": "accuracy",
+      "student_value": 0.94864,
+      "teacher_value": 0.980343
+    },
+    {
+      "student_run": "set_01/eval_small_evaluation_kd",
+      "dataset": "set_01",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "set_01/eval_large_evaluation",
+      "metric_name": "accuracy",
+      "student_value": 0.828083,
+      "teacher_value": 0.828976
+    },
+    {
+      "student_run": "set_01/eval_small_evaluation_kd",
+      "dataset": "set_01",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "set_01/eval_large_evaluation",
+      "metric_name": "accuracy",
+      "student_value": 0.973867,
+      "teacher_value": 0.9979
+    },
+    {
+      "student_run": "set_01/eval_small_evaluation_kd",
+      "dataset": "set_01",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "set_01/eval_large_evaluation",
+      "metric_name": "auc",
+      "student_value": 0.98986,
+      "teacher_value": 0.999361
+    },
+    {
+      "student_run": "set_01/eval_small_evaluation_kd",
+      "dataset": "set_01",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "set_01/eval_large_evaluation",
+      "metric_name": "auc",
+      "student_value": 0.745574,
+      "teacher_value": 0.762
+    },
+    {
+      "student_run": "set_01/eval_small_evaluation_kd",
+      "dataset": "set_01",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "set_01/eval_large_evaluation",
+      "metric_name": "auc",
+      "student_value": 0.875589,
+      "teacher_value": 0.938212
+    },
+    {
+      "student_run": "set_01/eval_small_evaluation_kd",
+      "dataset": "set_01",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "set_01/eval_large_evaluation",
+      "metric_name": "f1",
+      "student_value": 0.419162,
+      "teacher_value": 0.664786
+    },
+    {
+      "student_run": "set_01/eval_small_evaluation_kd",
+      "dataset": "set_01",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "set_01/eval_large_evaluation",
+      "metric_name": "f1",
+      "student_value": 0.113632,
+      "teacher_value": 0.120789
+    },
+    {
+      "student_run": "set_01/eval_small_evaluation_kd",
+      "dataset": "set_01",
+      "model_type": "eval",
+      "student_scale": "small",
+      "teacher_run": "set_01/eval_large_evaluation",
+      "metric_name": "f1",
+      "student_value": 0.534994,
+      "teacher_value": 0.944978
+    }
+  ]
+}
