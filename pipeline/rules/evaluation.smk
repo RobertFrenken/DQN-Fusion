@@ -8,16 +8,16 @@ rule eval_large:
     group: "evaluation"
     output:
         report(
-            _metrics("{ds}", "vgae", "large", "evaluation"),
+            _metrics("{ds}", "eval", "large", "evaluation"),
             category="Evaluation",
             caption="Large model evaluation metrics for dataset {ds}",
         ),
     benchmark:
-        _bench("{ds}", "vgae", "large", "evaluation")
+        _bench("{ds}", "eval", "large", "evaluation")
     resources: **_EVAL_RES,
     log:
-        out=_log("{ds}", "vgae", "large", "evaluation"),
-        err=_log("{ds}", "vgae", "large", "evaluation", stream="err"),
+        out=_log("{ds}", "eval", "large", "evaluation"),
+        err=_log("{ds}", "eval", "large", "evaluation", stream="err"),
     shell:
         CLI + " evaluation --model vgae --scale large --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
@@ -30,16 +30,16 @@ rule eval_small_kd:
     group: "evaluation"
     output:
         report(
-            _metrics("{ds}", "vgae", "small", "evaluation", aux="kd"),
+            _metrics("{ds}", "eval", "small", "evaluation", aux="kd"),
             category="Evaluation",
             caption="Small+KD evaluation metrics for dataset {ds}",
         ),
     benchmark:
-        _bench("{ds}", "vgae", "small", "evaluation", aux="kd")
+        _bench("{ds}", "eval", "small", "evaluation", aux="kd")
     resources: **_EVAL_RES,
     log:
-        out=_log("{ds}", "vgae", "small", "evaluation", aux="kd"),
-        err=_log("{ds}", "vgae", "small", "evaluation", aux="kd", stream="err"),
+        out=_log("{ds}", "eval", "small", "evaluation", aux="kd"),
+        err=_log("{ds}", "eval", "small", "evaluation", aux="kd", stream="err"),
     shell:
         CLI + " evaluation --model vgae --scale small --auxiliaries kd_standard --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
@@ -52,16 +52,16 @@ rule eval_small_nokd:
     group: "evaluation"
     output:
         report(
-            _metrics("{ds}", "vgae", "small", "evaluation"),
+            _metrics("{ds}", "eval", "small", "evaluation"),
             category="Evaluation",
             caption="Small (no KD) evaluation metrics for dataset {ds}",
         ),
     benchmark:
-        _bench("{ds}", "vgae", "small", "evaluation")
+        _bench("{ds}", "eval", "small", "evaluation")
     resources: **_EVAL_RES,
     log:
-        out=_log("{ds}", "vgae", "small", "evaluation"),
-        err=_log("{ds}", "vgae", "small", "evaluation", stream="err"),
+        out=_log("{ds}", "eval", "small", "evaluation"),
+        err=_log("{ds}", "eval", "small", "evaluation", stream="err"),
     shell:
         CLI + " evaluation --model vgae --scale small --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"

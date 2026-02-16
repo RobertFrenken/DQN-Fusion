@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from config import PipelineConfig
 
-from config import STAGES, get_datasets, checkpoint_path, config_path, data_dir
+from config import STAGES, get_datasets, data_dir
 
 _log = logging.getLogger(__name__)
 
@@ -47,24 +47,27 @@ def validate(cfg: PipelineConfig, stage: str) -> None:
             errors.append(f"Teacher config not found: {teacher_cfg}")
 
     # --- prerequisite checkpoints + frozen configs ---
-    def _check_prereq(prereq_stage: str, needed_by: str) -> None:
-        ckpt = checkpoint_path(cfg, prereq_stage)
-        cfg_file = config_path(cfg, prereq_stage)
-        if not ckpt.exists():
-            errors.append(f"{needed_by} needs {prereq_stage} checkpoint: {ckpt}")
-        if not cfg_file.exists():
-            errors.append(f"{needed_by} needs {prereq_stage} config: {cfg_file}")
+    def _check_prereq(model_type: str, prereq_stage: str, needed_by: str) -> None:
+        exp = Path(cfg.experiment_root) / cfg.dataset
+        aux_suffix = f"_{cfg.auxiliaries[0].type}" if cfg.auxiliaries else ""
+        base = exp / f"{model_type}_{cfg.scale}_{prereq_stage}{aux_suffix}"
+        if not (base / "best_model.pt").exists():
+            errors.append(f"{needed_by} needs {prereq_stage} checkpoint: {base / 'best_model.pt'}")
+        if not (base / "config.json").exists():
+            errors.append(f"{needed_by} needs {prereq_stage} config: {base / 'config.json'}")
 
     if stage == "curriculum":
-        _check_prereq("autoencoder", "Curriculum")
+        _check_prereq("vgae", "autoencoder", "Curriculum")
 
     if stage == "fusion":
-        _check_prereq("autoencoder", "Fusion")
-        _check_prereq("curriculum", "Fusion")
+        _check_prereq("vgae", "autoencoder", "Fusion")
+        _check_prereq("gat", "curriculum", "Fusion")
 
     if stage == "evaluation":
-        gat_ckpt = checkpoint_path(cfg, "curriculum")
-        vgae_ckpt = checkpoint_path(cfg, "autoencoder")
+        exp = Path(cfg.experiment_root) / cfg.dataset
+        aux_suffix = f"_{cfg.auxiliaries[0].type}" if cfg.auxiliaries else ""
+        vgae_ckpt = exp / f"vgae_{cfg.scale}_autoencoder{aux_suffix}" / "best_model.pt"
+        gat_ckpt = exp / f"gat_{cfg.scale}_curriculum{aux_suffix}" / "best_model.pt"
         if not gat_ckpt.exists() and not vgae_ckpt.exists():
             errors.append("Evaluation needs at least one checkpoint (GAT or VGAE)")
 

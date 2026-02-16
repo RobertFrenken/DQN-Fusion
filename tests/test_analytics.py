@@ -48,9 +48,9 @@ def populated_db(tmp_path):
          json.dumps({"lr": 0.001, "batch_size": 2048, "gat_hidden": 24, "seed": 42})),
         ("ds_a/gat_large_curriculum", "ds_a", "gat", "large", "curriculum", 0, "complete",
          json.dumps({"lr": 0.002, "batch_size": 4096, "gat_hidden": 48, "seed": 42})),
-        ("ds_a/vgae_large_evaluation", "ds_a", "vgae", "large", "evaluation", 0, "complete",
+        ("ds_a/eval_large_evaluation", "ds_a", "vgae", "large", "evaluation", 0, "complete",
          json.dumps({"lr": 0.002, "batch_size": 4096, "gat_hidden": 48, "seed": 42})),
-        ("ds_a/vgae_small_evaluation_kd", "ds_a", "vgae", "small", "evaluation", 1, "complete",
+        ("ds_a/eval_small_evaluation_kd", "ds_a", "vgae", "small", "evaluation", 1, "complete",
          json.dumps({"lr": 0.001, "batch_size": 2048, "gat_hidden": 24, "seed": 42})),
         ("ds_b/vgae_large_autoencoder", "ds_b", "vgae", "large", "autoencoder", 0, "complete",
          json.dumps({"lr": 0.005, "batch_size": 4096, "gat_hidden": 48, "seed": 99})),
@@ -65,15 +65,15 @@ def populated_db(tmp_path):
     # Insert metrics
     metrics = [
         # ds_a large eval
-        ("ds_a/vgae_large_evaluation", "gat", "val", "f1", 0.95),
-        ("ds_a/vgae_large_evaluation", "gat", "val", "accuracy", 0.96),
-        ("ds_a/vgae_large_evaluation", "gat", "val", "auc", 0.98),
-        ("ds_a/vgae_large_evaluation", "vgae", "val", "f1", 0.88),
+        ("ds_a/eval_large_evaluation", "gat", "val", "f1", 0.95),
+        ("ds_a/eval_large_evaluation", "gat", "val", "accuracy", 0.96),
+        ("ds_a/eval_large_evaluation", "gat", "val", "auc", 0.98),
+        ("ds_a/eval_large_evaluation", "vgae", "val", "f1", 0.88),
         # ds_a small+kd eval
-        ("ds_a/vgae_small_evaluation_kd", "gat", "val", "f1", 0.92),
-        ("ds_a/vgae_small_evaluation_kd", "gat", "val", "accuracy", 0.93),
-        ("ds_a/vgae_small_evaluation_kd", "gat", "val", "auc", 0.96),
-        ("ds_a/vgae_small_evaluation_kd", "vgae", "val", "f1", 0.85),
+        ("ds_a/eval_small_evaluation_kd", "gat", "val", "f1", 0.92),
+        ("ds_a/eval_small_evaluation_kd", "gat", "val", "accuracy", 0.93),
+        ("ds_a/eval_small_evaluation_kd", "gat", "val", "auc", 0.96),
+        ("ds_a/eval_small_evaluation_kd", "vgae", "val", "f1", 0.85),
         # ds_a large autoencoder (training metrics)
         ("ds_a/vgae_large_autoencoder", "vgae", "val", "f1", 0.87),
         # ds_b large autoencoder
@@ -189,7 +189,7 @@ class TestCompare:
 
     def test_shows_deltas(self, populated_db):
         rows = compare(
-            "ds_a/vgae_large_evaluation", "ds_a/vgae_small_evaluation_kd",
+            "ds_a/eval_large_evaluation", "ds_a/eval_small_evaluation_kd",
             db_path=populated_db,
         )
         assert len(rows) > 0
@@ -201,7 +201,7 @@ class TestCompare:
 
     def test_missing_run_raises(self, populated_db):
         with pytest.raises(KeyError, match="Run not found"):
-            compare("ds_a/vgae_large_evaluation", "nonexistent/run", db_path=populated_db)
+            compare("ds_a/eval_large_evaluation", "nonexistent/run", db_path=populated_db)
 
     def test_both_missing_raises(self, populated_db):
         with pytest.raises(KeyError, match="Run not found"):

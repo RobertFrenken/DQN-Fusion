@@ -184,8 +184,7 @@ class PipelineConfig(BaseModel, frozen=True):
         kd_fields: dict[str, Any] = {}
 
         # Training fields that map to TrainingConfig
-        training_field_names = {f.name for f in TrainingConfig.model_fields.values()
-                                } if False else set(TrainingConfig.model_fields.keys())
+        training_field_names = set(TrainingConfig.model_fields.keys())
 
         # Fusion fields (with fusion_ prefix stripped)
         fusion_field_names = set(FusionConfig.model_fields.keys())

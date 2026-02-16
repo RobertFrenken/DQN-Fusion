@@ -49,3 +49,4 @@
 - Raw point sampling + contour distribution for UMAP/embedding visuals
 - Deeper DQN state space to prediction analysis
 - VGAE reconstruction error distribution plots
+- pareto frontier plot

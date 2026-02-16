@@ -21,6 +21,8 @@ if TYPE_CHECKING:
 EXPERIMENT_ROOT = "experimentruns"
 
 # stage_name -> (learning_type, model_arch, training_mode)
+# NOTE: model_arch is used only by migrate_paths.py. run_id() overrides to
+# "eval" for the evaluation stage rather than reading from this dict.
 STAGES = {
     "autoencoder": ("unsupervised", "vgae", "autoencoder"),
     "curriculum":  ("supervised",   "gat",  "curriculum"),
@@ -69,7 +71,8 @@ def run_id(cfg: PipelineConfig, stage: str) -> str:
     - Snakemake target paths (deterministic at DAG construction time)
     """
     aux_suffix = f"_{cfg.auxiliaries[0].type}" if cfg.auxiliaries else ""
-    return f"{cfg.dataset}/{cfg.model_type}_{cfg.scale}_{stage}{aux_suffix}"
+    model = "eval" if stage == "evaluation" else cfg.model_type
+    return f"{cfg.dataset}/{model}_{cfg.scale}_{stage}{aux_suffix}"
 
 
 def stage_dir(cfg: PipelineConfig, stage: str) -> Path:
@@ -117,7 +120,8 @@ def cache_dir(cfg: PipelineConfig) -> Path:
 def run_id_str(dataset: str, model_type: str, scale: str, stage: str, aux: str = "") -> str:
     """Deterministic run ID from raw strings (Snakefile companion to run_id)."""
     suffix = f"_{aux}" if aux else ""
-    return f"{dataset}/{model_type}_{scale}_{stage}{suffix}"
+    model = "eval" if stage == "evaluation" else model_type
+    return f"{dataset}/{model}_{scale}_{stage}{suffix}"
 
 
 def checkpoint_path_str(dataset: str, model_type: str, scale: str, stage: str, aux: str = "") -> str:

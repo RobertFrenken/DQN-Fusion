@@ -8,6 +8,10 @@ rule all:
         expand(_ckpt("{ds}", "dqn", "small", "fusion", aux="kd"), ds=DATASETS),
         # Small without KD (ablation)
         expand(_ckpt("{ds}", "dqn", "small", "fusion"), ds=DATASETS),
+        # Evaluation (all variants)
+        expand(_metrics("{ds}", "eval", "large", "evaluation"), ds=DATASETS),
+        expand(_metrics("{ds}", "eval", "small", "evaluation", aux="kd"), ds=DATASETS),
+        expand(_metrics("{ds}", "eval", "small", "evaluation"), ds=DATASETS),
 
 rule large:
     input:
@@ -23,6 +27,6 @@ rule small_nokd:
 
 rule evaluate_all:
     input:
-        expand(_metrics("{ds}", "vgae", "large", "evaluation"), ds=DATASETS),
-        expand(_metrics("{ds}", "vgae", "small", "evaluation", aux="kd"), ds=DATASETS),
-        expand(_metrics("{ds}", "vgae", "small", "evaluation"), ds=DATASETS),
+        expand(_metrics("{ds}", "eval", "large", "evaluation"), ds=DATASETS),
+        expand(_metrics("{ds}", "eval", "small", "evaluation", aux="kd"), ds=DATASETS),
+        expand(_metrics("{ds}", "eval", "small", "evaluation"), ds=DATASETS),

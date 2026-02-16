@@ -196,13 +196,8 @@ def export_kd_transfer(output_dir: Path) -> Path:
         WHERE student.has_kd = 1
           AND student.stage = 'evaluation'
           AND sm.metric_name IN ('f1', 'accuracy', 'auc')
-          AND (
-            (student.model_type = 'unknown' AND teacher.model_type = 'unknown'
-             AND student.scale = 'student' AND teacher.scale = 'teacher')
-            OR
-            (student.model_type != 'unknown' AND teacher.model_type = student.model_type
-             AND student.scale = 'small' AND teacher.scale = 'large')
-          )
+          AND teacher.model_type = student.model_type
+          AND student.scale = 'small' AND teacher.scale = 'large'
         ORDER BY student.dataset, sm.metric_name
     """).fetchall()
     conn.close()
@@ -387,9 +382,9 @@ def export_embeddings(output_dir: Path) -> Path:
                 if model_key not in data:
                     continue
                 embeddings = data[model_key]
-                labels = data.get("labels", np.array([]))
-                errors = data.get("errors", np.array([]))
-                model_name = model_key.split("_")[0]
+                model_name = model_key.split("_")[0]  # "vgae" or "gat"
+                labels = data.get(f"{model_name}_labels", np.array([]))
+                errors = data.get(f"{model_name}_errors", np.array([]))
 
                 if embeddings.shape[0] < 3:
                     continue

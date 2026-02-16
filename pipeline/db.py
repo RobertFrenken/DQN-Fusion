@@ -392,6 +392,9 @@ def _populate_runs(conn: sqlite3.Connection) -> int:
                     if s in run_name:
                         stage = s
                         break
+                # Evaluation stage uses "eval" prefix in dir name but cfg.model_type is "vgae"
+                if model_type == "eval":
+                    model_type = "vgae"
             else:
                 # Legacy format: {model_size}_{stage}[_kd]
                 model_type = cfg.get("model_type", "unknown")
@@ -662,7 +665,7 @@ def _migrate_legacy_runs(conn: sqlite3.Connection) -> int:
         "autoencoder": "vgae",
         "curriculum": "gat",
         "fusion": "dqn",
-        "evaluation": "eval",
+        "evaluation": "vgae",
     }
     count = 0
     # Map scale: student→small, teacher→large
