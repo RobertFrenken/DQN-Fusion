@@ -323,6 +323,37 @@ def export_model_sizes(output_dir: Path) -> Path:
     return out
 
 
+EMBEDDING_MAX_SAMPLES = 2000
+
+
+def _stratified_sample(coords_2d, labels, errors, max_samples: int):
+    """Stratified sampling to preserve class distribution."""
+    import numpy as np
+
+    n = len(coords_2d)
+    if n <= max_samples:
+        return coords_2d, labels, errors, False
+
+    unique_labels = np.unique(labels[:n]) if len(labels) >= n else np.array([0])
+    indices = []
+    for label in unique_labels:
+        label_mask = labels[:n] == label if len(labels) >= n else np.ones(n, dtype=bool)
+        label_indices = np.where(label_mask)[0]
+        # Proportional allocation
+        n_samples = max(1, int(max_samples * len(label_indices) / n))
+        rng = np.random.default_rng(42)
+        sampled = rng.choice(label_indices, size=min(n_samples, len(label_indices)), replace=False)
+        indices.extend(sampled)
+
+    indices = sorted(indices)[:max_samples]
+    return (
+        coords_2d[indices],
+        labels[indices] if len(labels) >= n else labels,
+        errors[indices] if len(errors) >= n else errors,
+        True,
+    )
+
+
 def export_embeddings(output_dir: Path) -> Path:
     """Export dimensionality-reduced embeddings from evaluation runs."""
     embed_dir = output_dir / "embeddings"
@@ -330,6 +361,13 @@ def export_embeddings(output_dir: Path) -> Path:
 
     exp_root = Path("experimentruns")
     count = 0
+    exported_files: list[str] = []
+
+    if not exp_root.is_dir():
+        index_path = embed_dir / "index.json"
+        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
+        log.info("No experimentruns directory — wrote empty embeddings index")
+        return embed_dir
 
     for ds_dir in sorted(exp_root.iterdir()):
         if not ds_dir.is_dir():
@@ -364,23 +402,42 @@ def export_embeddings(output_dir: Path) -> Path:
                                     method, run_id, model_name, e)
                         continue
 
+                    total_original = len(coords_2d)
+                    coords_2d, s_labels, s_errors, was_sampled = _stratified_sample(
+                        coords_2d, labels, errors, EMBEDDING_MAX_SAMPLES
+                    )
+                    if was_sampled:
+                        log.info("Sampled embeddings %s/%s/%s: %d → %d",
+                                 run_id, model_name, method, total_original, len(coords_2d))
+
                     records = []
                     for i in range(len(coords_2d)):
                         rec = {
                             "dim0": float(coords_2d[i, 0]),
                             "dim1": float(coords_2d[i, 1]),
                         }
-                        if i < len(labels):
-                            rec["label"] = int(labels[i])
-                        if i < len(errors):
-                            rec["error"] = float(errors[i])
+                        if i < len(s_labels):
+                            rec["label"] = int(s_labels[i])
+                        if i < len(s_errors):
+                            rec["error"] = float(s_errors[i])
                         records.append(rec)
 
+                    metadata = {
+                        "n_points": len(records),
+                        "sampled": was_sampled,
+                        "total_original": total_original,
+                    }
+
                     fname = f"{run_id}_{model_name}_{method}.json"
-                    (embed_dir / fname).write_text(
-                        json.dumps(_versioned_envelope(records), indent=2)
-                    )
+                    envelope = _versioned_envelope(records)
+                    envelope["metadata"] = metadata
+                    (embed_dir / fname).write_text(json.dumps(envelope, indent=2))
+                    exported_files.append(fname)
                     count += 1
+
+    # Write index file
+    index_path = embed_dir / "index.json"
+    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
 
     log.info("Exported %d embedding projections → %s", count, embed_dir)
     return embed_dir
@@ -411,6 +468,13 @@ def export_dqn_policy(output_dir: Path) -> Path:
 
     exp_root = Path("experimentruns")
     count = 0
+    exported_files: list[str] = []
+
+    if not exp_root.is_dir():
+        index_path = policy_dir / "index.json"
+        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
+        log.info("No experimentruns directory — wrote empty dqn_policy index")
+        return policy_dir
 
     for ds_dir in sorted(exp_root.iterdir()):
         if not ds_dir.is_dir():
@@ -423,9 +487,15 @@ def export_dqn_policy(output_dir: Path) -> Path:
                 continue
 
             run_id = f"{ds_dir.name}_{run_dir.name}"
+            fname = f"{run_id}.json"
             import shutil
-            shutil.copy2(policy_path, policy_dir / f"{run_id}.json")
+            shutil.copy2(policy_path, policy_dir / fname)
+            exported_files.append(fname)
             count += 1
+
+    # Write index file
+    index_path = policy_dir / "index.json"
+    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
 
     log.info("Exported %d DQN policy files → %s", count, policy_dir)
     return policy_dir

@@ -68,8 +68,10 @@ export const PANELS = [
                 options: [
                     { value: 'val_loss', label: 'Val Loss' },
                     { value: 'train_loss', label: 'Train Loss' },
+                    { value: 'val_loss,train_loss', label: 'Train + Val Loss' },
                     { value: 'val_acc', label: 'Val Accuracy' },
                     { value: 'train_acc', label: 'Train Accuracy' },
+                    { value: 'val_acc,train_acc', label: 'Train + Val Acc' },
                 ],
                 default: 'val_loss',
                 mapTo: 'metric',
@@ -114,6 +116,15 @@ export const PANELS = [
                 ],
                 default: '',
                 mapTo: 'label',
+            },
+            {
+                type: 'select', id: 'gs-color', label: 'Color By',
+                options: [
+                    { value: 'can_id', label: 'CAN ID' },
+                    { value: 'degree', label: 'Degree' },
+                ],
+                default: 'can_id',
+                mapTo: 'colorBy',
             },
         ],
     },
@@ -185,6 +196,15 @@ export const PANELS = [
                 default: 'umap',
                 mapTo: '_method',
             },
+            {
+                type: 'select', id: 'vl-render', label: 'Overlay',
+                options: [
+                    { value: 'points', label: 'Points Only' },
+                    { value: 'density', label: '+ Density' },
+                ],
+                default: 'points',
+                mapTo: 'showDensity',
+            },
         ],
     },
     {
@@ -218,6 +238,15 @@ export const PANELS = [
                 ],
                 default: 'umap',
                 mapTo: '_method',
+            },
+            {
+                type: 'select', id: 'gs2-render', label: 'Overlay',
+                options: [
+                    { value: 'points', label: 'Points Only' },
+                    { value: 'density', label: '+ Density' },
+                ],
+                default: 'points',
+                mapTo: 'showDensity',
             },
         ],
     },

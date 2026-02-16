@@ -146,6 +146,20 @@ export class BaseChart {
         }
     }
 
+    _computeDomain(data, field, opts = {}) {
+        const { padding = 0.05, min: absMin, max: absMax } = opts;
+        const values = data.map(d => d[field]).filter(v => v != null && isFinite(v));
+        if (values.length === 0) return [0, 1];
+        let [lo, hi] = d3.extent(values);
+        if (lo === hi) { lo -= 0.5; hi += 0.5; }
+        const span = hi - lo;
+        lo -= span * padding;
+        hi += span * padding;
+        if (absMin != null) lo = Math.max(lo, absMin);
+        if (absMax != null) hi = Math.min(hi, absMax);
+        return [lo, hi];
+    }
+
     _addLegend(items, x, y) {
         const legend = this._g.append('g').attr('transform', `translate(${x}, ${y})`);
         items.forEach(({ label, color }, i) => {

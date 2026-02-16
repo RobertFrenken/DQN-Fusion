@@ -16,6 +16,7 @@ export class ScatterChart extends BaseChart {
         const xDomain = options.xDomain || d3.extent(data, d => d[xField]);
         const yDomain = options.yDomain || d3.extent(data, d => d[yField]);
         const sizeField = options.sizeField || null;
+        const showDensity = options.showDensity === true || options.showDensity === 'density';
 
         const x = d3.scaleLinear().domain(xDomain).range([0, w]).nice();
         const y = d3.scaleLinear().domain(yDomain).range([h, 0]).nice();
@@ -49,14 +50,38 @@ export class ScatterChart extends BaseChart {
             ? d3.scaleSqrt().domain(d3.extent(data, d => d[sizeField])).range([3, 15])
             : null;
 
+        // Density contour overlay (opt-in)
+        if (showDensity && data.length > 10 && typeof d3.contourDensity === 'function') {
+            const density = d3.contourDensity()
+                .x(d => x(d[xField]))
+                .y(d => y(d[yField]))
+                .size([w, h])
+                .bandwidth(20)
+                .thresholds(8)(data);
+
+            g.append('g')
+                .attr('class', 'density-contours')
+                .selectAll('path')
+                .data(density)
+                .join('path')
+                .attr('d', d3.geoPath())
+                .attr('fill', 'none')
+                .attr('stroke', '#58a6ff')
+                .attr('stroke-opacity', (d, i) => 0.15 + i * 0.02)
+                .attr('stroke-width', 1);
+        }
+
+        const pointOpacity = showDensity ? 0.4 : 0.8;
+        const pointRadius = showDensity ? 3 : 6;
+
         g.selectAll('circle')
             .data(data)
             .join('circle')
             .attr('cx', d => x(d[xField]))
             .attr('cy', d => y(d[yField]))
-            .attr('r', d => radiusFn ? radiusFn(d[sizeField]) : 6)
+            .attr('r', d => radiusFn ? radiusFn(d[sizeField]) : pointRadius)
             .attr('fill', colorFn)
-            .attr('opacity', 0.8)
+            .attr('opacity', pointOpacity)
             .attr('stroke', '#fff')
             .attr('stroke-width', 1)
             .on('mouseover', (event, d) => {

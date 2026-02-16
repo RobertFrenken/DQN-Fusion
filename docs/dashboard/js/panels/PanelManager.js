@@ -139,11 +139,33 @@ export class PanelManager {
                 select.appendChild(opt);
             });
         } else if (ctrl.embeddingSource || ctrl.dqnPolicySource) {
-            // Will be populated after data is loaded
-            const opt = document.createElement('option');
-            opt.value = '';
-            opt.textContent = 'Loading...';
-            select.appendChild(opt);
+            // Load index.json to discover available files
+            const dir = ctrl.embeddingSource ? 'embeddings' : 'dqn_policy';
+            this._loadJSON(`${dir}/index.json`).then(index => {
+                select.innerHTML = '';
+                const files = Array.isArray(index) ? index : (index?.data ?? []);
+                if (files.length === 0) {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = 'No data available';
+                    select.appendChild(opt);
+                    return;
+                }
+                files.forEach(fname => {
+                    const opt = document.createElement('option');
+                    // Extract run ID from filename (strip extension and method suffix for embeddings)
+                    const base = fname.replace(/\.json$/, '');
+                    opt.value = base;
+                    opt.textContent = base;
+                    select.appendChild(opt);
+                });
+            }).catch(() => {
+                select.innerHTML = '';
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'No data available';
+                select.appendChild(opt);
+            });
         } else if (ctrl.options?.length) {
             ctrl.options.forEach(o => {
                 const opt = document.createElement('option');

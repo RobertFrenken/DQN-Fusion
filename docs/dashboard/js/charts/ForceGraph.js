@@ -4,10 +4,16 @@ import { BaseChart } from '../core/BaseChart.js';
 import { COLORS, LABEL_COLORS } from '../core/Theme.js';
 import { register } from '../core/Registry.js';
 
+const FEATURE_NAMES = [
+    'CAN_ID', 'Data_0', 'Data_1', 'Data_2', 'Data_3',
+    'Data_4', 'Data_5', 'Data_6', 'Data_7', 'Count', 'Position',
+];
+
 export class ForceGraph extends BaseChart {
     render(data, options = {}) {
         const dataset = options.dataset || null;
         const labelFilter = options.label;
+        const colorBy = options.colorBy || 'can_id';
 
         let samples = data;
         if (dataset) samples = samples.filter(d => d.dataset === dataset);
@@ -37,7 +43,25 @@ export class ForceGraph extends BaseChart {
 
         const maxDeg = Math.max(...degree.values(), 1);
         const rScale = d3.scaleSqrt().domain([0, maxDeg]).range([3, 12]);
-        const nodeColor = d3.scaleOrdinal().range(COLORS);
+
+        // Color by CAN_ID or degree
+        let colorFn;
+        if (colorBy === 'degree') {
+            const degreeColor = d3.scaleSequential(d3.interpolateViridis).domain([0, maxDeg]);
+            colorFn = d => degreeColor(degree.get(d.id) || 0);
+        } else {
+            // CAN_ID-based coloring
+            const canIds = [...new Set(nodes.map(n => {
+                const f = n.features?.[0];
+                return f != null ? Math.floor(f) : n.id;
+            }))].sort((a, b) => a - b);
+            const canColor = d3.scaleOrdinal().domain(canIds).range(COLORS);
+            colorFn = d => {
+                const f = d.features?.[0];
+                const canId = f != null ? Math.floor(f) : d.id;
+                return canColor(canId);
+            };
+        }
 
         const simulation = d3.forceSimulation(nodes)
             .force('link', d3.forceLink(links).id(d => d.id).distance(30))
@@ -60,7 +84,7 @@ export class ForceGraph extends BaseChart {
             .data(nodes)
             .join('circle')
             .attr('r', d => rScale(degree.get(d.id) || 0))
-            .attr('fill', d => nodeColor(d.id % COLORS.length))
+            .attr('fill', colorFn)
             .attr('stroke', '#fff')
             .attr('stroke-width', 0.5)
             .call(d3.drag()
@@ -74,13 +98,41 @@ export class ForceGraph extends BaseChart {
                     d.fx = null; d.fy = null;
                 }))
             .on('mouseover', (event, d) => {
-                this._showTooltip(
-                    `Node ${d.id}<br>Degree: ${degree.get(d.id) || 0}`,
-                    event
-                );
+                this._showTooltip(this._buildTooltip(d, degree), event);
             })
             .on('mousemove', (event) => this._moveTooltip(event))
             .on('mouseout', () => this._hideTooltip());
+
+        // Click-to-highlight neighborhood
+        const neighborSet = new Map();
+        links.forEach(l => {
+            const s = typeof l.source === 'object' ? l.source.id : l.source;
+            const t = typeof l.target === 'object' ? l.target.id : l.target;
+            if (!neighborSet.has(s)) neighborSet.set(s, new Set());
+            if (!neighborSet.has(t)) neighborSet.set(t, new Set());
+            neighborSet.get(s).add(t);
+            neighborSet.get(t).add(s);
+        });
+
+        node.on('click', (event, d) => {
+            event.stopPropagation();
+            const neighbors = neighborSet.get(d.id) || new Set();
+            node.attr('opacity', n => n.id === d.id || neighbors.has(n.id) ? 1.0 : 0.1);
+            link.attr('stroke-opacity', l => {
+                const s = typeof l.source === 'object' ? l.source.id : l.source;
+                const t = typeof l.target === 'object' ? l.target.id : l.target;
+                return s === d.id || t === d.id ? 0.8 : 0.05;
+            }).attr('stroke', l => {
+                const s = typeof l.source === 'object' ? l.source.id : l.source;
+                const t = typeof l.target === 'object' ? l.target.id : l.target;
+                return s === d.id || t === d.id ? '#58a6ff' : '#30363d';
+            });
+        });
+
+        this._svg.on('click', () => {
+            node.attr('opacity', 1.0);
+            link.attr('stroke-opacity', 0.4).attr('stroke', '#30363d');
+        });
 
         // Label
         const labelText = sample.label === 1 ? 'Attack' : sample.label === 0 ? 'Normal' : 'Unknown';
@@ -99,8 +151,25 @@ export class ForceGraph extends BaseChart {
                 .attr('cy', d => Math.max(5, Math.min(h - 5, d.y)));
         });
 
-        // Store simulation for cleanup
         this._simulation = simulation;
+    }
+
+    _buildTooltip(d, degree) {
+        let html = `<strong>Node ${d.id}</strong><br>Degree: ${degree.get(d.id) || 0}`;
+        if (d.features && d.features.length > 0) {
+            html += '<br><hr style="margin:4px 0;border-color:#30363d">';
+            d.features.forEach((val, i) => {
+                const name = FEATURE_NAMES[i] || `Feature_${i}`;
+                let display;
+                if (name === 'CAN_ID') {
+                    display = '0x' + Math.floor(val).toString(16).toUpperCase().padStart(3, '0');
+                } else {
+                    display = Number.isInteger(val) ? val : val.toFixed(4);
+                }
+                html += `<br>${name}: ${display}`;
+            });
+        }
+        return html;
     }
 
     destroy() {
