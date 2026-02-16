@@ -1,6 +1,6 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-02-15
+**Updated**: 2026-02-16
 
 ## What This Is
 
@@ -38,14 +38,14 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 - `stages/` — Training logic split into modules:
   - `training.py` — VGAE (autoencoder) and GAT (curriculum) training
   - `fusion.py` — DQN fusion training (uses `cfg.dqn.*`, `cfg.fusion.*`)
-  - `evaluation.py` — Multi-model evaluation and metrics
+  - `evaluation.py` — Multi-model evaluation and metrics; captures `embeddings.npz` (VGAE z-mean per graph, GAT hidden representations) and `dqn_policy.json` (alpha values + class breakdown) as artifacts
   - `modules.py` — PyTorch Lightning modules (uses `cfg.vgae.*`, `cfg.gat.*`, `cfg.training.*`)
   - `utils.py` — Shared utilities: model loading with cross-model path resolution (`_cross_model_path`, `_STAGE_MODEL_TYPE`), batch size optimization, trainer construction
 - `validate.py` — Config validation (simplified — Pydantic handles field constraints)
 - `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
 - `memory.py` — Memory monitoring and GPU/CPU optimization
 - `ingest.py` — CSV→Parquet ingestion, validation against `config/datasets.yaml`, dataset registration
-- `db.py` — SQLite project DB (`data/project.db`): WAL mode + busy timeout + foreign keys, schema (model_type/scale/has_kd) with indices on metrics/epoch_metrics, write-through `record_run_start()`/`record_run_end()`, backfill `populate()` (includes `_migrate_legacy_runs()`, `_backfill_timestamps()`, `_backfill_teacher_run()`), CLI queries
+- `db.py` — SQLite project DB (`data/project.db`): WAL mode + busy timeout + foreign keys, schema (model_type/scale/has_kd) with indices on metrics/epoch_metrics, write-through `record_run_start()`/`record_run_end()`, backfill `populate()` (includes `_migrate_legacy_runs()` with stale entry cleanup, `_backfill_timestamps()` for started_at+completed_at, `_backfill_epoch_metrics()` from Lightning CSVs, `_backfill_teacher_run()`), CLI queries
 - `analytics.py` — Post-run analysis: sweep, leaderboard, compare, config_diff, dataset_summary
 - `migrate_paths.py` — Legacy path migration tool (`teacher_*/student_*` → new format). Also rewrites `teacher_path` in config.json files. Migration completed 2026-02-14 (70 dirs across 6 datasets).
 - `Snakefile` — Snakemake workflow (`--model`/`--scale`/`--auxiliaries` CLI, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup, preprocessing cache rule, retries with resource scaling, evaluation group jobs)
@@ -161,6 +161,9 @@ experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
 ├── best_model.pt       # Snakemake DAG trigger
 ├── config.json         # Frozen config (Pydantic JSON, also logged to MLflow)
 ├── metrics.json        # Evaluation stage only (also logged as MLflow artifact)
+├── embeddings.npz      # Evaluation artifact: VGAE z-mean + GAT hidden representations
+├── dqn_policy.json     # Evaluation artifact: DQN alpha values + class breakdown
+├── lightning_logs/     # Training logs (per-epoch metrics CSVs)
 ```
 
 **MLflow** (GPFS scratch, 90-day purge — auto-backed up to `~/backups/`):
@@ -173,6 +176,40 @@ experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
 ```
 data/project.db         # SQLite: datasets, runs, metrics tables
 ```
+
+## Dashboard Architecture
+
+Config-driven D3.js v7 dashboard (ES modules) on GitHub Pages. Adding a panel = adding an entry to `panelConfig.js`.
+
+```
+docs/dashboard/js/
+  core/BaseChart.js      # Base class: SVG, margins, tooltip, responsive, loading/error/no-data
+  core/Registry.js       # Chart type registry: register(name, class), get(name), list()
+  core/Theme.js          # Shared palette (8 colors), CSS variable refs, colorScale()
+  charts/                # 8 chart types extending BaseChart
+    TableChart.js        # Sortable leaderboard table (overrides _setupSVG for DOM table)
+    BarChart.js          # Grouped bar chart (dataset comparison, model predictions)
+    ScatterChart.js      # Configurable scatter (xField/yField/colorField/sizeField)
+    LineChart.js         # Multi-series line chart (training curves)
+    TimelineChart.js     # Timeline scatter (run history, dynamic height)
+    BubbleChart.js       # Extends ScatterChart (3-metric + size encoding)
+    ForceGraph.js        # D3 force simulation (CAN bus graph visualization)
+    HistogramChart.js    # Stacked histogram (DQN alpha distribution)
+  panels/panelConfig.js  # Declarative panel definitions (11 panels)
+  panels/PanelManager.js # Config → nav + panels + controls → lazy-load data → render
+  app.js                 # Slim entry: import chart types (side-effect registration) + PanelManager.init()
+```
+
+**Lifecycle**: `BaseChart.init()` → `_setupSVG()` + `_setupTooltip()` → `update(data, options)` → `render(data, options)` [subclass] → `destroy()` cleanup.
+
+**Panel config entry**:
+```js
+{ id, title, description, chartType, dataSource, controls: [...], chartConfig: {...} }
+```
+
+**Data sources**: Static JSON files in `docs/dashboard/data/`, lazy-loaded per panel. Some panels use `dynamicLoader` for run-specific data (training curves, embeddings, DQN policy).
+
+**Export pipeline**: `pipeline/export.py` → `export_all()` generates: leaderboard, per-run metrics, training curves, KD transfer, datasets, runs, metric catalog, graph samples, model sizes, embeddings, DQN policy.
 
 ## Environment
 
