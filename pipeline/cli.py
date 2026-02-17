@@ -24,11 +24,7 @@ from pathlib import Path
 from config import PipelineConfig, STAGES, config_path, run_id, stage_dir
 from config.resolver import resolve
 from .validate import validate
-from .db import record_run_start, record_run_end, get_connection
 
-# Skip DB writes on SLURM compute nodes to avoid SQLite WAL crashes from
-# concurrent NFS writers. The onsuccess hook runs `db populate` as a single-
-# writer backfill after all jobs complete.
 _ON_COMPUTE_NODE = bool(os.environ.get("SLURM_JOB_ID"))
 
 
@@ -42,8 +38,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description="KD-GAT training pipeline",
     )
     p.add_argument(
-        "stage", choices=list(STAGES.keys()) + ["state", "flow"],
-        help="Training stage to run, 'state' to update STATE.md, or 'flow' to run Prefect pipeline",
+        "stage", choices=list(STAGES.keys()) + ["flow"],
+        help="Training stage to run, or 'flow' to run Prefect pipeline",
     )
 
     # Config source
@@ -224,12 +220,6 @@ def main(argv: list[str] | None = None) -> None:
     log = logging.getLogger("pipeline")
 
     # ---- Handle non-training subcommands ----
-    if args.stage == "state":
-        from .state_sync import update_state
-        update_state(preview=False)
-        log.info("STATE.md updated")
-        return
-
     if args.stage == "flow":
         _run_flow(args, log)
         return
@@ -288,36 +278,8 @@ def main(argv: list[str] | None = None) -> None:
     cfg.save(cfg_out)
     log.info("Frozen config: %s", cfg_out)
 
-    # ---- Record run start in project DB ----
+    # ---- Run ID ----
     run_name = run_id(cfg, args.stage)
-
-    if _ON_COMPUTE_NODE:
-        log.info("SLURM compute node detected — DB writes deferred to onsuccess backfill")
-    else:
-        # Propagate teacher_run for KD evaluation runs from their training counterpart
-        teacher_run = ""
-        if cfg.has_kd and args.stage == "evaluation":
-            conn = get_connection()
-            try:
-                row = conn.execute(
-                    """SELECT teacher_run FROM runs
-                       WHERE dataset = ? AND has_kd = 1 AND teacher_run != ''
-                         AND stage IN ('curriculum', 'fusion')
-                       LIMIT 1""",
-                    (cfg.dataset,),
-                ).fetchone()
-                if row and row[0]:
-                    teacher_run = row[0]
-                    log.info("Propagated teacher_run=%s for eval KD run", teacher_run)
-            finally:
-                conn.close()
-
-        record_run_start(
-            run_id=run_name, dataset=cfg.dataset, model_type=cfg.model_type,
-            scale=cfg.scale, stage=args.stage, has_kd=cfg.has_kd,
-            config_json=cfg.model_dump_json(indent=2),
-            teacher_run=teacher_run,
-        )
     log.info("Run started: %s", run_name)
 
     # ---- W&B init ----
@@ -329,10 +291,6 @@ def main(argv: list[str] | None = None) -> None:
         result = STAGE_FNS[args.stage](cfg)
         log.info("Stage '%s' complete. Result: %s", args.stage, result)
 
-        if not _ON_COMPUTE_NODE:
-            record_run_end(run_name, success=True,
-                           metrics=result if isinstance(result, dict) else None)
-
         # Log final metrics to W&B
         if _wandb_run is not None and isinstance(result, dict):
             _wandb_log_metrics(result)
@@ -343,8 +301,6 @@ def main(argv: list[str] | None = None) -> None:
         log.info("Run completed successfully")
 
     except Exception as e:
-        if not _ON_COMPUTE_NODE:
-            record_run_end(run_name, success=False)
         _sync_lakehouse(cfg, args.stage, run_name, None, success=False)
         log.error("Run failed: %s", str(e))
         raise

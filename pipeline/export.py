@@ -1,4 +1,9 @@
-"""Export project DB to static JSON for the GitHub Pages dashboard.
+"""Export experiment results to static JSON for the GitHub Pages dashboard.
+
+Data sources:
+  - Filesystem: experimentruns/{ds}/{run}/metrics.json, config.json
+  - Catalog: config/datasets.yaml
+  - Artifacts: embeddings.npz, attention_weights.npz, dqn_policy.json, cka_matrix.json
 
 Usage:
     python -m pipeline.export [--output-dir docs/dashboard/data]
@@ -10,94 +15,116 @@ import json
 import logging
 from pathlib import Path
 
-from config.constants import SCHEMA_VERSION
-from .db import get_connection
-
 log = logging.getLogger(__name__)
 
 DEFAULT_OUTPUT_DIR = Path("docs/dashboard/data")
+EXPERIMENT_ROOT = Path("experimentruns")
 
 
 def _versioned_envelope(data: list | dict) -> dict:
     """Wrap export data with schema version and timestamp."""
     from datetime import datetime, timezone
     return {
-        "schema_version": SCHEMA_VERSION,
+        "schema_version": "1.0.0",
         "exported_at": datetime.now(timezone.utc).isoformat(),
         "data": data,
     }
 
 
-REQUIRED_COLUMNS = {
-    "runs": {"run_id", "dataset", "model_type", "scale", "has_kd", "status", "started_at"},
-    "metrics": {"run_id", "model", "scenario", "metric_name", "value"},
-}
+# ---------------------------------------------------------------------------
+# Filesystem scanning helpers
+# ---------------------------------------------------------------------------
+
+def _scan_runs() -> list[dict]:
+    """Scan experimentruns/ for completed runs with config.json.
+
+    Returns list of dicts with run metadata extracted from config.json
+    and filesystem structure.
+    """
+    runs = []
+    if not EXPERIMENT_ROOT.is_dir():
+        return runs
+
+    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir() or run_dir.name.startswith("."):
+                continue
+            cfg_path = run_dir / "config.json"
+            if not cfg_path.exists():
+                continue
+            try:
+                cfg = json.loads(cfg_path.read_text())
+            except Exception:
+                continue
+
+            # Parse run_id components from directory name
+            parts = run_dir.name.split("_")
+            model_type = parts[0] if parts else ""
+            scale = parts[1] if len(parts) > 1 else ""
+            stage = parts[2] if len(parts) > 2 else ""
+            has_kd = "_kd" in run_dir.name and "nokd" not in run_dir.name
+
+            run_id = f"{ds_dir.name}/{run_dir.name}"
+            has_metrics = (run_dir / "metrics.json").exists()
+            has_checkpoint = (run_dir / "best_model.pt").exists()
+
+            runs.append({
+                "run_id": run_id,
+                "dataset": ds_dir.name,
+                "model_type": model_type,
+                "scale": scale,
+                "stage": stage,
+                "has_kd": 1 if has_kd else 0,
+                "status": "complete" if has_metrics or has_checkpoint else "running",
+                "config": cfg,
+                "dir": run_dir,
+            })
+    return runs
 
 
-def _validate_schema(conn):
-    """Verify DB schema has all required columns before exporting."""
-    for table, expected in REQUIRED_COLUMNS.items():
-        actual = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
-        missing = expected - actual
-        if missing:
-            raise RuntimeError(f"DB schema mismatch: {table} missing columns {missing}")
+def _load_eval_metrics(run_dir: Path) -> dict | None:
+    """Load metrics.json from an evaluation run directory."""
+    mp = run_dir / "metrics.json"
+    if not mp.exists():
+        return None
+    try:
+        return json.loads(mp.read_text())
+    except Exception:
+        return None
 
 
-def _validate_data(conn) -> None:
-    """Pre-export data quality checks. Warns but does not abort."""
-    epoch_count = conn.execute("SELECT COUNT(*) FROM epoch_metrics").fetchone()[0]
-    if epoch_count == 0:
-        log.warning("VALIDATION: epoch_metrics table has 0 rows — training curves will be empty")
-
-    null_started = conn.execute(
-        "SELECT COUNT(*) FROM runs WHERE started_at IS NULL"
-    ).fetchone()[0]
-    total_runs = conn.execute("SELECT COUNT(*) FROM runs").fetchone()[0]
-    if null_started > 0:
-        log.warning("VALIDATION: %d/%d runs have NULL started_at — run timeline will be sparse",
-                     null_started, total_runs)
-
-    metric_count = conn.execute("SELECT COUNT(*) FROM metrics").fetchone()[0]
-    if metric_count == 0:
-        log.warning("VALIDATION: metrics table has 0 rows — leaderboard will be empty")
-
-
-def export_metric_catalog(output_dir: Path) -> Path:
-    """Export distinct metric names for dynamic dashboard dropdown."""
-    conn = get_connection()
-    conn.row_factory = _dict_factory
-    rows = conn.execute(
-        "SELECT DISTINCT metric_name FROM metrics ORDER BY metric_name"
-    ).fetchall()
-    conn.close()
-
-    catalog = [r["metric_name"] for r in rows]
-    metrics_dir = output_dir / "metrics"
-    metrics_dir.mkdir(parents=True, exist_ok=True)
-    out = metrics_dir / "metric_catalog.json"
-    out.write_text(json.dumps(_versioned_envelope(catalog), indent=2))
-    log.info("Exported %d metric names → %s", len(catalog), out)
-    return out
-
+# ---------------------------------------------------------------------------
+# Export functions (DB-free: read from filesystem)
+# ---------------------------------------------------------------------------
 
 def export_leaderboard(output_dir: Path) -> Path:
-    """Best F1/accuracy per model x dataset x scale."""
-    conn = get_connection()
-    conn.row_factory = _dict_factory
-    rows = conn.execute("""
-        SELECT
-            r.dataset, r.model_type, r.scale, r.has_kd,
-            m.model, m.metric_name,
-            ROUND(MAX(m.value), 6) AS best_value
-        FROM metrics m
-        JOIN runs r ON r.run_id = m.run_id
-        WHERE m.scenario = 'val'
-          AND m.metric_name IN ('f1', 'accuracy', 'precision', 'recall', 'auc', 'mcc')
-          AND r.status = 'complete'
-        GROUP BY r.dataset, r.model_type, r.scale, r.has_kd, m.model, m.metric_name
-        ORDER BY r.dataset, m.model, m.metric_name
-    """).fetchall()
-    conn.close()
+    """Best F1/accuracy per model x dataset x scale from evaluation metrics.json files."""
+    target_metrics = {"f1", "accuracy", "precision", "recall", "auc", "mcc"}
+    rows = []
+
+    for run in _scan_runs():
+        if run["stage"] != "evaluation":
+            continue
+        metrics = _load_eval_metrics(run["dir"])
+        if not metrics:
+            continue
+
+        for model_key in ("gat", "vgae", "fusion"):
+            model_data = metrics.get(model_key, {})
+            core = model_data.get("core", {})
+            for metric_name in target_metrics:
+                if metric_name in core and isinstance(core[metric_name], (int, float)):
+                    rows.append({
+                        "dataset": run["dataset"],
+                        "model_type": run["model_type"],
+                        "scale": run["scale"],
+                        "has_kd": run["has_kd"],
+                        "model": model_key,
+                        "metric_name": metric_name,
+                        "best_value": round(core[metric_name], 6),
+                    })
 
     out = output_dir / "leaderboard.json"
     out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
@@ -106,17 +133,21 @@ def export_leaderboard(output_dir: Path) -> Path:
 
 
 def export_runs(output_dir: Path) -> Path:
-    """All completed runs with config and status."""
-    conn = get_connection()
-    conn.row_factory = _dict_factory
-    rows = conn.execute("""
-        SELECT
-            run_id, dataset, model_type, scale, stage,
-            has_kd, status, teacher_run, started_at, completed_at
-        FROM runs
-        ORDER BY started_at DESC
-    """).fetchall()
-    conn.close()
+    """All runs with status."""
+    rows = []
+    for run in _scan_runs():
+        rows.append({
+            "run_id": run["run_id"],
+            "dataset": run["dataset"],
+            "model_type": run["model_type"],
+            "scale": run["scale"],
+            "stage": run["stage"],
+            "has_kd": run["has_kd"],
+            "status": run["status"],
+            "teacher_run": "",
+            "started_at": None,
+            "completed_at": None,
+        })
 
     out = output_dir / "runs.json"
     out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
@@ -125,43 +156,81 @@ def export_runs(output_dir: Path) -> Path:
 
 
 def export_metrics(output_dir: Path) -> Path:
-    """Per-run flattened metrics."""
-    conn = get_connection()
-    conn.row_factory = _dict_factory
-
-    run_ids = [r["run_id"] for r in conn.execute(
-        "SELECT DISTINCT run_id FROM metrics"
-    ).fetchall()]
-
+    """Per-run flattened metrics from evaluation metrics.json files."""
     metrics_dir = output_dir / "metrics"
     metrics_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
 
-    for rid in run_ids:
-        rows = conn.execute(
-            "SELECT model, scenario, metric_name, value FROM metrics WHERE run_id = ?",
-            (rid,),
-        ).fetchall()
-        # Use sanitized filename
-        fname = rid.replace("/", "_") + ".json"
+    for run in _scan_runs():
+        if run["stage"] != "evaluation":
+            continue
+        metrics = _load_eval_metrics(run["dir"])
+        if not metrics:
+            continue
+
+        rows = []
+        for model_key in ("gat", "vgae", "fusion"):
+            model_data = metrics.get(model_key, {})
+            for scenario_type in ("core", "additional"):
+                section = model_data.get(scenario_type, {})
+                for metric_name, value in section.items():
+                    if isinstance(value, (int, float)):
+                        rows.append({
+                            "model": model_key,
+                            "scenario": "val",
+                            "metric_name": metric_name,
+                            "value": value,
+                        })
+
+        fname = run["run_id"].replace("/", "_") + ".json"
         (metrics_dir / fname).write_text(json.dumps(_versioned_envelope(rows), indent=2))
+        count += 1
 
-    conn.close()
-    log.info("Exported metrics for %d runs → %s", len(run_ids), metrics_dir)
+    log.info("Exported metrics for %d runs → %s", count, metrics_dir)
     return metrics_dir
 
 
+def export_metric_catalog(output_dir: Path) -> Path:
+    """Export distinct metric names for dynamic dashboard dropdown."""
+    all_names: set[str] = set()
+
+    for run in _scan_runs():
+        if run["stage"] != "evaluation":
+            continue
+        metrics = _load_eval_metrics(run["dir"])
+        if not metrics:
+            continue
+        for model_key in ("gat", "vgae", "fusion"):
+            model_data = metrics.get(model_key, {})
+            for section in ("core", "additional"):
+                all_names.update(
+                    k for k, v in model_data.get(section, {}).items()
+                    if isinstance(v, (int, float))
+                )
+
+    catalog = sorted(all_names)
+    metrics_dir = output_dir / "metrics"
+    metrics_dir.mkdir(parents=True, exist_ok=True)
+    out = metrics_dir / "metric_catalog.json"
+    out.write_text(json.dumps(_versioned_envelope(catalog), indent=2))
+    log.info("Exported %d metric names → %s", len(catalog), out)
+    return out
+
+
 def export_datasets(output_dir: Path) -> Path:
-    """Dataset metadata."""
-    conn = get_connection()
-    conn.row_factory = _dict_factory
-    rows = conn.execute("""
-        SELECT name, domain, protocol, source, description,
-               num_files, num_samples, num_graphs, num_unique_ids,
-               attack_types
-        FROM datasets
-        ORDER BY name
-    """).fetchall()
-    conn.close()
+    """Dataset metadata from config/datasets.yaml catalog."""
+    from config.catalog import load_catalog
+
+    catalog = load_catalog()
+    rows = []
+    for name, entry in catalog.items():
+        rows.append({
+            "name": name,
+            "domain": getattr(entry, "domain", "automotive"),
+            "protocol": getattr(entry, "protocol", "CAN"),
+            "source": getattr(entry, "source", ""),
+            "description": getattr(entry, "description", ""),
+        })
 
     out = output_dir / "datasets.json"
     out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
@@ -170,37 +239,51 @@ def export_datasets(output_dir: Path) -> Path:
 
 
 def export_kd_transfer(output_dir: Path) -> Path:
-    """Teacher vs student metric pairs for KD analysis."""
-    conn = get_connection()
-    conn.row_factory = _dict_factory
+    """Teacher vs student metric pairs for KD analysis.
 
-    rows = conn.execute("""
-        SELECT
-            student.run_id   AS student_run,
-            student.dataset,
-            student.model_type,
-            student.scale     AS student_scale,
-            teacher.run_id    AS teacher_run,
-            sm.metric_name,
-            ROUND(sm.value, 6) AS student_value,
-            ROUND(tm.value, 6) AS teacher_value
-        FROM runs student
-        JOIN metrics sm ON sm.run_id = student.run_id AND sm.scenario = 'val'
-        JOIN runs teacher ON teacher.dataset = student.dataset
-                          AND teacher.stage = 'evaluation'
-                          AND teacher.has_kd = 0
-        JOIN metrics tm ON tm.run_id = teacher.run_id
-                       AND tm.scenario = 'val'
-                       AND tm.metric_name = sm.metric_name
-                       AND tm.model = sm.model
-        WHERE student.has_kd = 1
-          AND student.stage = 'evaluation'
-          AND sm.metric_name IN ('f1', 'accuracy', 'auc')
-          AND teacher.model_type = student.model_type
-          AND student.scale = 'small' AND teacher.scale = 'large'
-        ORDER BY student.dataset, sm.metric_name
-    """).fetchall()
-    conn.close()
+    Scans evaluation runs, pairs large (teacher) with small+kd (student)
+    on the same dataset.
+    """
+    target_metrics = {"f1", "accuracy", "auc"}
+    rows = []
+
+    # Group evaluation runs by dataset
+    eval_runs: dict[str, list[dict]] = {}
+    for run in _scan_runs():
+        if run["stage"] != "evaluation":
+            continue
+        eval_runs.setdefault(run["dataset"], []).append(run)
+
+    for ds, runs in eval_runs.items():
+        # Find teacher (large, no KD) and student (small, KD) runs
+        teachers = [r for r in runs if r["scale"] == "large" and not r["has_kd"]]
+        students = [r for r in runs if r["scale"] == "small" and r["has_kd"]]
+
+        if not teachers or not students:
+            continue
+
+        teacher = teachers[0]
+        student = students[0]
+        t_metrics = _load_eval_metrics(teacher["dir"])
+        s_metrics = _load_eval_metrics(student["dir"])
+        if not t_metrics or not s_metrics:
+            continue
+
+        for model_key in ("gat", "vgae", "fusion"):
+            t_core = t_metrics.get(model_key, {}).get("core", {})
+            s_core = s_metrics.get(model_key, {}).get("core", {})
+            for mn in target_metrics:
+                if mn in t_core and mn in s_core:
+                    rows.append({
+                        "student_run": student["run_id"],
+                        "dataset": ds,
+                        "model_type": teacher["model_type"],
+                        "student_scale": "small",
+                        "teacher_run": teacher["run_id"],
+                        "metric_name": mn,
+                        "student_value": round(s_core[mn], 6),
+                        "teacher_value": round(t_core[mn], 6),
+                    })
 
     out = output_dir / "kd_transfer.json"
     out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
@@ -209,29 +292,65 @@ def export_kd_transfer(output_dir: Path) -> Path:
 
 
 def export_training_curves(output_dir: Path) -> Path:
-    """Per-run training curves from epoch_metrics table."""
-    conn = get_connection()
-    conn.row_factory = _dict_factory
-
-    run_ids = [r["run_id"] for r in conn.execute(
-        "SELECT DISTINCT run_id FROM epoch_metrics"
-    ).fetchall()]
-
+    """Per-run training curves from Lightning CSV logs."""
     curves_dir = output_dir / "training_curves"
     curves_dir.mkdir(parents=True, exist_ok=True)
+    count = 0
 
-    for rid in run_ids:
-        rows = conn.execute(
-            "SELECT epoch, metric_name, value FROM epoch_metrics WHERE run_id = ? ORDER BY epoch, metric_name",
-            (rid,),
-        ).fetchall()
-        fname = rid.replace("/", "_") + ".json"
-        (curves_dir / fname).write_text(json.dumps(_versioned_envelope(rows), indent=2))
+    if not EXPERIMENT_ROOT.is_dir():
+        return curves_dir
 
-    conn.close()
-    log.info("Exported training curves for %d runs → %s", len(run_ids), curves_dir)
+    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+
+            # Find Lightning CSV log
+            csv_logs = list(run_dir.glob("csv_logs/*/metrics.csv")) + \
+                       list(run_dir.glob("lightning_logs/*/metrics.csv"))
+            if not csv_logs:
+                continue
+
+            try:
+                import csv
+                rows = []
+                with open(csv_logs[0]) as f:
+                    reader = csv.DictReader(f)
+                    for row in reader:
+                        epoch = row.get("epoch")
+                        if epoch is None:
+                            continue
+                        for key, val in row.items():
+                            if key == "epoch" or key == "step" or val == "":
+                                continue
+                            try:
+                                rows.append({
+                                    "epoch": int(float(epoch)),
+                                    "metric_name": key,
+                                    "value": float(val),
+                                })
+                            except (ValueError, TypeError):
+                                continue
+
+                if rows:
+                    run_id = f"{ds_dir.name}/{run_dir.name}"
+                    fname = run_id.replace("/", "_") + ".json"
+                    (curves_dir / fname).write_text(
+                        json.dumps(_versioned_envelope(rows), indent=2)
+                    )
+                    count += 1
+            except Exception as e:
+                log.warning("Failed to parse CSV log in %s: %s", run_dir, e)
+
+    log.info("Exported training curves for %d runs → %s", count, curves_dir)
     return curves_dir
 
+
+# ---------------------------------------------------------------------------
+# Filesystem-only exports (unchanged from original)
+# ---------------------------------------------------------------------------
 
 def export_graph_samples(output_dir: Path) -> Path:
     """Export a few cached PyG graphs per dataset as D3-compatible JSON."""
@@ -253,7 +372,6 @@ def export_graph_samples(output_dir: Path) -> Path:
             log.warning("Could not load graphs from %s: %s", graphs_path, e)
             continue
 
-        # Stratify by label: 1 normal + 1 attack + 1 random (seeded)
         import random as _random
         rng = _random.Random(42)
         normal_idx = [i for i, g in enumerate(graphs)
@@ -268,7 +386,6 @@ def export_graph_samples(output_dir: Path) -> Path:
         if attack_idx:
             selected.append(graphs[attack_idx[0]])
             selected_indices.add(attack_idx[0])
-        # Fill remaining slots (up to 3) with random picks
         remaining = [i for i in range(len(graphs)) if i not in selected_indices]
         if remaining and len(selected) < 3:
             selected.append(graphs[rng.choice(remaining)])
@@ -306,8 +423,7 @@ def export_model_sizes(output_dir: Path) -> Path:
     from config.constants import NODE_FEATURE_COUNT
 
     sizes: list[dict] = []
-    # Representative num_ids and in_ch for param counting
-    num_ids = 30  # typical across datasets
+    num_ids = 30
     in_ch = NODE_FEATURE_COUNT
 
     for model_type in ("vgae", "gat", "dqn"):
@@ -351,7 +467,6 @@ def _stratified_sample(coords_2d, labels, errors, max_samples: int):
     for label in unique_labels:
         label_mask = labels[:n] == label if len(labels) >= n else np.ones(n, dtype=bool)
         label_indices = np.where(label_mask)[0]
-        # Proportional allocation
         n_samples = max(1, int(max_samples * len(label_indices) / n))
         rng = np.random.default_rng(42)
         sampled = rng.choice(label_indices, size=min(n_samples, len(label_indices)), replace=False)
@@ -371,17 +486,16 @@ def export_embeddings(output_dir: Path) -> Path:
     embed_dir = output_dir / "embeddings"
     embed_dir.mkdir(parents=True, exist_ok=True)
 
-    exp_root = Path("experimentruns")
     count = 0
     exported_files: list[str] = []
 
-    if not exp_root.is_dir():
+    if not EXPERIMENT_ROOT.is_dir():
         index_path = embed_dir / "index.json"
         index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
         log.info("No experimentruns directory — wrote empty embeddings index")
         return embed_dir
 
-    for ds_dir in sorted(exp_root.iterdir()):
+    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
         if not ds_dir.is_dir():
             continue
         for run_dir in sorted(ds_dir.iterdir()):
@@ -399,7 +513,7 @@ def export_embeddings(output_dir: Path) -> Path:
                 if model_key not in data:
                     continue
                 embeddings = data[model_key]
-                model_name = model_key.split("_")[0]  # "vgae" or "gat"
+                model_name = model_key.split("_")[0]
                 labels = data.get(f"{model_name}_labels", np.array([]))
                 errors = data.get(f"{model_name}_errors", np.array([]))
 
@@ -447,7 +561,6 @@ def export_embeddings(output_dir: Path) -> Path:
                     exported_files.append(fname)
                     count += 1
 
-    # Write index file
     index_path = embed_dir / "index.json"
     index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
 
@@ -478,17 +591,15 @@ def export_dqn_policy(output_dir: Path) -> Path:
     policy_dir = output_dir / "dqn_policy"
     policy_dir.mkdir(parents=True, exist_ok=True)
 
-    exp_root = Path("experimentruns")
     count = 0
     exported_files: list[str] = []
 
-    if not exp_root.is_dir():
+    if not EXPERIMENT_ROOT.is_dir():
         index_path = policy_dir / "index.json"
         index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
-        log.info("No experimentruns directory — wrote empty dqn_policy index")
         return policy_dir
 
-    for ds_dir in sorted(exp_root.iterdir()):
+    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
         if not ds_dir.is_dir():
             continue
         for run_dir in sorted(ds_dir.iterdir()):
@@ -505,7 +616,6 @@ def export_dqn_policy(output_dir: Path) -> Path:
             exported_files.append(fname)
             count += 1
 
-    # Write index file
     index_path = policy_dir / "index.json"
     index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
 
@@ -518,16 +628,15 @@ def export_roc_curves(output_dir: Path) -> Path:
     curves_dir = output_dir / "roc_curves"
     curves_dir.mkdir(parents=True, exist_ok=True)
 
-    exp_root = Path("experimentruns")
     count = 0
     exported_files: list[str] = []
 
-    if not exp_root.is_dir():
+    if not EXPERIMENT_ROOT.is_dir():
         index_path = curves_dir / "index.json"
         index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
         return curves_dir
 
-    for ds_dir in sorted(exp_root.iterdir()):
+    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
         if not ds_dir.is_dir():
             continue
         for run_dir in sorted(ds_dir.iterdir()):
@@ -573,16 +682,15 @@ def export_attention(output_dir: Path) -> Path:
 
     import numpy as np
 
-    exp_root = Path("experimentruns")
     count = 0
     exported_files: list[str] = []
 
-    if not exp_root.is_dir():
+    if not EXPERIMENT_ROOT.is_dir():
         index_path = attn_dir / "index.json"
         index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
         return attn_dir
 
-    for ds_dir in sorted(exp_root.iterdir()):
+    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
         if not ds_dir.is_dir():
             continue
         for run_dir in sorted(ds_dir.iterdir()):
@@ -604,12 +712,10 @@ def export_attention(output_dir: Path) -> Path:
                 edge_index = data[f"{prefix}_edge_index"].tolist()
                 node_features = data[f"{prefix}_node_features"].tolist()
 
-                # Collect attention per layer
                 layers = []
                 layer_idx = 0
                 while f"{prefix}_layer_{layer_idx}_alpha" in data:
                     alpha = data[f"{prefix}_layer_{layer_idx}_alpha"]
-                    # alpha shape: [n_edges, n_heads] or [n_edges]
                     layers.append({
                         "alpha_mean": alpha.mean(axis=-1).tolist() if alpha.ndim > 1 else alpha.tolist(),
                         "n_heads": int(alpha.shape[-1]) if alpha.ndim > 1 else 1,
@@ -642,16 +748,15 @@ def export_recon_errors(output_dir: Path) -> Path:
 
     import numpy as np
 
-    exp_root = Path("experimentruns")
     count = 0
     exported_files: list[str] = []
 
-    if not exp_root.is_dir():
+    if not EXPERIMENT_ROOT.is_dir():
         index_path = recon_dir / "index.json"
         index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
         return recon_dir
 
-    for ds_dir in sorted(exp_root.iterdir()):
+    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
         if not ds_dir.is_dir():
             continue
         for run_dir in sorted(ds_dir.iterdir()):
@@ -668,7 +773,6 @@ def export_recon_errors(output_dir: Path) -> Path:
             errors = data["vgae_errors"].tolist()
             labels = data["vgae_labels"].tolist() if "vgae_labels" in data else []
 
-            # Read optimal threshold from metrics.json if available
             threshold = None
             mp = run_dir / "metrics.json"
             if mp.exists():
@@ -698,16 +802,15 @@ def export_cka(output_dir: Path) -> Path:
     cka_dir = output_dir / "cka"
     cka_dir.mkdir(parents=True, exist_ok=True)
 
-    exp_root = Path("experimentruns")
     count = 0
     exported_files: list[str] = []
 
-    if not exp_root.is_dir():
+    if not EXPERIMENT_ROOT.is_dir():
         index_path = cka_dir / "index.json"
         index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
         return cka_dir
 
-    for ds_dir in sorted(exp_root.iterdir()):
+    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
         if not ds_dir.is_dir():
             continue
         for run_dir in sorted(ds_dir.iterdir()):
@@ -730,27 +833,22 @@ def export_cka(output_dir: Path) -> Path:
     return cka_dir
 
 
+# ---------------------------------------------------------------------------
+# Main
+# ---------------------------------------------------------------------------
+
 def export_all(output_dir: Path) -> None:
     """Run all exports."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    # Pre-flight: validate DB schema and data quality
-    conn = get_connection()
-    try:
-        _validate_schema(conn)
-        _validate_data(conn)
-    finally:
-        conn.close()
-
     lb = export_leaderboard(output_dir)
     runs = export_runs(output_dir)
-    metrics = export_metrics(output_dir)
+    export_metrics(output_dir)
     ds = export_datasets(output_dir)
     kd = export_kd_transfer(output_dir)
-    curves = export_training_curves(output_dir)
+    export_training_curves(output_dir)
     export_metric_catalog(output_dir)
 
-    # New exports (graceful — failures don't block other exports)
     for name, func in [
         ("graph_samples", export_graph_samples),
         ("model_sizes", export_model_sizes),
@@ -766,7 +864,6 @@ def export_all(output_dir: Path) -> None:
         except Exception as e:
             log.warning("Export %s failed (non-fatal): %s", name, e)
 
-    # Validation summary — check file sizes
     for name, path in [
         ("leaderboard", lb), ("runs", runs), ("datasets", ds), ("kd_transfer", kd),
     ]:
@@ -776,15 +873,10 @@ def export_all(output_dir: Path) -> None:
     log.info("All exports complete → %s", output_dir)
 
 
-def _dict_factory(cursor, row):
-    """SQLite row factory that returns dicts."""
-    return {col[0]: row[i] for i, col in enumerate(cursor.description)}
-
-
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="pipeline.export",
-        description="Export project DB to static JSON for dashboard",
+        description="Export experiment results to static JSON for dashboard",
     )
     parser.add_argument(
         "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,

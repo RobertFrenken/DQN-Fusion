@@ -23,61 +23,24 @@ python -m pipeline.cli fusion --model dqn --scale large --dataset hcrl_ch
 # Override nested config values
 python -m pipeline.cli autoencoder --model vgae --scale large -O training.lr 0.001 -O vgae.latent_dim 16
 
-# Full pipeline via Snakemake + SLURM
-snakemake -s pipeline/Snakefile --profile profiles/slurm
+# Full pipeline via Prefect + SLURM
+python -m pipeline.cli flow --dataset hcrl_sa
+python -m pipeline.cli flow --dataset hcrl_sa --scale large
+python -m pipeline.cli flow --eval-only --dataset hcrl_sa
 
-# Single dataset
-snakemake -s pipeline/Snakefile --profile profiles/slurm --config 'datasets=["hcrl_sa"]'
-
-# Dry run (always do this first)
-snakemake -s pipeline/Snakefile -n
-
-# Re-run ONLY evaluation (safe — prevents upstream cascade from cache timestamp changes)
-# Step 1: remove .done sentinels so Snakemake sees eval as missing
-find experimentruns -path '*/eval_*/.done' -delete
-# Step 2: fence to eval rules only (belt-and-suspenders with content-based triggers)
-snakemake -s pipeline/Snakefile --profile profiles/slurm evaluate_all \
-    --allowed-rules eval_large eval_small_kd eval_small_nokd evaluate_all --jobs 18
-
-# Data management
-python -m pipeline.ingest <dataset>     # CSV → Parquet conversion
-python -m pipeline.ingest --all         # Convert all datasets
-python -m pipeline.ingest --list        # List catalog entries
-python -m pipeline.db populate          # Populate project DB from existing outputs
-python -m pipeline.db summary           # Show dataset/run/metric counts
-python -m pipeline.db query "SQL"       # Run arbitrary SQL on project DB
+# Local execution (no SLURM)
+python -m pipeline.cli flow --dataset hcrl_sa --local
 
 # Test graph caching (builds test_*.pt per scenario per dataset)
 sbatch scripts/build_test_cache.sh                    # All datasets (set_01-04)
 sbatch scripts/build_test_cache.sh set_02 set_03      # Specific datasets
 
-# Experiment analytics (queries project DB)
-python -m pipeline.analytics sweep --param lr --metric f1
-python -m pipeline.analytics leaderboard --metric f1 --top 10
-python -m pipeline.analytics compare <run_a> <run_b>
-python -m pipeline.analytics diff <run_a> <run_b>
-python -m pipeline.analytics dataset <name>
-python -m pipeline.analytics query "SELECT json_extract(...) FROM ..."
-python -m pipeline.analytics memory [--model vgae] [--dataset hcrl_sa]
-
-# STATE.md automation
-python -m pipeline.state_sync preview   # Preview regenerated sections
-python -m pipeline.state_sync update    # Write updated STATE.md in-place
-python -m pipeline.cli state            # Shorthand for state_sync update
-
-# Export dashboard data (DB → static JSON)
+# Export dashboard data (filesystem → static JSON)
 python -m pipeline.export                                    # Default: docs/dashboard/data/
 python -m pipeline.export --output-dir docs/dashboard/data   # Explicit output dir
-bash scripts/export_dashboard.sh              # Export + commit + push to Pages
+bash scripts/export_dashboard.sh              # Export + commit + push to Pages + DVC push
 bash scripts/export_dashboard.sh --no-push    # Export + commit only
 bash scripts/export_dashboard.sh --dry-run    # Export only (no git)
-
-# Datasette (interactive DB browsing, inside tmux on login node)
-datasette data/project.db --port 8001
-# Local: ssh -L 8001:localhost:8001 rf15@pitzer.osc.edu → http://localhost:8001
-
-# Snakemake report (after eval runs)
-snakemake -s pipeline/Snakefile --report report.html
 
 # Run tests (slurm-marked tests auto-skip on login nodes)
 python -m pytest tests/ -v
@@ -109,24 +72,20 @@ config/             # Layer 1: Inert, declarative (no imports from pipeline/ or 
   auxiliaries/      # Loss modifier YAML files (composable)
     none.yaml, kd_standard.yaml
 pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from src/)
-  cli.py            # Entry point + write-through DB recording
+  cli.py            # Entry point + W&B init + lakehouse sync
   stages/           # Stage implementations (training, fusion, evaluation)
     evaluation.py   # Multi-model eval; captures embeddings.npz + dqn_policy.json artifacts
+  flows/            # Prefect orchestration (train_flow, eval_flow, slurm_config)
   tracking.py       # Memory monitoring utilities
-  export.py         # DB → static JSON export for dashboard (+ graph_samples, model_sizes, embeddings, dqn_policy)
+  export.py         # Filesystem → static JSON export for dashboard
   memory.py         # GPU memory management
-  ingest.py         # CSV → Parquet conversion + dataset registration
-  db.py             # SQLite project DB (WAL mode) + write-through + backfill migrations (epoch_metrics, timestamps, teacher_run)
-  analytics.py      # Post-run analysis: sweeps, leaderboards, comparisons
-  Snakefile         # All stages + evaluation + preprocessing cache + test cache + retries + group jobs
+  lakehouse.py      # Fire-and-forget sync to Cloudflare R2
 src/                # Layer 3: Domain (models, training, preprocessing; imports config/)
   models/           # vgae.py, gat.py, dqn.py
   training/         # load_dataset(), load_test_scenarios(), graph caching
   preprocessing/    # Graph construction from CAN CSVs
 data/
-  project.db        # SQLite DB: queryable datasets, runs, metrics, epoch_metrics
   automotive/       # 6 datasets (DVC-tracked): hcrl_ch, hcrl_sa, set_01-04
-  parquet/          # Columnar format (from ingest), queryable via Datasette or SQL
   cache/            # Preprocessed graph cache (.pt, .pkl, metadata)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json, embeddings.npz, dqn_policy.json
 scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh, build_test_cache.sh)
@@ -136,7 +95,6 @@ docs/dashboard/     # GitHub Pages D3.js dashboard (ES modules, config-driven pa
   js/panels/        # PanelManager + panelConfig (11 panels, declarative)
   js/app.js         # Slim entry point
   data/             # Static JSON exports from pipeline
-profiles/slurm/     # SLURM submission profile for Snakemake
 ```
 
 ## Config System
@@ -171,15 +129,6 @@ These fix real crashes -- do not violate:
 - **NFS filesystem.** `.nfs*` ghost files appear on delete. Already in `.gitignore`.
 - **No GUI on HPC.** Git auth via SSH key, not HTTPS.
 - **Dynamic batching for variable-size graphs.** DynamicBatchSampler (PyG built-in) packs graphs to a node budget instead of a fixed count. Budget = batch_size × p95_nodes (from cache_metadata.json). Keeps GPU ~85% utilized regardless of graph size variance. Disable with `-O training.dynamic_batching false` if needed for reproducibility comparisons.
-- **Snakemake `benchmark:` and `cache: True` are incompatible.** Snakemake cannot fill benchmark files from cached results. All training/eval rules use `cache: True` for between-workflow caching, so benchmark directives were removed. Timing data is tracked in the project DB instead.
-- **Snakemake DAG hardening (sentinel + content triggers).** The pipeline uses three layers of protection against NFS timestamp cascades:
-  1. **Content-based rerun triggers** (`profiles/slurm/config.yaml`): `rerun-triggers: [mtime, input, code, params]` — Snakemake checksums file content, so touching a cache file without changing it won't cascade.
-  2. **Sentinel files**: Rule outputs are lightweight `.done` files, not real artifacts. Training checkpoints (`best_model.pt`) and metrics (`metrics.json`) are side-effects recorded to DB via write-through. Sentinel stability prevents DAG cascading.
-  3. **Between-workflow caching** (`cache: True` on all training + eval rules): Snakemake hashes inputs + code + params and skips re-execution if the same combination was seen before.
-  - To re-run only evaluation: `find experimentruns -path '*/eval_*/.done' -delete` then run with `--allowed-rules`.
-  - To bootstrap sentinels for existing runs:
-    - Training: `find experimentruns -name 'best_model.pt' -exec sh -c 'touch "$(dirname "$1")/.done"' _ {} \;`
-    - Evaluation: `find experimentruns -name 'metrics.json' -path '*/eval_*' -exec sh -c 'touch "$(dirname "$1")/.done"' _ {} \;`
 
 ## Architecture Decisions
 
@@ -191,11 +140,10 @@ These fix real crashes -- do not violate:
 - Sub-configs: `cfg.vgae`, `cfg.gat`, `cfg.dqn`, `cfg.training`, `cfg.fusion` — nested Pydantic models. Always use nested access (`cfg.vgae.latent_dim`), never flat.
 - Auxiliaries: `cfg.auxiliaries` is a list of `AuxiliaryConfig`. KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
 - Constants: domain/infrastructure constants live in `config/constants.py` (not in PipelineConfig). Hyperparameters live in PipelineConfig.
-- Write-through DB: `cli.py` records run start/end directly to project DB (including teacher_run propagation for KD eval runs). `populate()` is a backfill/recovery tool that also runs legacy migrations, timestamp backfill, epoch_metrics backfill from Lightning CSVs, stale entry cleanup, and teacher_run backfill.
-- SQLite: WAL mode + 5s busy timeout for concurrent SLURM jobs. Foreign keys enabled. Indices on `metrics(run_id)`, `metrics(run_id, scenario, metric_name)`, `epoch_metrics(run_id, epoch)`.
+- Experiment tracking: W&B (online/offline) for live metrics + R2 lakehouse for structured Parquet. `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle; Lightning's `WandbLogger` attaches to the active run. Compute nodes auto-set `WANDB_MODE=offline`.
+- Orchestration: Prefect flows (`pipeline/flows/`) with `dask-jobqueue` SLURMCluster. `train_pipeline()` runs the full DAG per dataset; `eval_pipeline()` re-runs evaluation only. Each stage task dispatches via subprocess for clean CUDA context.
 - Dashboard: Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types inherit from it. `PanelManager` reads config → builds nav + panels + controls → lazy-loads data → renders. All chart types registered in `Registry`.
-- **Dual storage (sentinel-based)**: Snakemake owns `.done` sentinel files (DAG triggers), project DB owns structured results (write-through from cli.py). The `.done` file is a Snakemake output marker — its presence/absence controls DAG scheduling. Real artifacts (`best_model.pt`, `metrics.json`, `embeddings.npz`) are side-effects written by stage code. The real metrics are written to the project DB by `cli.py → record_run_end() → _insert_metrics_from_dict()` as the authoritative copy. `pipeline.db populate` can backfill the DB from filesystem if write-through is missed. To re-run evaluation without re-triggering upstream training: delete the `.done` sentinel and use `--allowed-rules` to fence Snakemake. Dashboard `export.py` reads from both: DB for structured queries, filesystem for artifacts (`embeddings.npz`, `attention_weights.npz`, `dqn_policy.json`, `cka_matrix.json`).
-- Data layer: Parquet (columnar storage) + SQLite (project DB) + Datasette (interactive browsing). All serverless.
+- Dashboard data: `export.py` scans `experimentruns/` filesystem for `config.json` and `metrics.json` files. No database dependency. Artifacts (`embeddings.npz`, `dqn_policy.json`, etc.) are read directly from run directories.
 - Dataset catalog: `config/datasets.yaml` — single place to register new datasets.
 - Delete unused code completely. No compatibility shims or `# removed` comments.
 
@@ -203,10 +151,10 @@ These fix real crashes -- do not violate:
 
 - **Cluster**: OSC (Ohio Supercomputer Center), RHEL 9, SLURM
 - **GPU**: V100 (account PAS3209, gpu partition)
-- **Python**: conda `gnn-experiments` (PyTorch, PyG, Lightning, Pydantic v2, Datasette)
+- **Python**: conda `gnn-experiments` (PyTorch, PyG, Lightning, Pydantic v2, W&B, Prefect)
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
-- **Project DB**: `data/project.db` (SQLite — datasets, runs, metrics, epoch_metrics)
+- **Tracking**: W&B (project `kd-gat`) + Cloudflare R2 lakehouse (Parquet)
 - **Dashboard**: https://robertfrenken.github.io/DQN-Fusion/ (GitHub Pages from `docs/`)
 
 ## Session Modes
@@ -215,7 +163,7 @@ Switch Claude's focus with `/set-mode <mode>`:
 
 | Mode | Focus | Suppressed |
 |------|-------|------------|
-| `mlops` | Pipeline, Snakemake, SLURM, config, debugging | Research, writing |
+| `mlops` | Pipeline, Prefect, SLURM, W&B, config, debugging | Research, writing |
 | `research` | OOD generalization, JumpReLU, cascading KD, literature | Pipeline ops, config |
 | `writing` | Paper drafting, documentation, results | Code changes, pipeline |
 | `data` | Ingestion, preprocessing, validation, cache | Research, writing |
@@ -227,20 +175,18 @@ Mode context files live in `.claude/system/modes/`. Switching modes loads the re
 | Skill | Usage | Description |
 |-------|-------|-------------|
 | `/set-mode` | `/set-mode mlops` | Switch session focus mode |
-| `/run-pipeline` | `/run-pipeline hcrl_sa large` | Submit Snakemake jobs to SLURM |
-| `/check-status` | `/check-status hcrl_sa` | Check SLURM queue, checkpoints, DB |
+| `/run-pipeline` | `/run-pipeline hcrl_sa large` | Submit Prefect flow to SLURM |
+| `/check-status` | `/check-status hcrl_sa` | Check SLURM queue, checkpoints, W&B |
 | `/run-tests` | `/run-tests` or `/run-tests test_config` | Run pytest suite |
 | `/sync-state` | `/sync-state` | Update STATE.md from current outputs |
 
 ## Experiment Tracking
 
-All tracking uses the project SQLite DB (`data/project.db`) as the single source of truth:
-- **Write-through**: `cli.py` records run start/end + metrics directly to DB
-- **Epoch metrics**: `epoch_metrics` table captures per-epoch training curves (18,290 rows backfilled from 44 Lightning CSVs)
-- **Backfill**: `python -m pipeline.db populate` scans filesystem + runs migrations (legacy naming, stale entry cleanup, timestamps, epoch_metrics from Lightning CSVs, teacher_run)
-- **Artifacts**: Evaluation stage captures `embeddings.npz` (VGAE z-mean + GAT hidden layers) and `dqn_policy.json` (alpha values by class) — requires re-running evaluation
-- **Dashboard**: `python -m pipeline.export` generates static JSON (leaderboard, metrics, training curves, KD transfer, datasets, runs, graph_samples, model_sizes, embeddings, dqn_policy); `scripts/export_dashboard.sh` commits + pushes to GitHub Pages. Auto-runs in Snakemake `onsuccess`.
-- **Interactive**: `datasette data/project.db` for ad-hoc SQL browsing
+Tracking uses W&B + Cloudflare R2 lakehouse:
+- **W&B**: `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle. Lightning's `WandbLogger` attaches to the active run for per-epoch metrics. Compute nodes auto-set `WANDB_MODE=offline`; sync offline runs via `wandb sync wandb/run-*`.
+- **R2 Lakehouse**: `pipeline/lakehouse.py` POSTs structured metrics to Cloudflare R2 Pipeline endpoint (fire-and-forget). Requires `KD_GAT_LAKEHOUSE_URL` env var. Data lands as Parquet, queryable via DuckDB.
+- **Artifacts**: Evaluation stage captures `embeddings.npz` (VGAE z-mean + GAT hidden layers) and `dqn_policy.json` (alpha values by class) — stored in run directories.
+- **Dashboard**: `python -m pipeline.export` scans `experimentruns/` filesystem to generate static JSON (leaderboard, metrics, training curves, KD transfer, datasets, runs, graph_samples, model_sizes, embeddings, dqn_policy); `scripts/export_dashboard.sh` commits + pushes to GitHub Pages + DVC push to R2.
 
 ## Detailed Documentation
 
@@ -248,5 +194,5 @@ All tracking uses the project SQLite DB (`data/project.db`) as the single source
 - `.claude/system/CONVENTIONS.md` -- Code style, iteration hygiene, git rules
 - `.claude/system/STATE.md` -- Current session state (updated each session)
 - `.claude/system/modes/` -- Mode-specific context files (mlops, research, writing, data)
-- `docs/user_guides/` -- Snakemake guide, Datasette usage, terminal setup
+- `docs/user_guides/` -- Terminal setup, pipeline guides
 - `docs/dashboard/` -- D3.js dashboard (GitHub Pages)
