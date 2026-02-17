@@ -1,11 +1,12 @@
-# Evaluation rules (one per pipeline variant, grouped for SLURM efficiency).
+# Evaluation rules (one per pipeline variant, independent SLURM jobs).
+# NOTE: group: "evaluation" was removed because it causes Snakemake to cancel
+# ALL group members when one fails, turning partial failures into total failures.
 
 rule eval_large:
     input:
         vgae=_done("{ds}", "vgae", "large", "autoencoder"),
         gat=_done("{ds}", "gat", "large", "curriculum"),
         dqn=_done("{ds}", "dqn", "large", "fusion"),
-    group: "evaluation"
     output:
         done=_done("{ds}", "eval", "large", "evaluation"),
     resources: **_EVAL_RES,
@@ -23,7 +24,6 @@ rule eval_small_kd:
         vgae=_done("{ds}", "vgae", "small", "autoencoder", aux="kd"),
         gat=_done("{ds}", "gat", "small", "curriculum", aux="kd"),
         dqn=_done("{ds}", "dqn", "small", "fusion", aux="kd"),
-    group: "evaluation"
     output:
         done=_done("{ds}", "eval", "small", "evaluation", aux="kd"),
     resources: **_EVAL_RES,
@@ -41,7 +41,6 @@ rule eval_small_nokd:
         vgae=_done("{ds}", "vgae", "small", "autoencoder"),
         gat=_done("{ds}", "gat", "small", "curriculum"),
         dqn=_done("{ds}", "dqn", "small", "fusion"),
-    group: "evaluation"
     output:
         done=_done("{ds}", "eval", "small", "evaluation"),
     resources: **_EVAL_RES,

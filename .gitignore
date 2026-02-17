@@ -29,6 +29,10 @@ mlruns/
 slurm_logs/
 results/
 **/.done
+experimentruns/
+
+# ===== PROJECT DATABASE =====
+data/project.db
 
 # ===== IDE & EDITOR FILES =====
 .vscode/

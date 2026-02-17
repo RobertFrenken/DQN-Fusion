@@ -58,6 +58,9 @@ class MemoryMonitorCallback(pl.Callback):
         """Record epoch metrics to project DB if run_id is set."""
         if not self.run_id:
             return
+        import os
+        if os.environ.get("SLURM_JOB_ID"):
+            return  # Defer DB writes to onsuccess backfill
         metrics = log_memory_metrics(step=epoch)
         if extra:
             metrics.update(extra)

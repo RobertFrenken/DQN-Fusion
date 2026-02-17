@@ -34,8 +34,11 @@ from config.paths import EXPERIMENT_ROOT
 log = logging.getLogger(__name__)
 
 
+_RETRYABLE_ERRORS = ("locked", "disk i/o error", "database is locked")
+
+
 def _retry_on_locked(func):
-    """Retry DB writes on sqlite3.OperationalError containing 'locked'.
+    """Retry DB writes on transient sqlite3.OperationalError (locked, NFS I/O).
 
     Retries 5 times with exponential backoff (0.5s, 1s, 2s, 4s, 8s).
     """
@@ -46,13 +49,14 @@ def _retry_on_locked(func):
             try:
                 return func(*args, **kwargs)
             except sqlite3.OperationalError as e:
-                if "locked" not in str(e).lower():
+                msg = str(e).lower()
+                if not any(err in msg for err in _RETRYABLE_ERRORS):
                     raise
                 if attempt == len(delays) - 1:
-                    log.error("DB locked after %d retries: %s", len(delays), e)
+                    log.error("DB error after %d retries: %s", len(delays), e)
                     raise
-                log.warning("DB locked (attempt %d/%d), retrying in %.1fs...",
-                            attempt + 1, len(delays), delay)
+                log.warning("DB error (attempt %d/%d), retrying in %.1fs: %s",
+                            attempt + 1, len(delays), delay, e)
                 time.sleep(delay)
         return func(*args, **kwargs)  # final attempt without catch
     return wrapper
@@ -139,7 +143,7 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(path))
     conn.execute("PRAGMA journal_mode=WAL")
-    conn.execute("PRAGMA busy_timeout=15000")
+    conn.execute("PRAGMA busy_timeout=30000")
     conn.execute("PRAGMA foreign_keys=ON")
     conn.executescript(SCHEMA)
     _migrate_schema(conn)
