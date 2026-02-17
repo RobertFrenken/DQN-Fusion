@@ -253,8 +253,25 @@ def export_graph_samples(output_dir: Path) -> Path:
             log.warning("Could not load graphs from %s: %s", graphs_path, e)
             continue
 
-        # Take up to 3 samples (1 normal, 1 attack if available, 1 random)
-        selected = graphs[:min(3, len(graphs))]
+        # Stratify by label: 1 normal + 1 attack + 1 random (seeded)
+        import random as _random
+        rng = _random.Random(42)
+        normal_idx = [i for i, g in enumerate(graphs)
+                      if hasattr(g, 'y') and g.y is not None and int(g.y.item()) == 0]
+        attack_idx = [i for i, g in enumerate(graphs)
+                      if hasattr(g, 'y') and g.y is not None and int(g.y.item()) == 1]
+        selected_indices = set()
+        selected = []
+        if normal_idx:
+            selected.append(graphs[normal_idx[0]])
+            selected_indices.add(normal_idx[0])
+        if attack_idx:
+            selected.append(graphs[attack_idx[0]])
+            selected_indices.add(attack_idx[0])
+        # Fill remaining slots (up to 3) with random picks
+        remaining = [i for i in range(len(graphs)) if i not in selected_indices]
+        if remaining and len(selected) < 3:
+            selected.append(graphs[rng.choice(remaining)])
         for idx, g in enumerate(selected):
             edge_index = g.edge_index.tolist()
             num_nodes = g.x.size(0) if hasattr(g, "x") else g.num_nodes

@@ -1,7 +1,7 @@
 /* Scatter chart: generic scatter plot with configurable axes */
 
 import { BaseChart } from '../core/BaseChart.js';
-import { COLORS, LABEL_COLORS } from '../core/Theme.js';
+import { COLORS, LABEL_COLORS, DATASET_COLORS, MODEL_COLORS, semanticColorScale } from '../core/Theme.js';
 import { register } from '../core/Registry.js';
 
 export class ScatterChart extends BaseChart {
@@ -42,7 +42,13 @@ export class ScatterChart extends BaseChart {
                 return label === 0 || label === 'normal' ? LABEL_COLORS.normal : LABEL_COLORS.attack;
             };
         } else {
-            const scale = d3.scaleOrdinal().domain(colorDomain).range(COLORS);
+            // Pick semantic map based on colorField
+            const semanticMap = colorField === 'dataset' ? DATASET_COLORS
+                : (colorField === 'config' || colorField === 'model_type') ? MODEL_COLORS
+                : null;
+            const scale = semanticMap
+                ? semanticColorScale(colorDomain, semanticMap)
+                : d3.scaleOrdinal().domain(colorDomain).range(COLORS);
             colorFn = d => scale(d[colorField]);
         }
 

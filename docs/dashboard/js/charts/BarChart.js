@@ -1,7 +1,7 @@
 /* Grouped bar chart: metric across datasets per model config */
 
 import { BaseChart } from '../core/BaseChart.js';
-import { COLORS } from '../core/Theme.js';
+import { COLORS, MODEL_COLORS } from '../core/Theme.js';
 import { register } from '../core/Registry.js';
 
 export class BarChart extends BaseChart {
@@ -18,7 +18,12 @@ export class BarChart extends BaseChart {
 
         const x0 = d3.scaleBand().domain(datasets).range([0, w]).padding(0.2);
         const x1 = d3.scaleBand().domain(configs).range([0, x0.bandwidth()]).padding(0.05);
-        const color = d3.scaleOrdinal().domain(configs).range(COLORS);
+        // Map configs to their model_type for semantic coloring
+        const configModelMap = {};
+        configs.forEach(c => { configModelMap[c] = c.split('_')[0]; });
+        const color = d3.scaleOrdinal().domain(configs).range(
+            configs.map(c => MODEL_COLORS[configModelMap[c]] || COLORS[configs.indexOf(c) % COLORS.length])
+        );
 
         // Dynamic Y domain: zoom in for high-precision metrics
         const [extMin, extMax] = d3.extent(filtered, d => d.best_value);

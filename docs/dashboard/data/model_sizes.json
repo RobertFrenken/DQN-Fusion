@@ -1,42 +1,5 @@
 {
   "schema_version": "1.0.0",
-  "exported_at": "2026-02-16T18:04:21.196868+00:00",
-  "data": [
-    {
-      "model_type": "vgae",
-      "scale": "large",
-      "param_count": 185850,
-      "param_count_M": 0.186
-    },
-    {
-      "model_type": "vgae",
-      "scale": "small",
-      "param_count": 9186,
-      "param_count_M": 0.009
-    },
-    {
-      "model_type": "gat",
-      "scale": "large",
-      "param_count": 311138,
-      "param_count_M": 0.311
-    },
-    {
-      "model_type": "gat",
-      "scale": "small",
-      "param_count": 49202,
-      "param_count_M": 0.049
-    },
-    {
-      "model_type": "dqn",
-      "scale": "large",
-      "param_count": 689493,
-      "param_count_M": 0.689
-    },
-    {
-      "model_type": "dqn",
-      "scale": "small",
-      "param_count": 32341,
-      "param_count_M": 0.032
-    }
-  ]
+  "exported_at": "2026-02-17T00:39:14.351684+00:00",
+  "data": []
 }

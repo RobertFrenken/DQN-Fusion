@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "exported_at": "2026-02-16T20:09:24.934132+00:00",
+  "exported_at": "2026-02-17T00:39:13.857289+00:00",
   "data": [
     {
       "model": "gat",
@@ -210,7 +210,7 @@
       "model": "vgae",
       "scenario": "test_01_known_vehicle_known_attack",
       "metric_name": "pr_auc",
-      "value": 0.9953622231990336
+      "value": 0.9953622231990334
     },
     {
       "model": "fusion",
@@ -834,7 +834,7 @@
       "model": "vgae",
       "scenario": "test_03_known_vehicle_unknown_attack",
       "metric_name": "pr_auc",
-      "value": 0.7706727517403904
+      "value": 0.7706727517403903
     },
     {
       "model": "fusion",

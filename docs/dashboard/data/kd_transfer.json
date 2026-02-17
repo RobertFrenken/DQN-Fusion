@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "exported_at": "2026-02-16T20:09:25.031878+00:00",
+  "exported_at": "2026-02-17T00:39:13.986453+00:00",
   "data": [
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",
@@ -59,8 +59,8 @@
       "student_scale": "small",
       "teacher_run": "hcrl_ch/eval_large_evaluation",
       "metric_name": "auc",
-      "student_value": 0.999678,
-      "teacher_value": 0.999556
+      "student_value": 0.999688,
+      "teacher_value": 0.999453
     },
     {
       "student_run": "hcrl_ch/eval_small_evaluation_kd",

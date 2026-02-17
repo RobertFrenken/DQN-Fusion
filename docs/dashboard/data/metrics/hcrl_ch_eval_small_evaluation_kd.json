@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "exported_at": "2026-02-16T20:09:24.920831+00:00",
+  "exported_at": "2026-02-17T00:39:13.831448+00:00",
   "data": [
     {
       "model": "gat",
@@ -30,13 +30,13 @@
       "model": "vgae",
       "scenario": "test_01_DoS",
       "metric_name": "auc",
-      "value": 0.956236207485933
+      "value": 0.9562361869376605
     },
     {
       "model": "fusion",
       "scenario": "test_01_DoS",
       "metric_name": "auc",
-      "value": 0.999817017635267
+      "value": 0.9997261942717498
     },
     {
       "model": "gat",
@@ -210,13 +210,13 @@
       "model": "vgae",
       "scenario": "test_01_DoS",
       "metric_name": "pr_auc",
-      "value": 0.9256509616732971
+      "value": 0.9256509336498921
     },
     {
       "model": "fusion",
       "scenario": "test_01_DoS",
       "metric_name": "pr_auc",
-      "value": 0.9998479625460214
+      "value": 0.9997055303308782
     },
     {
       "model": "gat",
@@ -276,7 +276,7 @@
       "model": "vgae",
       "scenario": "test_01_DoS",
       "metric_name": "threshold_from_val",
-      "value": 0.035462748259305954
+      "value": 0.03546275198459625
     },
     {
       "model": "gat",
@@ -342,13 +342,13 @@
       "model": "vgae",
       "scenario": "test_02_fuzzing",
       "metric_name": "auc",
-      "value": 0.9998047158635841
+      "value": 0.999804715863584
     },
     {
       "model": "fusion",
       "scenario": "test_02_fuzzing",
       "metric_name": "auc",
-      "value": 0.9997653065956937
+      "value": 0.9996995443824052
     },
     {
       "model": "gat",
@@ -528,7 +528,7 @@
       "model": "fusion",
       "scenario": "test_02_fuzzing",
       "metric_name": "pr_auc",
-      "value": 0.9998477458668446
+      "value": 0.999809271446691
     },
     {
       "model": "gat",
@@ -588,7 +588,7 @@
       "model": "vgae",
       "scenario": "test_02_fuzzing",
       "metric_name": "threshold_from_val",
-      "value": 0.035462748259305954
+      "value": 0.03546275198459625
     },
     {
       "model": "gat",
@@ -642,7 +642,7 @@
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "accuracy",
-      "value": 0.9987996398919676
+      "value": 0.9986996098829649
     },
     {
       "model": "gat",
@@ -654,13 +654,13 @@
       "model": "vgae",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "auc",
-      "value": 0.8092345398510549
+      "value": 0.809234539851055
     },
     {
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "auc",
-      "value": 0.9988285198598346
+      "value": 0.9989767490333926
     },
     {
       "model": "gat",
@@ -678,7 +678,7 @@
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "balanced_accuracy",
-      "value": 0.9989157932779182
+      "value": 0.9988037610126259
     },
     {
       "model": "gat",
@@ -714,7 +714,7 @@
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "f1",
-      "value": 0.9989146164978292
+      "value": 0.9988242742154292
     },
     {
       "model": "gat",
@@ -750,7 +750,7 @@
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "fpr",
-      "value": 0.0
+      "value": 0.00022406453058480843
     },
     {
       "model": "gat",
@@ -768,7 +768,7 @@
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "kappa",
-      "value": 0.9975720378027343
+      "value": 0.9973696506040032
     },
     {
       "model": "gat",
@@ -786,7 +786,7 @@
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "mcc",
-      "value": 0.9975749781595309
+      "value": 0.9973721209245683
     },
     {
       "model": "gat",
@@ -834,13 +834,13 @@
       "model": "vgae",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "pr_auc",
-      "value": 0.8124495761525918
+      "value": 0.8124495543978321
     },
     {
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "pr_auc",
-      "value": 0.9993822785272546
+      "value": 0.9994443090650168
     },
     {
       "model": "gat",
@@ -858,7 +858,7 @@
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "precision",
-      "value": 1.0
+      "value": 0.9998189389824371
     },
     {
       "model": "gat",
@@ -894,13 +894,13 @@
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "specificity",
-      "value": 1.0
+      "value": 0.9997759354694152
     },
     {
       "model": "vgae",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "threshold_from_val",
-      "value": 0.035462748259305954
+      "value": 0.03546275198459625
     },
     {
       "model": "gat",
@@ -918,7 +918,7 @@
       "model": "fusion",
       "scenario": "test_03_gear_spoofing",
       "metric_name": "tnr",
-      "value": 1.0
+      "value": 0.9997759354694152
     },
     {
       "model": "gat",
@@ -954,7 +954,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "accuracy",
-      "value": 0.9997999399819946
+      "value": 0.9998999699909973
     },
     {
       "model": "gat",
@@ -966,13 +966,13 @@
       "model": "vgae",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "auc",
-      "value": 0.9180090045929954
+      "value": 0.9180090449036455
     },
     {
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "auc",
-      "value": 0.9999156902755394
+      "value": 0.999929819158362
     },
     {
       "model": "gat",
@@ -990,7 +990,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "balanced_accuracy",
-      "value": 0.9998154981549816
+      "value": 0.9999077490774908
     },
     {
       "model": "gat",
@@ -1008,7 +1008,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "detection_rate",
-      "value": 0.9996309963099631
+      "value": 0.9998154981549815
     },
     {
       "model": "gat",
@@ -1026,7 +1026,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "f1",
-      "value": 0.999815464107769
+      "value": 0.9999077405664729
     },
     {
       "model": "gat",
@@ -1044,7 +1044,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "fnr",
-      "value": 0.00036900369003690036
+      "value": 0.00018450184501845018
     },
     {
       "model": "gat",
@@ -1080,7 +1080,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "kappa",
-      "value": 0.9995970281257599
+      "value": 0.9997985106395029
     },
     {
       "model": "gat",
@@ -1098,7 +1098,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "mcc",
-      "value": 0.9995971092862169
+      "value": 0.9997985309343946
     },
     {
       "model": "gat",
@@ -1116,7 +1116,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "miss_rate",
-      "value": 0.00036900369003690036
+      "value": 0.00018450184501845018
     },
     {
       "model": "gat",
@@ -1146,13 +1146,13 @@
       "model": "vgae",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "pr_auc",
-      "value": 0.9176473281718885
+      "value": 0.9176473565585369
     },
     {
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "pr_auc",
-      "value": 0.9999480822242328
+      "value": 0.9999584977129825
     },
     {
       "model": "gat",
@@ -1188,7 +1188,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "recall",
-      "value": 0.9996309963099631
+      "value": 0.9998154981549815
     },
     {
       "model": "gat",
@@ -1212,7 +1212,7 @@
       "model": "vgae",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "threshold_from_val",
-      "value": 0.035462748259305954
+      "value": 0.03546275198459625
     },
     {
       "model": "gat",
@@ -1248,7 +1248,7 @@
       "model": "fusion",
       "scenario": "test_04_rpm_spoofing",
       "metric_name": "tpr",
-      "value": 0.9996309963099631
+      "value": 0.9998154981549815
     },
     {
       "model": "gat",
@@ -1278,13 +1278,13 @@
       "model": "vgae",
       "scenario": "val",
       "metric_name": "auc",
-      "value": 0.8640262023721179
+      "value": 0.864026205190438
     },
     {
       "model": "fusion",
       "scenario": "val",
       "metric_name": "auc",
-      "value": 0.9996781224893172
+      "value": 0.9996878118735314
     },
     {
       "model": "gat",
@@ -1452,7 +1452,7 @@
       "model": "vgae",
       "scenario": "val",
       "metric_name": "optimal_threshold",
-      "value": 0.035462748259305954
+      "value": 0.03546275198459625
     },
     {
       "model": "gat",
@@ -1464,13 +1464,13 @@
       "model": "vgae",
       "scenario": "val",
       "metric_name": "pr_auc",
-      "value": 0.7561650895713661
+      "value": 0.7561650999976426
     },
     {
       "model": "fusion",
       "scenario": "val",
       "metric_name": "pr_auc",
-      "value": 0.9996816930286822
+      "value": 0.9996734070453062
     },
     {
       "model": "gat",

@@ -262,8 +262,18 @@ export class PanelManager {
         let data = await this._loadPanelData(panel);
         if (data !== null) {
             const options = this._gatherOptions(panel);
+            if (panel.preTransform) {
+                data = panel.preTransform(data);
+            }
             this._mergeDataOptions(data, options);
-            chart.update(data, options);
+            if (panel.renderMethod && typeof chart[panel.renderMethod] === 'function') {
+                chart._lastData = data;
+                chart._lastOptions = options;
+                chart._setupSVG();
+                chart[panel.renderMethod](data, options);
+            } else {
+                chart.update(data, options);
+            }
         }
     }
 
@@ -302,6 +312,21 @@ export class PanelManager {
             if (!runId) return null;
             const fname = runId.replace(/\//g, '_') + '.json';
             return this._loadCached('training_curves/' + fname);
+        }
+
+        if (panel.dynamicLoader === 'training_curves_compare') {
+            const runA = options._runA;
+            const runB = options._runB;
+            if (!runA) return null;
+            const runs = [];
+            for (const rid of [runA, runB]) {
+                if (!rid) continue;
+                const fname = rid.replace(/\//g, '_') + '.json';
+                const pts = await this._loadCached('training_curves/' + fname);
+                if (pts && pts.length > 0) runs.push({ run_id: rid, points: pts });
+            }
+            if (runs.length === 0) return null;
+            return { runs };
         }
 
         if (panel.dynamicLoader === 'embeddings_vgae' || panel.dynamicLoader === 'embeddings_gat') {
@@ -602,10 +627,24 @@ export class PanelManager {
         if (options._dataset_filter && Array.isArray(data)) {
             data = data.filter(d => d.dataset === options._dataset_filter);
         }
+        // Apply stage filter if present
+        if (options._stage_filter && Array.isArray(data)) {
+            data = data.filter(d => d._stage === options._stage_filter);
+        }
 
         if (data !== null) {
+            if (panel.preTransform) {
+                data = panel.preTransform(data);
+            }
             this._mergeDataOptions(data, options);
-            chart.update(data, options);
+            if (panel.renderMethod && typeof chart[panel.renderMethod] === 'function') {
+                chart._lastData = data;
+                chart._lastOptions = options;
+                chart._setupSVG();
+                chart[panel.renderMethod](data, options);
+            } else {
+                chart.update(data, options);
+            }
         }
     }
 

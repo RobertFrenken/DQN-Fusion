@@ -96,6 +96,86 @@ export const PANELS = [
         ],
     },
     {
+        id: 'training-compare',
+        title: 'Training Curve Comparison',
+        description: 'Overlay training curves from two runs to compare convergence',
+        chartType: 'line',
+        dataSource: null,
+        dynamicLoader: 'training_curves_compare',
+        renderMethod: 'renderMultiRun',
+        controls: [
+            {
+                type: 'select', id: 'tcc-metric', label: 'Metric',
+                options: [
+                    { value: 'val_loss', label: 'Val Loss' },
+                    { value: 'train_loss', label: 'Train Loss' },
+                    { value: 'val_loss,train_loss', label: 'Train + Val Loss' },
+                    { value: 'val_acc', label: 'Val Accuracy' },
+                    { value: 'val_acc,train_acc', label: 'Train + Val Acc' },
+                ],
+                default: 'val_loss',
+                mapTo: 'metric',
+            },
+            {
+                type: 'select', id: 'tcc-runA', label: 'Run A',
+                options: [],
+                runSource: true,
+                filterStages: ['autoencoder', 'curriculum', 'fusion'],
+                mapTo: '_runA',
+            },
+            {
+                type: 'select', id: 'tcc-runB', label: 'Run B',
+                options: [],
+                runSource: true,
+                filterStages: ['autoencoder', 'curriculum', 'fusion'],
+                mapTo: '_runB',
+            },
+        ],
+    },
+    {
+        id: 'training-duration',
+        title: 'Training Duration',
+        description: 'Wall-clock training time per model configuration',
+        chartType: 'bar',
+        dataSource: 'runs.json',
+        preTransform: (runs) => {
+            return runs
+                .filter(r => r.started_at && r.completed_at && r.status === 'complete')
+                .map(r => {
+                    const ms = new Date(r.completed_at) - new Date(r.started_at);
+                    const minutes = Math.round(ms / 60000 * 10) / 10;
+                    return {
+                        dataset: r.dataset,
+                        model_type: r.model_type,
+                        scale: r.scale,
+                        metric_name: 'duration_min',
+                        best_value: minutes,
+                        _stage: r.stage,
+                    };
+                });
+        },
+        controls: [
+            {
+                type: 'select', id: 'td-metric', label: 'Metric',
+                options: [{ value: 'duration_min', label: 'Duration (min)' }],
+                default: 'duration_min',
+                mapTo: 'metric',
+            },
+            {
+                type: 'select', id: 'td-stage', label: 'Stage',
+                options: [
+                    { value: '', label: 'All' },
+                    { value: 'autoencoder', label: 'Autoencoder' },
+                    { value: 'curriculum', label: 'Curriculum' },
+                    { value: 'fusion', label: 'Fusion' },
+                    { value: 'evaluation', label: 'Evaluation' },
+                ],
+                default: '',
+                mapTo: '_stage_filter',
+            },
+        ],
+    },
+    {
         id: 'run-timeline',
         title: 'Run Timeline',
         description: 'Experiment runs over time',
