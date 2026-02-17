@@ -42,8 +42,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description="KD-GAT training pipeline",
     )
     p.add_argument(
-        "stage", choices=list(STAGES.keys()) + ["state"],
-        help="Training stage to run (or 'state' to update STATE.md)",
+        "stage", choices=list(STAGES.keys()) + ["state", "flow"],
+        help="Training stage to run, 'state' to update STATE.md, or 'flow' to run Prefect pipeline",
     )
 
     # Config source
@@ -70,6 +70,12 @@ def _build_parser() -> argparse.ArgumentParser:
     # KD shorthand: --teacher-path sets auxiliaries + model_path
     p.add_argument("--teacher-path", type=str, default=None,
                     help="Shorthand: implies kd_standard aux with given model_path")
+
+    # Flow subcommand options
+    p.add_argument("--eval-only", action="store_true", default=False,
+                    help="(flow) Re-run evaluation only, skip training")
+    p.add_argument("--local", action="store_true", default=False,
+                    help="(flow) Use local Dask cluster instead of SLURM")
 
     # Nested overrides via dot-path: --training.lr 0.001, --vgae.latent-dim 16
     p.add_argument("--override", "-O", nargs=2, action="append", default=[],
@@ -101,6 +107,35 @@ def _parse_dot_overrides(pairs: list[list[str]]) -> dict:
             d = d.setdefault(p, {})
         d[parts[-1]] = typed_value
     return result
+
+
+def _run_flow(args: argparse.Namespace, log: logging.Logger) -> None:
+    """Dispatch Prefect flow (train or eval-only).
+
+    --scale filters to a single variant (large, small_kd, small_nokd).
+    Without --scale, all variants run.  The argparse default "large" is
+    for single-stage dispatch; for flows, we treat it as "run all" unless
+    the user explicitly passes a flow-relevant scale value.
+    """
+    datasets = [args.dataset] if args.dataset else None
+
+    # Detect if --scale was explicitly provided on the CLI
+    # (argparse default is "large", which we ignore for flow mode)
+    _flow_scales = ("large", "small_kd", "small_nokd")
+    scale = args.scale if args.scale in _flow_scales else None
+    # Check if user actually passed --scale or if it's the default
+    import sys
+    if "--scale" not in sys.argv:
+        scale = None
+
+    if args.eval_only:
+        from .flows.eval_flow import eval_pipeline
+        log.info("Starting Prefect evaluation flow (datasets=%s, scale=%s)", datasets, scale)
+        eval_pipeline(datasets=datasets, scale=scale)
+    else:
+        from .flows.train_flow import train_pipeline
+        log.info("Starting Prefect training flow (datasets=%s, scale=%s)", datasets, scale)
+        train_pipeline(datasets=datasets, scale=scale)
 
 
 def _init_wandb(cfg: PipelineConfig, stage: str, run_name: str):
@@ -172,6 +207,10 @@ def main(argv: list[str] | None = None) -> None:
         from .state_sync import update_state
         update_state(preview=False)
         log.info("STATE.md updated")
+        return
+
+    if args.stage == "flow":
+        _run_flow(args, log)
         return
 
     # ---- Build config ----

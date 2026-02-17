@@ -22,6 +22,7 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.0.0"]
+orchestration = ["prefect>=3.0", "prefect-dask>=0.3", "dask-jobqueue>=0.9"]
 
 [project.scripts]
 kd-gat = "pipeline.cli:main"
