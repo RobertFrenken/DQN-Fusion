@@ -11,6 +11,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.loggers import CSVLogger, WandbLogger
 from torch_geometric.loader import DataLoader, DynamicBatchSampler
 
 from config import PipelineConfig, stage_dir, checkpoint_path, config_path, data_dir, cache_dir
@@ -527,6 +528,32 @@ def build_optimizer_dict(optimizer, cfg: PipelineConfig):
 # Trainer factory
 # ---------------------------------------------------------------------------
 
+def _make_loggers(
+    cfg: PipelineConfig,
+    stage: str,
+    out: Path,
+    run_id_str: str,
+) -> list:
+    """Build Lightning loggers: CSV (always) + W&B (when available).
+
+    If a W&B run is already active (initialized by cli.py), the WandbLogger
+    attaches to it instead of creating a new run.
+    """
+    loggers: list = [CSVLogger(save_dir=str(out), name="csv_logs")]
+
+    try:
+        import wandb
+        if wandb.run is not None:
+            # Attach to existing run started by cli.py
+            loggers.append(WandbLogger(experiment=wandb.run))
+        else:
+            log.debug("No active wandb run — WandbLogger skipped in trainer")
+    except ImportError:
+        log.debug("wandb not installed — skipping WandbLogger")
+
+    return loggers
+
+
 def make_trainer(
     cfg: PipelineConfig,
     stage: str,
@@ -567,6 +594,7 @@ def make_trainer(
                 run_id=rid,
             ),
         ],
+        logger=_make_loggers(cfg, stage, out, rid),
         log_every_n_steps=t.log_every_n_steps,
         enable_progress_bar=True,
         deterministic=t.deterministic,

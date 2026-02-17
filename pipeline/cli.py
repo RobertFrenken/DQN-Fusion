@@ -103,6 +103,60 @@ def _parse_dot_overrides(pairs: list[list[str]]) -> dict:
     return result
 
 
+def _init_wandb(cfg: PipelineConfig, stage: str, run_name: str):
+    """Initialize a W&B run. Returns the run object, or None on failure."""
+    try:
+        import wandb
+    except ImportError:
+        return None
+
+    # Offline mode on SLURM compute nodes (no internet); sync later via onsuccess
+    if _ON_COMPUTE_NODE and not os.environ.get("WANDB_MODE"):
+        os.environ["WANDB_MODE"] = "offline"
+
+    try:
+        return wandb.init(
+            project="kd-gat",
+            name=run_name,
+            config=cfg.model_dump(),
+            tags=[cfg.dataset, cfg.model_type, cfg.scale, stage],
+            reinit=True,
+        )
+    except Exception as e:
+        logging.getLogger("pipeline").warning("wandb.init() failed: %s", e)
+        return None
+
+
+def _wandb_log_metrics(result: dict) -> None:
+    """Log final result metrics to the active W&B run."""
+    try:
+        import wandb
+        if wandb.run is None:
+            return
+        flat: dict[str, float] = {}
+        for model_key, model_metrics in result.items():
+            if model_key == "test":
+                continue  # test metrics are nested differently
+            if isinstance(model_metrics, dict) and "core" in model_metrics:
+                for k, v in model_metrics["core"].items():
+                    if isinstance(v, (int, float)):
+                        flat[f"{model_key}/{k}"] = v
+        if flat:
+            wandb.log(flat)
+    except Exception:
+        pass
+
+
+def _finish_wandb() -> None:
+    """Finish the active W&B run if one exists."""
+    try:
+        import wandb
+        if wandb.run is not None:
+            wandb.finish()
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -206,6 +260,9 @@ def main(argv: list[str] | None = None) -> None:
         )
     log.info("Run started: %s", run_name)
 
+    # ---- W&B init ----
+    _wandb_run = _init_wandb(cfg, args.stage, run_name)
+
     # ---- Dispatch ----
     try:
         from .stages import STAGE_FNS
@@ -215,6 +272,11 @@ def main(argv: list[str] | None = None) -> None:
         if not _ON_COMPUTE_NODE:
             record_run_end(run_name, success=True,
                            metrics=result if isinstance(result, dict) else None)
+
+        # Log final metrics to W&B
+        if _wandb_run is not None and isinstance(result, dict):
+            _wandb_log_metrics(result)
+
         log.info("Run completed successfully")
 
     except Exception as e:
@@ -222,6 +284,9 @@ def main(argv: list[str] | None = None) -> None:
             record_run_end(run_name, success=False)
         log.error("Run failed: %s", str(e))
         raise
+
+    finally:
+        _finish_wandb()
 
 
 if __name__ == "__main__":
