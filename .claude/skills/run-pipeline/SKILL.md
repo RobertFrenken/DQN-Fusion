@@ -1,69 +1,57 @@
 ---
 name: run-pipeline
-description: Run Snakemake pipeline for a dataset and model configuration
+description: Run Prefect pipeline flow for a dataset and model configuration
 ---
 
-Run the KD-GAT Snakemake pipeline.
+Run the KD-GAT Prefect pipeline.
 
 ## Arguments
 
-`$ARGUMENTS` should contain: `<dataset> [target]`
+`$ARGUMENTS` should contain: `<dataset> [scale]`
 
 - **dataset** (required): `hcrl_sa`, `hcrl_ch`, `set_01`, `set_02`, `set_03`, `set_04`
-- **target** (optional): `small_nokd`, `large`, `small_kd`, or a specific rule like `dqn_large`
+- **scale** (optional): `large`, `small_kd`, `small_nokd`
 
-Parse the dataset and target from `$ARGUMENTS`. If only one word is provided, it is the dataset and no target filter is applied.
+Parse the dataset and scale from `$ARGUMENTS`. If only one word is provided, it is the dataset and all scales run.
 
 ## Usage Examples
 
 ```
-/run-pipeline hcrl_sa small_nokd     # Run small without KD for hcrl_sa
-/run-pipeline hcrl_ch large          # Run large pipeline for hcrl_ch
-/run-pipeline set_01                 # Run all targets for set_01
+/run-pipeline hcrl_sa large          # Run large pipeline for hcrl_sa
+/run-pipeline hcrl_ch                # Run all scales for hcrl_ch
+/run-pipeline set_01 small_kd        # Run small with KD for set_01
 ```
 
 ## Execution Steps
 
-1. **Parse arguments** from `$ARGUMENTS` into dataset and optional target.
+1. **Parse arguments** from `$ARGUMENTS` into dataset and optional scale.
 
 2. **Verify dataset exists**
    ```bash
    ls data/automotive/<dataset>/
    ```
 
-3. **Dry run first** to see what will be executed. If a target is given, use it as a Snakemake rule name. If no target, run the full DAG for that dataset.
+3. **Submit Prefect flow** with appropriate arguments:
    ```bash
-   PYTHONPATH=. snakemake -s pipeline/Snakefile --config "datasets=[\"<dataset>\"]" <target> -n 2>&1 | head -50
+   PYTHONPATH=. python -m pipeline.cli flow --dataset <dataset> [--scale <scale>]
    ```
+   If running on login node, add `--local` for local Dask execution (no SLURM).
 
-4. **Submit to SLURM** if dry run looks correct
-   ```bash
-   PYTHONPATH=. snakemake -s pipeline/Snakefile --config "datasets=[\"<dataset>\"]" --profile profiles/slurm
-   ```
+4. **Report the status** and show how to monitor with `squeue -u $USER`.
 
-5. **Report the submitted job IDs** and show how to monitor with `squeue -u $USER`.
+## Common Scales
 
-## Common Targets
-
-| Target | Description | Output |
-|--------|-------------|--------|
-| `large` | Full large pipeline (all datasets) | 3 stages per dataset |
-| `small_nokd` | Small without KD (all datasets) | 3 stages per dataset |
-| `small_kd` | Small with KD (all datasets, needs large) | 3 stages per dataset |
-| `evaluate_all` | Evaluation for all 3 variants | Metrics JSON per dataset |
-| `vgae_large` | Single rule: VGAE large autoencoder | 1 stage |
-| `gat_small_kd` | Single rule: GAT small with KD | 1 stage |
-| `dqn_large` | Single rule: DQN large fusion | 1 stage |
+| Scale | Description | Dependencies |
+|-------|-------------|--------------|
+| `large` | Full large pipeline (VGAE → GAT → DQN) | None |
+| `small_kd` | Small with KD (needs large teacher) | large must complete first |
+| `small_nokd` | Small without KD | None |
+| (no scale) | All three scales | Runs large first, then small variants |
 
 ## Notes
 
-- Pipeline runs on SLURM with GPU resources (V100, 128GB RAM scaling to 256GB on retry)
-- SLURM logs: `slurm_logs/<jobid>-<rule>.{out,err}`
-- Per-rule logs: `experimentruns/{ds}/{model}_{scale}_{stage}[_{aux}]/log.{out,err}`
-- MLflow tracking is automatic
-- Write-through DB: runs are recorded in `data/project.db` before/after each stage
-- Preprocessing is cached between workflows (`SNAKEMAKE_OUTPUT_CACHE` on scratch)
-- Evaluation rules are grouped into single SLURM submissions
-- Training rules retry twice with doubled memory on failure
-- Snakefile needs `PYTHONPATH=.` to find the `config` package
-- Always do a dry run (`-n`) before submitting
+- Pipeline runs on SLURM with GPU resources (V100, via dask-jobqueue SLURMCluster)
+- W&B tracking is automatic (offline on compute nodes, sync later)
+- R2 lakehouse sync is fire-and-forget on run completion
+- Each stage runs as a subprocess for clean CUDA context
+- Prefect retries failed tasks twice with 30s delay

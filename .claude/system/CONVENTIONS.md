@@ -7,7 +7,7 @@
 - **Nested access only**: Use `cfg.vgae.latent_dim`, `cfg.training.lr`, `cfg.kd.temperature`. Never flat access.
 - **Auxiliaries**: KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
 - **Adding new config**: New model type → add `config/models/{name}/` dir with scale YAMLs + Architecture class in schema.py. New auxiliary → add `config/auxiliaries/{name}.yaml`.
-- **Write-through DB**: `cli.py` records runs directly to project DB. Don't rely on `populate()` as the primary data path.
+- **W&B tracking**: `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle. Lightning's `WandbLogger` attaches to the active run. R2 lakehouse sync is fire-and-forget.
 
 ## Import Rules (3-layer hierarchy)
 
@@ -18,7 +18,7 @@ Enforced by `tests/test_layer_boundaries.py`:
 3. **`src/`** (bottom): Imports `config.constants` for shared constants. Never imports from `pipeline/`.
 
 When adding new code:
-- Constants (window sizes, feature counts, DB paths) → `config/constants.py`
+- Constants (window sizes, feature counts, SLURM defaults) → `config/constants.py`
 - Hyperparameters → Pydantic models in `config/schema.py`
 - Architecture defaults → YAML files in `config/models/` or `config/auxiliaries/`
 - Path helpers → `config/paths.py`
@@ -44,7 +44,7 @@ This keeps the codebase lean. Every PR should leave the code cleaner than it was
 
 **If the same command fails twice for the same category of reason, STOP retrying and diagnose.**
 
-The instinct to tweak-and-retry is wrong. Two failures with the same shape (missing env, wrong path, permission error, Snakemake config conflict) means the problem is structural, not transient. Retrying with small variations wastes time and context window.
+The instinct to tweak-and-retry is wrong. Two failures with the same shape (missing env, wrong path, permission error, config conflict) means the problem is structural, not transient. Retrying with small variations wastes time and context window.
 
 Instead:
 1. **Name the pattern.** What category of failure is this? (env setup, path resolution, config incompatibility, NFS issue, etc.)
@@ -56,7 +56,7 @@ Instead:
 Examples of structural vs transient:
 - `command not found` → **structural** (env not loaded). Fix the invocation pattern, don't retry.
 - `sqlite3.OperationalError: disk I/O error` → **transient** (NFS contention). Retry is reasonable once.
-- Same Snakemake error across 3 different flag combinations → **structural**. Stop, read the Snakemake docs or error message, fix the rule definition.
+- Same Prefect/SLURM error across 3 different flag combinations → **structural**. Stop, read the docs or error message, fix the flow definition.
 
 ## Git
 
@@ -72,21 +72,18 @@ Examples of structural vs transient:
 # Required prefix for ALL Python/Snakemake commands:
 export PATH="$HOME/.conda/envs/gnn-experiments/bin:$PATH"
 export PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT:$PYTHONPATH
-export SNAKEMAKE_OUTPUT_CACHE=/fs/scratch/PAS1266/snakemake-cache
 
 # Then run the actual command:
-snakemake -s pipeline/Snakefile --profile profiles/slurm ...
 python -m pipeline.cli ...
+python -m pipeline.cli flow --dataset hcrl_sa
 python -m pytest tests/ -v
 ```
 
 **Common failures without this:**
-- `bash: snakemake: command not found` → missing PATH
 - `ModuleNotFoundError: No module named 'config'` → missing PYTHONPATH
-- `WorkflowError: no cache location specified` → missing SNAKEMAKE_OUTPUT_CACHE
 - `ModuleNotFoundError: No module named 'torch'` → missing PATH (system Python has no ML packages)
 
-For SLURM-submitted jobs, the shell commands in Snakefile rules run inside `module load miniconda3/24.1.2-py310 && source activate gnn-experiments` (set in `profiles/slurm/config.yaml`), so they don't need manual PATH setup.
+For Prefect-submitted SLURM jobs, the dask-jobqueue SLURMCluster handles environment setup via `job_script_prologue` in `pipeline/flows/slurm_config.py`.
 
 ## HPC / SLURM
 
@@ -96,7 +93,6 @@ For SLURM-submitted jobs, the shell commands in Snakefile rules run inside `modu
 - Heavy tests use `@pytest.mark.slurm` — auto-skipped on login nodes, run via `scripts/run_tests_slurm.sh`.
 - **Always run tests via SLURM** (`cpu` partition, 8 CPUs, 16GB) — login nodes are too slow (tests take 2-5 min on SLURM vs 10+ min on login). Submit with: `sbatch --account=PAS3209 --partition=cpu --time=15 --mem=16G --cpus-per-task=8 --job-name=pytest --output=slurm_logs/%j-pytest.out --wrap='module load miniconda3/24.1.2-py310 && source activate gnn-experiments && cd /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT && python -m pytest tests/ -v'`
 - Note: `serial` partition no longer exists on OSC Pitzer — all scripts now use `cpu` partition.
-- SQLite uses WAL mode + 15s busy timeout + retry decorator for concurrent SLURM job writes.
 
 ## Session Management
 

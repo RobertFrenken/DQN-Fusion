@@ -30,9 +30,10 @@ Check the status of experiments and running jobs.
    ls -lt slurm_logs/*.err 2>/dev/null | head -10
    ```
 
-4. **Check project DB for run status** (write-through records from cli.py)
+4. **Check W&B for recent runs** (if available)
    ```bash
-   python -m pipeline.db query "SELECT run_id, stage, status, started_at FROM runs ORDER BY started_at DESC LIMIT 10"
+   # List offline W&B runs pending sync
+   ls -dt wandb/run-* 2>/dev/null | head -5
    ```
 
 5. **If dataset specified via `$ARGUMENTS`**, show detailed status:
@@ -40,7 +41,6 @@ Check the status of experiments and running jobs.
    ls -la experimentruns/$ARGUMENTS/*/best_model.pt 2>/dev/null
    ls -la experimentruns/$ARGUMENTS/*/config.json 2>/dev/null
    ls -la experimentruns/$ARGUMENTS/*/metrics.json 2>/dev/null
-   python -m pipeline.db query "SELECT run_id, stage, status FROM runs WHERE dataset='$ARGUMENTS'"
    ```
 
 ## Output Summary
@@ -62,8 +62,8 @@ Provide a concise status report:
 watch -n 5 'squeue -u $USER'
 
 # Follow specific SLURM log
-tail -f slurm_logs/<jobid>-<rule>.err
+tail -f slurm_logs/<jobid>.err
 
-# Check Snakemake DAG status
-PYTHONPATH=. snakemake -s pipeline/Snakefile --summary
+# Sync offline W&B runs
+wandb sync wandb/run-*
 ```

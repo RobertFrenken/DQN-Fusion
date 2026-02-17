@@ -15,7 +15,7 @@
 - **GitHub** (`gh` CLI) — Query papers repo, lab-setup-guide repo
 - **WebFetch** — Access osu-car-msl.github.io for existing documentation
 - **Consensus** — Find citations for claims and comparisons
-- **Project DB** — Query metrics for results tables
+- **W&B** — Query metrics for results tables
 
 ## Writing Tasks
 
@@ -33,16 +33,14 @@
 ## Useful Queries
 
 ```bash
-# Get metrics for results table
-python -m pipeline.analytics leaderboard --metric f1 --top 20
-python -m pipeline.analytics compare <run_a> <run_b>
+# Get metrics from experiment runs
+python -m pipeline.export   # Generates leaderboard, metrics JSON
 
-# Get model sizes for compression ratio table
-python -m pipeline.analytics memory --model vgae
-python -m pipeline.analytics memory --model gat
+# Browse W&B project for detailed metrics
+# https://wandb.ai/ → project kd-gat
 
-# Dataset statistics
-python -m pipeline.analytics dataset hcrl_sa
+# Export dashboard data for visualization
+bash scripts/export_dashboard.sh --dry-run
 ```
 
 ## Suppressed Topics

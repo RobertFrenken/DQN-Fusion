@@ -43,12 +43,11 @@
 
 - `src/models/` — Current architecture implementations
 - `experimentruns/` — Existing results for comparison
-- `USER_NOTES.md` — User's open questions and concerns
 
 ## Suppressed Topics
 
 Do NOT initiate discussion about:
-- Pipeline configuration or Snakemake debugging
+- Pipeline configuration or Prefect/SLURM debugging
 - Permission rules or Claude settings
 - Infrastructure setup
 - Unless the user explicitly asks

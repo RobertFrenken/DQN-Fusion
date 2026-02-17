@@ -4,7 +4,7 @@
 
 ## What This Is
 
-CAN bus intrusion detection via knowledge distillation. Large models (VGAE → GAT → DQN fusion) are compressed into small models via KD auxiliaries. Runs on OSC HPC via Snakemake/SLURM.
+CAN bus intrusion detection via knowledge distillation. Large models (VGAE → GAT → DQN fusion) are compressed into small models via KD auxiliaries. Runs on OSC HPC via Prefect/SLURM with W&B tracking.
 
 ## Architecture
 
@@ -24,8 +24,8 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
 - `schema.py` — Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`, `PreprocessingConfig`. Legacy flat JSON loading via `_from_legacy_flat()` (for old config.json files — all dirs now use new naming).
 - `resolver.py` — YAML composition: `resolve(model_type, scale, auxiliaries="none", **cli_overrides)`, `list_models()`, `list_auxiliaries()`. Merge order: defaults → model_def → auxiliaries → CLI.
-- `paths.py` — Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`. String-based variants for Snakefile.
-- `constants.py` — Domain/infrastructure constants: feature counts, window sizes, DB paths, MLflow URI, memory limits
+- `paths.py` — Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`. String-based variants for flow tasks.
+- `constants.py` — Domain/infrastructure constants: feature counts, window sizes, SLURM defaults, memory limits
 - `__init__.py` — Re-exports for clean `from config import PipelineConfig, resolve, checkpoint_path` usage
 - `defaults.yaml` — Global baseline config values
 - `datasets.yaml` — Dataset catalog (6 automotive datasets)
@@ -34,21 +34,22 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
 ### Layer 2: `pipeline/` (orchestration — imports config/ freely, lazy imports from src/)
 
-- `cli.py` — Arg parser (`--model`/`--scale`/`--auxiliaries`), MLflow run lifecycle, write-through DB recording (propagates teacher_run for KD eval runs), `STAGE_FNS` dispatch
+- `cli.py` — Arg parser (`--model`/`--scale`/`--auxiliaries`), W&B run lifecycle (`wandb.init`/`wandb.finish`), R2 lakehouse sync, `STAGE_FNS` dispatch
 - `stages/` — Training logic split into modules:
   - `training.py` — VGAE (autoencoder) and GAT (curriculum) training
   - `fusion.py` — DQN fusion training (uses `cfg.dqn.*`, `cfg.fusion.*`)
   - `evaluation.py` — Multi-model evaluation and metrics; captures `embeddings.npz` (VGAE z-mean per graph, GAT hidden representations) and `dqn_policy.json` (alpha values + class breakdown) as artifacts
   - `modules.py` — PyTorch Lightning modules (uses `cfg.vgae.*`, `cfg.gat.*`, `cfg.training.*`)
-  - `utils.py` — Shared utilities: model loading with cross-model path resolution (`_cross_model_path`, `_STAGE_MODEL_TYPE`), batch size optimization, trainer construction
+  - `utils.py` — Shared utilities: model loading with cross-model path resolution (`_cross_model_path`, `_STAGE_MODEL_TYPE`), batch size optimization, trainer construction, WandbLogger setup
+- `flows/` — Prefect orchestration:
+  - `train_flow.py` — Full training DAG: preprocess → large pipeline → small_kd + small_nokd → evaluation
+  - `eval_flow.py` — Standalone evaluation flow (re-run evals without re-training)
+  - `slurm_config.py` — SLURMCluster configuration via dask-jobqueue
 - `validate.py` — Config validation (simplified — Pydantic handles field constraints)
-- `tracking.py` — MLflow integration: `setup_tracking()`, `start_run()`, `end_run()`, `log_failure()`
+- `tracking.py` — Memory monitoring utilities
 - `memory.py` — Memory monitoring and GPU/CPU optimization
-- `ingest.py` — CSV→Parquet ingestion, validation against `config/datasets.yaml`, dataset registration
-- `db.py` — SQLite project DB (`data/project.db`): WAL mode + busy timeout + foreign keys, schema (model_type/scale/has_kd) with indices on metrics/epoch_metrics, write-through `record_run_start()`/`record_run_end()`, backfill `populate()` (includes `_migrate_legacy_runs()` with stale entry cleanup, `_backfill_timestamps()` for started_at+completed_at, `_backfill_epoch_metrics()` from Lightning CSVs, `_backfill_teacher_run()`), CLI queries
-- `analytics.py` — Post-run analysis: sweep, leaderboard, compare, config_diff, dataset_summary
-- `migrate_paths.py` — Legacy path migration tool (`teacher_*/student_*` → new format). Also rewrites `teacher_path` in config.json files. Migration completed 2026-02-14 (70 dirs across 6 datasets).
-- `Snakefile` — Snakemake workflow (`--model`/`--scale`/`--auxiliaries` CLI, configurable DATASETS, `sys.executable` for Python path, onstart MLflow init, onsuccess DB populate + MLflow backup, preprocessing + test cache rules (240 min, cpu partition), retries with resource scaling, evaluation group jobs)
+- `lakehouse.py` — Fire-and-forget sync to Cloudflare R2 (structured metrics as Parquet)
+- `export.py` — Filesystem scanning → static JSON export for dashboard
 
 ### Layer 3: `src/` (domain — imports config.constants, never imports pipeline/)
 
@@ -108,22 +109,17 @@ cfg.active_arch        # Architecture config for active model_type
 
 ```
 config/datasets.yaml                # Dataset catalog (source of truth for dataset metadata)
-     ↓ (python -m pipeline.ingest)
-data/automotive/{dataset}/train_*/  →  data/parquet/{domain}/{dataset}/*.parquet
-     (raw CSVs, DVC-tracked)              (columnar, queryable via SQL)
-                                    →  data/cache/{dataset}/processed_graphs.pt
-                                          (PyG Data objects, DVC-tracked)
+     ↓
+data/automotive/{dataset}/train_*/  →  data/cache/{dataset}/processed_graphs.pt
+     (raw CSVs, DVC-tracked)              (PyG Data objects, DVC-tracked)
                                           + id_mapping.pkl
                                           + cache_metadata.json
                                           + test_*.pt (per-scenario test graphs)
-                                    →  data/project.db
-                                          (SQLite: datasets, runs, metrics tables)
 ```
 
 - 6 datasets: hcrl_ch, hcrl_sa, set_01-04
 - Cache auto-built on first access, validated via metadata on subsequent loads
-- All data versioned with DVC (remote: `/fs/scratch/PAS1266/can-graph-dvc`)
-- Project DB: write-through from `cli.py` (primary), backfill via `populate()` (recovery)
+- All data versioned with DVC (remotes: local scratch + Cloudflare R2)
 
 ## Models
 
@@ -154,29 +150,26 @@ Default config enables memory-efficient training:
 
 ## Experiment Management
 
-**Three-layer architecture**: Snakemake owns the filesystem (DAG orchestration), MLflow owns live tracking (params/metrics/UI), project DB owns structured results (queryable SQL).
+**Two-layer architecture**: W&B owns live tracking (params/metrics/UI), filesystem owns artifacts and frozen configs.
 
-**Filesystem** (NFS home, permanent — Snakemake-managed):
+**Filesystem** (NFS home, permanent):
 ```
 experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
-├── best_model.pt       # Snakemake DAG trigger
-├── config.json         # Frozen config (Pydantic JSON, also logged to MLflow)
-├── metrics.json        # Evaluation stage only (also logged as MLflow artifact)
+├── best_model.pt       # Model checkpoint
+├── config.json         # Frozen config (Pydantic JSON)
+├── metrics.json        # Evaluation stage only
 ├── embeddings.npz      # Evaluation artifact: VGAE z-mean + GAT hidden representations
 ├── dqn_policy.json     # Evaluation artifact: DQN alpha values + class breakdown
 ├── lightning_logs/     # Training logs (per-epoch metrics CSVs)
 ```
 
-**MLflow** (GPFS scratch, 90-day purge — auto-backed up to `~/backups/`):
-```
-/fs/scratch/PAS1266/kd_gat_mlflow/
-├── mlflow.db           # SQLite tracking DB
-```
+**W&B** (project `kd-gat`):
+- Online runs when network available, offline on SLURM compute nodes
+- Sync offline runs: `wandb sync wandb/run-*`
 
-**Project DB** (NFS home, permanent):
-```
-data/project.db         # SQLite: datasets, runs, metrics tables
-```
+**R2 Lakehouse** (Cloudflare):
+- Structured metrics as Parquet, queryable via DuckDB
+- Fire-and-forget sync from `pipeline/lakehouse.py`
 
 ## Dashboard Architecture
 
@@ -219,5 +212,5 @@ docs/dashboard/js/
 - **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge
 - **Git remote**: `git@github.com:RobertFrenken/DQN-Fusion.git` (SSH)
 - **Python**: conda env `gnn-experiments` (`module load miniconda3/24.1.2-py310 && conda activate gnn-experiments`)
-- **Key packages**: SQLite, Pandas, MLflow, PyArrow, Datasette, Pandera, Pydantic v2
+- **Key packages**: PyTorch, PyG, Lightning, Pydantic v2, W&B, Prefect
 - **SLURM account**: PAS3209, gpu partition, V100 GPUs
