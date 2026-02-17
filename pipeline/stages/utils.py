@@ -266,8 +266,11 @@ def make_dataloader(
     nw = _safe_num_workers(data, cfg)
 
     if max_num_nodes is not None:
+        # num_steps required so Lightning can call len(dataloader)
+        num_steps = max(1, len(data) // max(1, batch_size))
         sampler = DynamicBatchSampler(
             data, max_num=max_num_nodes, mode="node", shuffle=shuffle,
+            num_steps=num_steps,
         )
         return DataLoader(
             data,

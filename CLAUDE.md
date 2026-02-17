@@ -79,7 +79,7 @@ pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from
   tracking.py       # Memory monitoring utilities
   export.py         # Filesystem → static JSON export for dashboard
   memory.py         # GPU memory management
-  lakehouse.py      # Fire-and-forget sync to Cloudflare R2
+  lakehouse.py      # Fire-and-forget sync to S3 lakehouse
 src/                # Layer 3: Domain (models, training, preprocessing; imports config/)
   models/           # vgae.py, gat.py, dqn.py
   training/         # load_dataset(), load_test_scenarios(), graph caching
@@ -140,7 +140,7 @@ These fix real crashes -- do not violate:
 - Sub-configs: `cfg.vgae`, `cfg.gat`, `cfg.dqn`, `cfg.training`, `cfg.fusion` — nested Pydantic models. Always use nested access (`cfg.vgae.latent_dim`), never flat.
 - Auxiliaries: `cfg.auxiliaries` is a list of `AuxiliaryConfig`. KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
 - Constants: domain/infrastructure constants live in `config/constants.py` (not in PipelineConfig). Hyperparameters live in PipelineConfig.
-- Experiment tracking: W&B (online/offline) for live metrics + R2 lakehouse for structured Parquet. `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle; Lightning's `WandbLogger` attaches to the active run. Compute nodes auto-set `WANDB_MODE=offline`.
+- Experiment tracking: W&B (online/offline) for live metrics + S3 lakehouse for structured JSON. `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle; Lightning's `WandbLogger` attaches to the active run. Compute nodes auto-set `WANDB_MODE=offline`.
 - Orchestration: Prefect flows (`pipeline/flows/`) with `dask-jobqueue` SLURMCluster. `train_pipeline()` runs the full DAG per dataset; `eval_pipeline()` re-runs evaluation only. Each stage task dispatches via subprocess for clean CUDA context.
 - Dashboard: Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types inherit from it. `PanelManager` reads config → builds nav + panels + controls → lazy-loads data → renders. All chart types registered in `Registry`.
 - Dashboard data: `export.py` scans `experimentruns/` filesystem for `config.json` and `metrics.json` files. No database dependency. Artifacts (`embeddings.npz`, `dqn_policy.json`, etc.) are read directly from run directories.
@@ -154,7 +154,7 @@ These fix real crashes -- do not violate:
 - **Python**: conda `gnn-experiments` (PyTorch, PyG, Lightning, Pydantic v2, W&B, Prefect)
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
-- **Tracking**: W&B (project `kd-gat`) + Cloudflare R2 lakehouse (Parquet)
+- **Tracking**: W&B (project `kd-gat`) + S3 lakehouse (JSON on `s3://kd-gat/lakehouse/`)
 - **Dashboard**: https://robertfrenken.github.io/DQN-Fusion/ (GitHub Pages from `docs/`)
 
 ## Session Modes
@@ -182,11 +182,11 @@ Mode context files live in `.claude/system/modes/`. Switching modes loads the re
 
 ## Experiment Tracking
 
-Tracking uses W&B + Cloudflare R2 lakehouse:
+Tracking uses W&B + S3 lakehouse:
 - **W&B**: `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle. Lightning's `WandbLogger` attaches to the active run for per-epoch metrics. Compute nodes auto-set `WANDB_MODE=offline`; sync offline runs via `wandb sync wandb/run-*`.
-- **R2 Lakehouse**: `pipeline/lakehouse.py` POSTs structured metrics to Cloudflare R2 Pipeline endpoint (fire-and-forget). Requires `KD_GAT_LAKEHOUSE_URL` env var. Data lands as Parquet, queryable via DuckDB.
+- **S3 Lakehouse**: `pipeline/lakehouse.py` writes structured metrics as JSON to `s3://kd-gat/lakehouse/runs/{run_id}.json` via boto3 (fire-and-forget). Uses `KD_GAT_S3_BUCKET` env var (default: `kd-gat`). Queryable via DuckDB: `SELECT * FROM read_json('s3://kd-gat/lakehouse/runs/*.json')`.
 - **Artifacts**: Evaluation stage captures `embeddings.npz` (VGAE z-mean + GAT hidden layers) and `dqn_policy.json` (alpha values by class) — stored in run directories.
-- **Dashboard**: `python -m pipeline.export` scans `experimentruns/` filesystem to generate static JSON (leaderboard, metrics, training curves, KD transfer, datasets, runs, graph_samples, model_sizes, embeddings, dqn_policy); `scripts/export_dashboard.sh` commits + pushes to GitHub Pages + DVC push to R2.
+- **Dashboard**: `python -m pipeline.export` scans `experimentruns/` filesystem to generate static JSON (leaderboard, metrics, training curves, KD transfer, datasets, runs, graph_samples, model_sizes, embeddings, dqn_policy); `scripts/export_dashboard.sh` commits + pushes to GitHub Pages + syncs to S3 + DVC push.
 
 ## Detailed Documentation
 

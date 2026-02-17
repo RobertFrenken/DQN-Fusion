@@ -1,32 +1,27 @@
-"""Sync structured experiment results to Cloudflare R2 lakehouse.
+"""Sync structured experiment results to S3 lakehouse.
 
-Sends run metadata + metrics as JSON to a Cloudflare Pipeline endpoint,
-which auto-batches into Parquet on R2.  Non-blocking, fire-and-forget
-with retry — failures are logged but never crash the training pipeline.
+Writes run metadata + metrics as JSON to S3, one file per run.
+Non-blocking, fire-and-forget — failures are logged but never crash
+the training pipeline.
 
-Configuration via environment variables:
-    KD_GAT_LAKEHOUSE_URL   — Cloudflare Pipeline HTTP endpoint
-    KD_GAT_LAKEHOUSE_TOKEN — Bearer token for authentication
-
-If neither is set, sync is silently skipped (graceful no-op).
+Configuration:
+    KD_GAT_S3_BUCKET — S3 bucket name (default: "kd-gat")
+    AWS credentials via ~/.aws/credentials (standard boto3 chain)
 
 Downstream consumption:
-    duckdb -c "SELECT * FROM read_parquet('s3://kd-gat-data/runs/*.parquet')"
+    duckdb -c "SELECT * FROM read_json('s3://kd-gat/lakehouse/runs/*.json')"
 """
 from __future__ import annotations
 
+import json
 import logging
 import os
 from datetime import datetime, timezone
 
 log = logging.getLogger(__name__)
 
-_LAKEHOUSE_URL = os.environ.get("KD_GAT_LAKEHOUSE_URL", "")
-_LAKEHOUSE_TOKEN = os.environ.get("KD_GAT_LAKEHOUSE_TOKEN", "")
-
-# Max retries for transient network failures
-_MAX_RETRIES = 2
-_TIMEOUT_SECONDS = 10.0
+_S3_BUCKET = os.environ.get("KD_GAT_S3_BUCKET", "kd-gat")
+_LAKEHOUSE_PREFIX = "lakehouse/runs"
 
 
 def sync_to_lakehouse(
@@ -39,16 +34,12 @@ def sync_to_lakehouse(
     metrics: dict | None = None,
     success: bool = True,
 ) -> bool:
-    """Send run results to R2 lakehouse. Returns True on success.
+    """Send run results to S3 lakehouse. Returns True on success.
 
     This function is intentionally fire-and-forget: it catches all
     exceptions and logs warnings instead of raising.  Training must
     never fail because of a lakehouse sync issue.
     """
-    if not _LAKEHOUSE_URL:
-        log.debug("KD_GAT_LAKEHOUSE_URL not set — lakehouse sync skipped")
-        return False
-
     # Flatten core metrics from the nested evaluation structure
     flat_metrics: dict[str, float] = {}
     if metrics:
@@ -75,33 +66,26 @@ def sync_to_lakehouse(
     }
 
     try:
-        import httpx
+        import boto3
+        from botocore.exceptions import BotoCoreError, ClientError
     except ImportError:
-        log.debug("httpx not installed — lakehouse sync skipped")
+        log.debug("boto3 not installed — lakehouse sync skipped")
         return False
 
-    headers = {"Content-Type": "application/json"}
-    if _LAKEHOUSE_TOKEN:
-        headers["Authorization"] = f"Bearer {_LAKEHOUSE_TOKEN}"
+    try:
+        s3 = boto3.client("s3")
+        key = f"{_LAKEHOUSE_PREFIX}/{run_id}.json"
+        s3.put_object(
+            Bucket=_S3_BUCKET,
+            Key=key,
+            Body=json.dumps(payload, default=str),
+            ContentType="application/json",
+        )
+        log.info("Lakehouse sync OK: s3://%s/%s", _S3_BUCKET, key)
+        return True
+    except (BotoCoreError, ClientError) as e:
+        log.warning("Lakehouse sync failed for %s: %s", run_id, e)
+    except Exception as e:
+        log.warning("Lakehouse sync error for %s: %s", run_id, e)
 
-    for attempt in range(1, _MAX_RETRIES + 1):
-        try:
-            resp = httpx.post(
-                _LAKEHOUSE_URL,
-                json=payload,
-                headers=headers,
-                timeout=_TIMEOUT_SECONDS,
-            )
-            resp.raise_for_status()
-            log.info("Lakehouse sync OK: %s (attempt %d)", run_id, attempt)
-            return True
-        except httpx.TimeoutException:
-            log.warning("Lakehouse sync timeout (attempt %d/%d)", attempt, _MAX_RETRIES)
-        except httpx.HTTPStatusError as e:
-            log.warning("Lakehouse sync HTTP %d (attempt %d/%d): %s",
-                        e.response.status_code, attempt, _MAX_RETRIES, e)
-        except Exception as e:
-            log.warning("Lakehouse sync error (attempt %d/%d): %s", attempt, _MAX_RETRIES, e)
-
-    log.warning("Lakehouse sync failed after %d attempts for %s", _MAX_RETRIES, run_id)
     return False

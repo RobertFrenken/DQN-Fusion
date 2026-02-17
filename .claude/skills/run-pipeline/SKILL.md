@@ -52,6 +52,6 @@ Parse the dataset and scale from `$ARGUMENTS`. If only one word is provided, it 
 
 - Pipeline runs on SLURM with GPU resources (V100, via dask-jobqueue SLURMCluster)
 - W&B tracking is automatic (offline on compute nodes, sync later)
-- R2 lakehouse sync is fire-and-forget on run completion
+- S3 lakehouse sync is fire-and-forget on run completion
 - Each stage runs as a subprocess for clean CUDA context
 - Prefect retries failed tasks twice with 30s delay

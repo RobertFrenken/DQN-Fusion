@@ -34,7 +34,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
 ### Layer 2: `pipeline/` (orchestration — imports config/ freely, lazy imports from src/)
 
-- `cli.py` — Arg parser (`--model`/`--scale`/`--auxiliaries`), W&B run lifecycle (`wandb.init`/`wandb.finish`), R2 lakehouse sync, `STAGE_FNS` dispatch
+- `cli.py` — Arg parser (`--model`/`--scale`/`--auxiliaries`), W&B run lifecycle (`wandb.init`/`wandb.finish`), S3 lakehouse sync, `STAGE_FNS` dispatch
 - `stages/` — Training logic split into modules:
   - `training.py` — VGAE (autoencoder) and GAT (curriculum) training
   - `fusion.py` — DQN fusion training (uses `cfg.dqn.*`, `cfg.fusion.*`)
@@ -48,7 +48,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 - `validate.py` — Config validation (simplified — Pydantic handles field constraints)
 - `tracking.py` — Memory monitoring utilities
 - `memory.py` — Memory monitoring and GPU/CPU optimization
-- `lakehouse.py` — Fire-and-forget sync to Cloudflare R2 (structured metrics as Parquet)
+- `lakehouse.py` — Fire-and-forget sync to S3 (structured metrics as JSON)
 - `export.py` — Filesystem scanning → static JSON export for dashboard
 
 ### Layer 3: `src/` (domain — imports config.constants, never imports pipeline/)
@@ -119,7 +119,7 @@ data/automotive/{dataset}/train_*/  →  data/cache/{dataset}/processed_graphs.p
 
 - 6 datasets: hcrl_ch, hcrl_sa, set_01-04
 - Cache auto-built on first access, validated via metadata on subsequent loads
-- All data versioned with DVC (remotes: local scratch + Cloudflare R2)
+- All data versioned with DVC (remotes: local scratch + AWS S3)
 
 ## Models
 
@@ -167,8 +167,8 @@ experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
 - Online runs when network available, offline on SLURM compute nodes
 - Sync offline runs: `wandb sync wandb/run-*`
 
-**R2 Lakehouse** (Cloudflare):
-- Structured metrics as Parquet, queryable via DuckDB
+**S3 Lakehouse** (AWS):
+- Structured metrics as JSON at `s3://kd-gat/lakehouse/runs/`, queryable via DuckDB
 - Fire-and-forget sync from `pipeline/lakehouse.py`
 
 ## Dashboard Architecture

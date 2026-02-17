@@ -2,6 +2,5 @@
     remote = scratch
 ['remote "scratch"']
     url = /fs/scratch/PAS1266/can-graph-dvc
-['remote "r2"']
-    url = s3://kd-gat-data
-    endpointurl = https://${KD_GAT_R2_ACCOUNT_ID}.r2.cloudflarestorage.com
+['remote "s3"']
+    url = s3://kd-gat/dvc

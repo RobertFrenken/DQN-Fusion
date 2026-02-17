@@ -8,7 +8,7 @@
 - Graph construction validation (temporal windows, node/edge features)
 - Preprocessing cache health (`data/cache/`)
 - Data quality checks (missing values, label distribution, attack type coverage)
-- DVC data versioning and R2 remote sync
+- DVC data versioning and S3 remote sync
 
 ## Context Files (prioritize reading these)
 
@@ -21,7 +21,7 @@
 
 | Command | Description |
 |---------|-------------|
-| `dvc push -r r2` | Push data to R2 remote |
+| `dvc push -r s3` | Push data to S3 remote |
 | `dvc pull` | Pull data from remote |
 | `python -m pipeline.export` | Export dashboard data from filesystem |
 

@@ -1,6 +1,6 @@
 {
   "schema_version": "1.0.0",
-  "exported_at": "2026-02-17T16:48:19.850186+00:00",
+  "exported_at": "2026-02-17T21:56:35.374184+00:00",
   "data": [
     "accuracy",
     "auc",
@@ -18,7 +18,6 @@
     "precision",
     "recall",
     "specificity",
-    "threshold_from_val",
     "tnr",
     "tpr",
     "youden_j"

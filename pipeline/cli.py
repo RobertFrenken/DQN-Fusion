@@ -182,7 +182,7 @@ def _sync_lakehouse(
     cfg: PipelineConfig, stage: str, run_name: str,
     result: object = None, success: bool = True,
 ) -> None:
-    """Fire-and-forget sync to R2 lakehouse."""
+    """Fire-and-forget sync to S3 lakehouse."""
     try:
         from .lakehouse import sync_to_lakehouse
         sync_to_lakehouse(
@@ -295,7 +295,7 @@ def main(argv: list[str] | None = None) -> None:
         if _wandb_run is not None and isinstance(result, dict):
             _wandb_log_metrics(result)
 
-        # Sync to R2 lakehouse (fire-and-forget)
+        # Sync to S3 lakehouse (fire-and-forget)
         _sync_lakehouse(cfg, args.stage, run_name, result)
 
         log.info("Run completed successfully")

@@ -24,8 +24,8 @@
 ### Platform (newly migrated)
 - **W&B**: `wandb.init()`/`wandb.finish()` in CLI, WandbLogger in Lightning trainer. Offline mode on compute nodes.
 - **Prefect**: `train_pipeline()` and `eval_pipeline()` flows with dask-jobqueue SLURMCluster.
-- **R2 Lakehouse**: Fire-and-forget sync via `pipeline/lakehouse.py`. Requires `KD_GAT_LAKEHOUSE_URL` env var.
-- **DVC**: R2 remote configured alongside local scratch remote.
+- **S3 Lakehouse**: Fire-and-forget sync via `pipeline/lakehouse.py` to `s3://kd-gat/lakehouse/runs/`. boto3/awscli installed in gnn-experiments conda env. Sync tested and working.
+- **DVC**: S3 remote configured alongside local scratch remote. Tested and working (21 files pushed to `s3://kd-gat/dvc/`).
 
 ### Dashboard (GitHub Pages)
 - **Live**: https://robertfrenken.github.io/DQN-Fusion/
@@ -40,10 +40,11 @@
 
 ## Recently Completed
 
-- **Platform migration** (2026-02-17): 4-phase migration from Snakemake/SQLite to W&B/Prefect/R2:
+- **S3 setup** (2026-02-17): boto3/awscli installed in gnn-experiments, S3 bucket verified, lakehouse sync tested, DVC push (21 files) to `s3://kd-gat/dvc/`. Conda init added to `~/.bashrc` (`module load miniconda3` + `conda activate gnn-experiments`).
+- **Platform migration** (2026-02-17): 4-phase migration from Snakemake/SQLite to W&B/Prefect/S3:
   - Phase 1: W&B instrumentation (WandbLogger, wandb.init/finish lifecycle)
   - Phase 2: Prefect orchestration (train_flow, eval_flow, SLURMCluster)
-  - Phase 3: R2 lakehouse sync + DVC remote
+  - Phase 3: S3 lakehouse sync + DVC remote
   - Phase 4: Deleted ~3,100 lines (Snakefile, db.py, analytics.py, ingest.py, state_sync.py, migrate_paths.py, schemas.py, 9 Snakemake rule files, SLURM profile). Refactored export.py to filesystem scanning.
   - All on branch `platform/wandb`, pushed to remote.
 
@@ -51,8 +52,6 @@
 
 - **W&B not yet configured**: Need to run `wandb login` on cluster and set up API key
 - **Prefect not yet installed**: Need `pip install prefect prefect-dask dask-jobqueue` in conda env
-- **R2 lakehouse not configured**: Need `KD_GAT_LAKEHOUSE_URL` env var and Cloudflare Pipeline endpoint
-- **DVC R2 remote not configured**: Need R2 credentials for `dvc push -r r2`
 - **No pipeline runs with new platform yet**: First run needed to validate end-to-end
 - **Embedding panels (VGAE/GAT)**: `embeddings.npz` not yet captured — requires re-running evaluation
 - **DQN Policy panel**: `dqn_policy.json` not yet captured — requires re-running fusion evaluation
@@ -62,11 +61,10 @@
 
 1. **Configure W&B**: `wandb login` on cluster, verify API key works
 2. **Install Prefect deps**: `pip install prefect prefect-dask dask-jobqueue` in gnn-experiments env
-3. **Configure R2**: Set up Cloudflare R2 bucket, DVC remote credentials, lakehouse URL
-4. **Validate pipeline**: Run single dataset through new platform end-to-end
-5. **Merge to main**: PR from `platform/wandb` → `main` after validation
-6. **Re-run evaluation**: Generate embeddings.npz and dqn_policy.json artifacts
-7. **Investigate OOD threshold calibration** (Bug 3.6)
+3. **Validate pipeline**: Run single dataset through new platform end-to-end
+4. **Merge to main**: PR from `platform/wandb` → `main` after validation
+5. **Re-run evaluation**: Generate embeddings.npz and dqn_policy.json artifacts
+6. **Investigate OOD threshold calibration** (Bug 3.6)
 
 ## Filesystem
 
@@ -80,4 +78,4 @@
 - **Prefect home**: `/fs/scratch/PAS1266/.prefect/` (GPFS — avoid NFS for Prefect)
 - **W&B**: Project `kd-gat` (offline on compute nodes, sync later)
 - **Dashboard**: `docs/dashboard/` (GitHub Pages — static JSON + D3.js)
-- **Conda**: `module load miniconda3/24.1.2-py310 && conda activate gnn-experiments`
+- **Conda**: Auto-loaded via `~/.bashrc` (`module load miniconda3` + `conda activate gnn-experiments`)

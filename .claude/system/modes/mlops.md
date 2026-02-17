@@ -10,7 +10,7 @@
 - W&B tracking and experiment management
 - Training failure triage (OOM, CUDA errors, NaN losses)
 - Data pipeline health (preprocessing, caching)
-- R2 lakehouse sync and DuckDB queries
+- S3 lakehouse sync and DuckDB queries
 
 ## Context Files (prioritize reading these)
 
@@ -19,7 +19,7 @@
 - `pipeline/flows/` — Prefect flow definitions (train_flow, eval_flow, slurm_config)
 - `config/` — Schema, resolver, constants, YAML files
 - `pipeline/stages/` — Stage implementations
-- `pipeline/lakehouse.py` — R2 lakehouse sync
+- `pipeline/lakehouse.py` — S3 lakehouse sync
 - `pipeline/cli.py` — CLI entry point + W&B lifecycle
 
 ## Suppressed Topics
