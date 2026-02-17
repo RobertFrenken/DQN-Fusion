@@ -182,6 +182,27 @@ def _wandb_log_metrics(result: dict) -> None:
         pass
 
 
+def _sync_lakehouse(
+    cfg: PipelineConfig, stage: str, run_name: str,
+    result: object = None, success: bool = True,
+) -> None:
+    """Fire-and-forget sync to R2 lakehouse."""
+    try:
+        from .lakehouse import sync_to_lakehouse
+        sync_to_lakehouse(
+            run_id=run_name,
+            dataset=cfg.dataset,
+            model_type=cfg.model_type,
+            scale=cfg.scale,
+            stage=stage,
+            has_kd=cfg.has_kd,
+            metrics=result if isinstance(result, dict) else None,
+            success=success,
+        )
+    except Exception as e:
+        logging.getLogger("pipeline").debug("Lakehouse sync skipped: %s", e)
+
+
 def _finish_wandb() -> None:
     """Finish the active W&B run if one exists."""
     try:
@@ -316,11 +337,15 @@ def main(argv: list[str] | None = None) -> None:
         if _wandb_run is not None and isinstance(result, dict):
             _wandb_log_metrics(result)
 
+        # Sync to R2 lakehouse (fire-and-forget)
+        _sync_lakehouse(cfg, args.stage, run_name, result)
+
         log.info("Run completed successfully")
 
     except Exception as e:
         if not _ON_COMPUTE_NODE:
             record_run_end(run_name, success=False)
+        _sync_lakehouse(cfg, args.stage, run_name, None, success=False)
         log.error("Run failed: %s", str(e))
         raise
 

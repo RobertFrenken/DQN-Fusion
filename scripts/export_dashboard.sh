@@ -41,6 +41,12 @@ echo "Exporting project DB → ${DASHBOARD_DATA}/"
 python -m pipeline.export --output-dir "$DASHBOARD_DATA"
 echo "Export complete."
 
+# --- Push DVC-tracked data to R2 remote (if configured) ---
+if dvc remote list 2>/dev/null | grep -q "r2"; then
+    echo "Pushing DVC data to R2 remote..."
+    dvc push -r r2 2>/dev/null || echo "WARNING: DVC push to R2 failed (non-fatal)"
+fi
+
 if $DRY_RUN; then
     echo "Dry run — skipping git operations."
     exit 0
