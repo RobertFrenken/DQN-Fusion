@@ -32,12 +32,14 @@ from .paths import (
     log_dir,
     data_dir,
     metrics_path,
+    done_path,
     cache_dir,
     run_id_str,
     checkpoint_path_str,
     metrics_path_str,
     benchmark_path_str,
     log_path_str,
+    done_path_str,
 )
 from .constants import (
     SCHEMA_VERSION,

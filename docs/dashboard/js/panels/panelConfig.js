@@ -1,6 +1,16 @@
 /* Declarative panel definitions — adding a panel = adding an entry */
 
 export const PANELS = [
+    // --- Overview ---
+    {
+        id: 'overview',
+        title: 'Overview',
+        description: 'At-a-glance summary of experiment results',
+        chartType: 'summary',
+        dataSource: ['leaderboard.json', 'model_sizes.json', 'kd_transfer.json'],
+        joinFn: (leaderboard, sizes, kd) => ({ leaderboard, sizes, kd }),
+    },
+
     // --- Original 5 panels ---
     {
         id: 'leaderboard',
@@ -165,6 +175,46 @@ export const PANELS = [
         ],
     },
     {
+        id: 'pareto-frontier',
+        title: 'Pareto Frontier',
+        description: 'F1 vs parameter count trade-off — dashed line shows Pareto-optimal configs',
+        chartType: 'scatter',
+        dataSource: ['leaderboard.json', 'model_sizes.json'],
+        joinFn: (leaderboard, sizes) => {
+            const sizeMap = new Map();
+            sizes.forEach(s => sizeMap.set(`${s.model_type}_${s.scale}`, s));
+            return leaderboard
+                .filter(d => d.metric_name === 'f1')
+                .map(d => {
+                    const sz = sizeMap.get(`${d.model_type}_${d.scale}`) || {};
+                    return {
+                        dataset: d.dataset,
+                        config: `${d.model_type}_${d.scale}${d.has_kd ? '_kd' : ''}`,
+                        param_count_M: sz.param_count_M || 0,
+                        f1: d.best_value ?? 0,
+                    };
+                })
+                .filter(d => d.param_count_M > 0);
+        },
+        chartConfig: {
+            xField: 'param_count_M',
+            yField: 'f1',
+            colorField: 'config',
+            xLabel: 'Parameters (M)',
+            yLabel: 'F1 Score',
+            paretoLine: true,
+            tooltipFn: d => `${d.config}<br>Dataset: ${d.dataset}<br>Params: ${d.param_count_M}M<br>F1: ${(d.f1 ?? 0).toFixed(4)}`,
+        },
+        controls: [
+            {
+                type: 'select', id: 'pf-dataset', label: 'Dataset',
+                options: [],
+                datasetSource: true,
+                mapTo: '_dataset_filter',
+            },
+        ],
+    },
+    {
         id: 'vgae-latent',
         title: 'VGAE Latent Space',
         description: '2D projection of VGAE encoder embeddings (color = class label)',
@@ -201,6 +251,7 @@ export const PANELS = [
                 options: [
                     { value: 'points', label: 'Points Only' },
                     { value: 'density', label: '+ Density' },
+                    { value: 'voronoi', label: '+ Voronoi' },
                 ],
                 default: 'points',
                 mapTo: 'showDensity',
@@ -244,6 +295,7 @@ export const PANELS = [
                 options: [
                     { value: 'points', label: 'Points Only' },
                     { value: 'density', label: '+ Density' },
+                    { value: 'voronoi', label: '+ Voronoi' },
                 ],
                 default: 'points',
                 mapTo: 'showDensity',
@@ -301,6 +353,191 @@ export const PANELS = [
                 ],
                 default: 'f1',
                 mapTo: 'metric',
+            },
+        ],
+    },
+
+    // --- Advanced Visualizations (Phase 5) ---
+    {
+        id: 'confusion-matrix',
+        title: 'Confusion Matrix',
+        description: 'Classification confusion matrix with counts and percentages',
+        chartType: 'heatmap',
+        dataSource: null,
+        dynamicLoader: 'confusion_matrix',
+        controls: [
+            {
+                type: 'select', id: 'cm-run', label: 'Run',
+                options: [],
+                evalRunSource: true,
+                mapTo: '_run',
+            },
+            {
+                type: 'select', id: 'cm-model', label: 'Model',
+                options: [
+                    { value: 'gat', label: 'GAT' },
+                    { value: 'vgae', label: 'VGAE' },
+                    { value: 'fusion', label: 'Fusion' },
+                ],
+                default: 'gat',
+                mapTo: '_model',
+            },
+            {
+                type: 'select', id: 'cm-scenario', label: 'Scenario',
+                options: [
+                    { value: 'val', label: 'Validation' },
+                ],
+                default: 'val',
+                mapTo: '_scenario',
+            },
+        ],
+    },
+    {
+        id: 'roc-pr-curves',
+        title: 'ROC & PR Curves',
+        description: 'Receiver Operating Characteristic and Precision-Recall curves',
+        chartType: 'curve',
+        dataSource: null,
+        dynamicLoader: 'roc_curves',
+        controls: [
+            {
+                type: 'select', id: 'rc-run', label: 'Run',
+                options: [],
+                evalRunSource: true,
+                mapTo: '_run',
+            },
+            {
+                type: 'select', id: 'rc-type', label: 'Curve Type',
+                options: [
+                    { value: 'roc', label: 'ROC' },
+                    { value: 'pr', label: 'Precision-Recall' },
+                ],
+                default: 'roc',
+                mapTo: '_curveType',
+            },
+        ],
+    },
+    {
+        id: 'recon-errors',
+        title: 'VGAE Reconstruction Errors',
+        description: 'Distribution of VGAE reconstruction errors by class with optimal threshold',
+        chartType: 'histogram',
+        dataSource: null,
+        dynamicLoader: 'recon_errors',
+        controls: [
+            {
+                type: 'select', id: 're-run', label: 'Run',
+                options: [],
+                reconErrorSource: true,
+                mapTo: '_run',
+            },
+            {
+                type: 'select', id: 're-bins', label: 'Bins',
+                options: [
+                    { value: '20', label: '20' },
+                    { value: '40', label: '40' },
+                    { value: '60', label: '60' },
+                ],
+                default: '40',
+                mapTo: 'bins',
+            },
+        ],
+    },
+    {
+        id: 'gat-attention',
+        title: 'GAT Attention Weights',
+        description: 'Force-directed graph with edge thickness showing attention weight magnitude',
+        chartType: 'force',
+        dataSource: null,
+        dynamicLoader: 'attention',
+        controls: [
+            {
+                type: 'select', id: 'ga-run', label: 'Run',
+                options: [],
+                attentionSource: true,
+                mapTo: '_run',
+            },
+            {
+                type: 'select', id: 'ga-layer', label: 'Layer',
+                options: [
+                    { value: '0', label: 'Layer 1' },
+                    { value: '1', label: 'Layer 2' },
+                    { value: '2', label: 'Layer 3' },
+                ],
+                default: '0',
+                mapTo: '_layer',
+            },
+            {
+                type: 'select', id: 'ga-sample', label: 'Sample',
+                options: [
+                    { value: '0', label: 'Sample 1' },
+                    { value: '1', label: 'Sample 2' },
+                    { value: '2', label: 'Sample 3' },
+                ],
+                default: '0',
+                mapTo: '_sample',
+            },
+        ],
+    },
+    {
+        id: 'attention-carpet',
+        title: 'Attention Patterns',
+        description: 'Heatmap showing how attention weights evolve across GAT layers',
+        chartType: 'heatmap',
+        dataSource: null,
+        dynamicLoader: 'attention_carpet',
+        controls: [
+            {
+                type: 'select', id: 'ac-run', label: 'Run',
+                options: [],
+                attentionSource: true,
+                mapTo: '_run',
+            },
+            {
+                type: 'select', id: 'ac-sample', label: 'Sample',
+                options: [
+                    { value: '0', label: 'Sample 1' },
+                    { value: '1', label: 'Sample 2' },
+                    { value: '2', label: 'Sample 3' },
+                ],
+                default: '0',
+                mapTo: '_sample',
+            },
+        ],
+    },
+    {
+        id: 'training-carpet',
+        title: 'Training Curve Heatmap',
+        description: 'Convergence patterns across all runs (rows=runs, cols=epochs, value=metric)',
+        chartType: 'heatmap',
+        dataSource: null,
+        dynamicLoader: 'training_carpet',
+        controls: [
+            {
+                type: 'select', id: 'tch-metric', label: 'Metric',
+                options: [
+                    { value: 'val_loss', label: 'Val Loss' },
+                    { value: 'train_loss', label: 'Train Loss' },
+                    { value: 'val_acc', label: 'Val Accuracy' },
+                ],
+                default: 'val_loss',
+                mapTo: '_metric',
+            },
+        ],
+    },
+    {
+        id: 'kd-cka',
+        title: 'Knowledge Transfer (CKA)',
+        description: 'Centered Kernel Alignment between teacher and student GAT layers',
+        chartType: 'heatmap',
+        dataSource: null,
+        dynamicLoader: 'cka',
+        controls: [
+            {
+                type: 'select', id: 'cka-run', label: 'Run',
+                options: [],
+                ckaSource: true,
+                mapTo: '_run',
             },
         ],
     },

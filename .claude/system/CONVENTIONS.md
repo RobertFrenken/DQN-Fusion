@@ -40,11 +40,53 @@ Before implementing a new feature or fix:
 
 This keeps the codebase lean. Every PR should leave the code cleaner than it was found.
 
+## Repeated Failure Protocol
+
+**If the same command fails twice for the same category of reason, STOP retrying and diagnose.**
+
+The instinct to tweak-and-retry is wrong. Two failures with the same shape (missing env, wrong path, permission error, Snakemake config conflict) means the problem is structural, not transient. Retrying with small variations wastes time and context window.
+
+Instead:
+1. **Name the pattern.** What category of failure is this? (env setup, path resolution, config incompatibility, NFS issue, etc.)
+2. **Read the actual error.** Don't skim — parse the full traceback. The root cause is usually in the first or last frame, not the middle.
+3. **Check if it's a known issue.** Search CONVENTIONS.md, CLAUDE.md Critical Constraints, and recent git log for prior fixes.
+4. **Fix the root cause, not the symptom.** If the env isn't on PATH, don't add it to one command — add it to the documented pattern. If two Snakemake directives conflict, don't remove one from one rule — remove it from all rules.
+5. **Document it.** If this will come up again, add it to the appropriate file (CONVENTIONS.md for workflow, CLAUDE.md Critical Constraints for crash-prevention rules).
+
+Examples of structural vs transient:
+- `command not found` → **structural** (env not loaded). Fix the invocation pattern, don't retry.
+- `sqlite3.OperationalError: disk I/O error` → **transient** (NFS contention). Retry is reasonable once.
+- Same Snakemake error across 3 different flag combinations → **structural**. Stop, read the Snakemake docs or error message, fix the rule definition.
+
 ## Git
 
 - Commit messages: short summary line, body explains why not what.
 - Don't use GitLens Commit Composer on HPC — it fails with NFS lock files. Use terminal or Source Control panel.
 - Push via SSH (`git@github.com:`), not HTTPS.
+
+## Shell Environment
+
+**This is critical — Claude does not inherit conda.** The login shell has no `conda` on PATH. Every command that needs Python packages (torch, snakemake, pytest, etc.) must set up the environment explicitly:
+
+```bash
+# Required prefix for ALL Python/Snakemake commands:
+export PATH="$HOME/.conda/envs/gnn-experiments/bin:$PATH"
+export PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT:$PYTHONPATH
+export SNAKEMAKE_OUTPUT_CACHE=/fs/scratch/PAS1266/snakemake-cache
+
+# Then run the actual command:
+snakemake -s pipeline/Snakefile --profile profiles/slurm ...
+python -m pipeline.cli ...
+python -m pytest tests/ -v
+```
+
+**Common failures without this:**
+- `bash: snakemake: command not found` → missing PATH
+- `ModuleNotFoundError: No module named 'config'` → missing PYTHONPATH
+- `WorkflowError: no cache location specified` → missing SNAKEMAKE_OUTPUT_CACHE
+- `ModuleNotFoundError: No module named 'torch'` → missing PATH (system Python has no ML packages)
+
+For SLURM-submitted jobs, the shell commands in Snakefile rules run inside `module load miniconda3/24.1.2-py310 && source activate gnn-experiments` (set in `profiles/slurm/config.yaml`), so they don't need manual PATH setup.
 
 ## HPC / SLURM
 

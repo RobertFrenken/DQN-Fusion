@@ -65,15 +65,17 @@ class GATWithJK(nn.Module):
             embedding_dim=cfg.gat.embedding_dim,
         )
 
-    def forward(self, data, return_intermediate=False):
+    def forward(self, data, return_intermediate=False, return_attention_weights=False):
         """Forward pass through the GATWithJK model.
-        
+
         Args:
             data (torch_geometric.data.Data): Input graph data.
             return_intermediate (bool, optional): Whether to return intermediate representations. Defaults to False.
-            
+            return_attention_weights (bool, optional): Whether to return per-layer attention weights. Defaults to False.
+
         Returns:
-            torch.Tensor: Output predictions or list of intermediate representations if return_intermediate=True.
+            torch.Tensor: Output predictions, or list of intermediate representations if return_intermediate=True,
+                or (xs, attention_weights) if return_attention_weights=True.
         """
         x, edge_index, batch = data.x, data.edge_index, data.batch
         # x shape: [num_nodes, in_channels], where x[:,0] is CAN ID index
@@ -81,11 +83,15 @@ class GATWithJK(nn.Module):
         other_feats = x[:, 1:]  # [num_nodes, in_channels-1]
         x = torch.cat([id_emb, other_feats], dim=1)
 
+        attention_weights = [] if return_attention_weights else None
 
         xs = []
         for conv in self.convs:
-            # Apply gradient checkpointing if enabled and in training mode
-            if self.use_checkpointing and x.requires_grad:
+            if return_attention_weights:
+                x, (ei, alpha) = conv(x, edge_index, return_attention_weights=True)
+                x = x.relu()
+                attention_weights.append(alpha.detach().cpu())
+            elif self.use_checkpointing and x.requires_grad:
                 # IMPORTANT: Use default args to capture conv and edge_index by value,
                 # not by reference. Otherwise, the lambda captures the loop variable
                 # which will have changed by the time the backward pass recomputes.
@@ -94,6 +100,8 @@ class GATWithJK(nn.Module):
                 x = conv(x, edge_index).relu()
             x = F.dropout(x, p=self.dropout, training=self.training)
             xs.append(x)
+        if return_attention_weights:
+            return xs, attention_weights
         if return_intermediate:
             return xs
         x = self.jk(xs)

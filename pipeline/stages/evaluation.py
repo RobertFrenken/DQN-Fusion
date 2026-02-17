@@ -62,11 +62,15 @@ def evaluate(cfg: PipelineConfig) -> dict:
     if gat_ckpt.exists():
         gat = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
 
-        p, l, s, gat_emb = _run_gat_inference(gat, val_data, device, capture_embeddings=True)
+        p, l, s, gat_emb, gat_attn = _run_gat_inference(
+            gat, val_data, device, capture_embeddings=True, capture_attention=True,
+        )
         all_metrics["gat"] = _compute_metrics(l, p, s)
         if gat_emb is not None:
             artifacts["gat_emb"] = gat_emb
             artifacts["gat_labels"] = l
+        if gat_attn:
+            artifacts["gat_attention"] = gat_attn
         log.info("GAT val metrics: %s",
                  {k: f"{v:.4f}" for k, v in all_metrics["gat"]["core"].items()
                   if isinstance(v, float)})
@@ -74,7 +78,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
         if test_scenarios:
             test_metrics["gat"] = {}
             for scenario, tdata in test_scenarios.items():
-                tp, tl, ts, _ = _run_gat_inference(gat, tdata, device)
+                tp, tl, ts, _, _ = _run_gat_inference(gat, tdata, device)
                 test_metrics["gat"][scenario] = _compute_metrics(tl, tp, ts)
                 log.info("GAT %s  acc=%.4f f1=%.4f",
                          scenario,
@@ -146,11 +150,12 @@ def evaluate(cfg: PipelineConfig) -> dict:
         agent.q_network.load_state_dict(fusion_sd["q_network"])
         agent.target_network.load_state_dict(fusion_sd["target_network"])
 
-        fp, fl, fs = _run_fusion_inference(agent, val_cache)
+        fp, fl, fs, fq = _run_fusion_inference(agent, val_cache)
         all_metrics["fusion"] = _compute_metrics(fl, fp, fs)
         # Capture DQN policy (alpha distribution by class)
         artifacts["dqn_alphas"] = fs.tolist()
         artifacts["dqn_labels"] = fl.tolist()
+        artifacts["dqn_q_values"] = fq
         log.info("Fusion val metrics: %s",
                  {k: f"{v:.4f}" for k, v in all_metrics["fusion"]["core"].items()
                   if isinstance(v, float)})
@@ -159,7 +164,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
             test_metrics["fusion"] = {}
             for scenario, tdata in test_scenarios.items():
                 tc = cache_predictions(models, tdata, device, cfg.fusion.max_val_samples)
-                tp, tl, ts = _run_fusion_inference(agent, tc)
+                tp, tl, ts, _ = _run_fusion_inference(agent, tc)
                 test_metrics["fusion"][scenario] = _compute_metrics(tl, tp, ts)
                 log.info("Fusion %s  acc=%.4f f1=%.4f",
                          scenario,
@@ -189,6 +194,30 @@ def evaluate(cfg: PipelineConfig) -> dict:
         np.savez_compressed(npz_path, **embed_data)
         log.info("Saved embeddings → %s", npz_path)
 
+    # Save attention weights artifact
+    if "gat_attention" in artifacts:
+        attn_list = artifacts["gat_attention"]
+        attn_export = {}
+        for i, entry in enumerate(attn_list):
+            prefix = f"sample_{i}"
+            attn_export[f"{prefix}_graph_idx"] = entry["graph_idx"]
+            attn_export[f"{prefix}_label"] = entry["label"]
+            attn_export[f"{prefix}_edge_index"] = entry["edge_index"]
+            attn_export[f"{prefix}_node_features"] = entry["node_features"]
+            for layer_idx, aw in enumerate(entry["attention_weights"]):
+                attn_export[f"{prefix}_layer_{layer_idx}_alpha"] = aw
+        attn_export["n_samples"] = len(attn_list)
+        attn_path = out / "attention_weights.npz"
+        np.savez_compressed(attn_path, **attn_export)
+        log.info("Saved attention weights (%d samples) → %s", len(attn_list), attn_path)
+
+    # CKA computation for KD runs (teacher vs student layer similarity)
+    if cfg.has_kd:
+        try:
+            _save_cka(cfg, val_data, device, num_ids, in_ch, out)
+        except Exception as e:
+            log.warning("CKA computation failed (non-fatal): %s", e)
+
     # Save DQN policy artifact
     if "dqn_alphas" in artifacts:
         alphas = artifacts["dqn_alphas"]
@@ -200,6 +229,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
             "alphas": alphas,
             "labels": labels,
             "alpha_by_label": alpha_by_label,
+            "q_values": artifacts.get("dqn_q_values", []),
         }
         policy_path = out / "dqn_policy.json"
         policy_path.write_text(json.dumps(policy_data, indent=2))
@@ -224,16 +254,22 @@ def _load_test_data(cfg: PipelineConfig) -> dict:
     )
 
 
-def _run_gat_inference(gat, data, device, capture_embeddings=False):
+ATTENTION_SAMPLE_LIMIT = 50  # Max graphs to capture attention for (export size)
+
+
+def _run_gat_inference(gat, data, device, capture_embeddings=False, capture_attention=False):
     """Run GAT inference. Returns (preds, labels, scores, embeddings) as numpy arrays.
 
     When capture_embeddings=True, captures the hidden representation before
     the final classification layer via the forward_embedding() method.
+    When capture_attention=True, captures per-layer attention weights for a
+    sampled subset of graphs.
     """
     preds, labels, scores = [], [], []
     embeddings = [] if capture_embeddings else None
+    attn_data = [] if capture_attention else None
     with torch.no_grad():
-        for g in data:
+        for idx, g in enumerate(data):
             g = g.clone().to(device)
             logits = gat(g)
             probs = F.softmax(logits, dim=1)
@@ -246,8 +282,17 @@ def _run_gat_inference(gat, data, device, capture_embeddings=False):
                 # Use last layer's output, mean-pooled over nodes
                 emb = xs[-1].mean(dim=0).cpu().numpy()
                 embeddings.append(emb)
+            if capture_attention and idx < ATTENTION_SAMPLE_LIMIT:
+                xs, att_weights = gat(g, return_attention_weights=True)
+                attn_data.append({
+                    "graph_idx": idx,
+                    "label": graph_label(g),
+                    "edge_index": g.edge_index.cpu().numpy(),
+                    "node_features": g.x[:, 0].cpu().numpy(),  # CAN IDs
+                    "attention_weights": [a.numpy() for a in att_weights],
+                })
     emb_array = np.array(embeddings) if capture_embeddings and embeddings else None
-    return np.array(preds), np.array(labels), np.array(scores), emb_array
+    return np.array(preds), np.array(labels), np.array(scores), emb_array, attn_data
 
 
 def _run_vgae_inference(vgae, data, device, capture_embeddings=False):
@@ -275,15 +320,22 @@ def _run_vgae_inference(vgae, data, device, capture_embeddings=False):
 
 
 def _run_fusion_inference(agent, cache):
-    """Run DQN fusion inference. Returns (preds, labels, scores)."""
-    preds, labels, scores = [], [], []
+    """Run DQN fusion inference. Returns (preds, labels, scores, q_values_list)."""
+    preds, labels, scores, q_values_list = [], [], [], []
     for i in range(len(cache["states"])):
         state_np = cache["states"][i].numpy()
+        # Capture raw Q-values before action selection
+        state_t = torch.tensor(
+            agent.normalize_state(state_np), dtype=torch.float32
+        ).unsqueeze(0).to(agent.device)
+        with torch.no_grad():
+            q_vals = agent.q_network(state_t).squeeze(0).cpu().numpy()
+        q_values_list.append(q_vals.tolist())
         alpha, _, _ = agent.select_action(state_np, training=False)
         preds.append(1 if alpha > 0.5 else 0)
         labels.append(cache["labels"][i].item())
         scores.append(float(alpha))
-    return np.array(preds), np.array(labels), np.array(scores)
+    return np.array(preds), np.array(labels), np.array(scores), q_values_list
 
 
 def _vgae_threshold(labels, errors):
@@ -328,6 +380,7 @@ def _compute_metrics(labels, preds, scores=None) -> dict:
         "fpr":               fpr,
         "fnr":               fnr,
         "n_samples":         int(len(labels)),
+        "confusion_matrix":  cm.tolist(),
     }
 
     additional = {
@@ -344,6 +397,12 @@ def _compute_metrics(labels, preds, scores=None) -> dict:
         try:
             prec_vals, rec_vals, _ = precision_recall_curve(labels, scores)
             additional["pr_auc"] = float(sk_auc(rec_vals, prec_vals))
+            # Downsample PR curve for export
+            step = max(1, len(prec_vals) // 200)
+            additional["pr_curve"] = {
+                "precision": prec_vals[::step].tolist(),
+                "recall": rec_vals[::step].tolist(),
+            }
         except ValueError:
             additional["pr_auc"] = 0.0
 
@@ -354,7 +413,117 @@ def _compute_metrics(labels, preds, scores=None) -> dict:
                 idx = np.argmin(np.abs(fpr_curve - fpr_target))
                 det_at_fpr[str(fpr_target)] = float(tpr_curve[idx])
             additional["detection_at_fpr"] = det_at_fpr
+            # Downsample ROC curve for export
+            step = max(1, len(fpr_curve) // 200)
+            additional["roc_curve"] = {
+                "fpr": fpr_curve[::step].tolist(),
+                "tpr": tpr_curve[::step].tolist(),
+            }
         except ValueError:
             additional["detection_at_fpr"] = {}
 
     return {"core": core, "additional": additional}
+
+
+# ---------------------------------------------------------------------------
+# CKA (Centered Kernel Alignment) for KD transfer analysis
+# ---------------------------------------------------------------------------
+
+def _linear_cka(X: np.ndarray, Y: np.ndarray) -> float:
+    """Compute Linear CKA between two representation matrices.
+
+    Args:
+        X: [n_samples, dim_x] representation matrix.
+        Y: [n_samples, dim_y] representation matrix.
+
+    Returns:
+        CKA similarity in [0, 1].
+    """
+    X = X - X.mean(axis=0)
+    Y = Y - Y.mean(axis=0)
+    n = X.shape[0]
+
+    hsic_xy = np.linalg.norm(Y.T @ X, 'fro') ** 2 / (n - 1) ** 2
+    hsic_xx = np.linalg.norm(X.T @ X, 'fro') ** 2 / (n - 1) ** 2
+    hsic_yy = np.linalg.norm(Y.T @ Y, 'fro') ** 2 / (n - 1) ** 2
+
+    denom = np.sqrt(hsic_xx * hsic_yy)
+    return float(hsic_xy / denom) if denom > 0 else 0.0
+
+
+def _collect_layer_representations(model, data, device, max_samples=500):
+    """Collect per-layer representations from a GAT model."""
+    all_layers = None
+    count = 0
+    with torch.no_grad():
+        for g in data:
+            if count >= max_samples:
+                break
+            g = g.clone().to(device)
+            xs = model(g, return_intermediate=True)
+            # Mean-pool each layer over nodes → graph-level representation
+            layer_reps = [x.mean(dim=0).cpu().numpy() for x in xs]
+            if all_layers is None:
+                all_layers = [[] for _ in range(len(layer_reps))]
+            for i, rep in enumerate(layer_reps):
+                all_layers[i].append(rep)
+            count += 1
+    if all_layers is None:
+        return []
+    return [np.array(layer) for layer in all_layers]
+
+
+def _save_cka(cfg, val_data, device, num_ids, in_ch, out_dir):
+    """Compute and save CKA matrix between teacher and student GAT layers."""
+    from config import stage_dir
+
+    # Find teacher checkpoint
+    teacher_stage = stage_dir(cfg, "curriculum").parent
+    # Teacher is large-scale, same dataset, no KD
+    teacher_gat_stage = "curriculum"
+    teacher_ckpt = _cross_model_path(cfg, "gat", teacher_gat_stage, "best_model.pt")
+
+    # For KD runs, we need the teacher (large, no-KD) model
+    # The teacher path is the large-scale GAT without KD auxiliary
+    from config import resolve, checkpoint_path
+    teacher_cfg = resolve("gat", "large", dataset=cfg.dataset)
+    teacher_ckpt = checkpoint_path(teacher_cfg, teacher_gat_stage)
+
+    if not teacher_ckpt.exists():
+        log.warning("CKA: teacher checkpoint not found at %s", teacher_ckpt)
+        return
+
+    student_ckpt = _cross_model_path(cfg, "gat", "curriculum", "best_model.pt")
+    if not student_ckpt.exists():
+        log.warning("CKA: student checkpoint not found at %s", student_ckpt)
+        return
+
+    teacher = load_model(teacher_cfg, "gat", teacher_gat_stage, num_ids, in_ch, device)
+    student = load_model(cfg, "gat", "curriculum", num_ids, in_ch, device)
+
+    teacher_layers = _collect_layer_representations(teacher, val_data, device)
+    student_layers = _collect_layer_representations(student, val_data, device)
+
+    if not teacher_layers or not student_layers:
+        log.warning("CKA: empty layer representations")
+        return
+
+    # Compute CKA matrix: rows=teacher layers, cols=student layers
+    n_teacher = len(teacher_layers)
+    n_student = len(student_layers)
+    cka_matrix = np.zeros((n_teacher, n_student))
+    for i in range(n_teacher):
+        for j in range(n_student):
+            cka_matrix[i, j] = _linear_cka(teacher_layers[i], student_layers[j])
+
+    cka_data = {
+        "matrix": cka_matrix.tolist(),
+        "teacher_layers": [f"Teacher L{i+1}" for i in range(n_teacher)],
+        "student_layers": [f"Student L{i+1}" for i in range(n_student)],
+    }
+    cka_path = out_dir / "cka_matrix.json"
+    cka_path.write_text(json.dumps(cka_data, indent=2))
+    log.info("Saved CKA matrix (%dx%d) → %s", n_teacher, n_student, cka_path)
+
+    del teacher, student
+    cleanup()

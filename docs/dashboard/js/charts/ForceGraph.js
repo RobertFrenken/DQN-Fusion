@@ -69,14 +69,29 @@ export class ForceGraph extends BaseChart {
             .force('center', d3.forceCenter(w / 2, h / 2))
             .force('collision', d3.forceCollide().radius(d => rScale(degree.get(d.id) || 0) + 2));
 
+        // Edge attention weights (opt-in via options.edgeWeights)
+        const edgeWeights = options.edgeWeights || null;
+        let edgeWidthFn = () => 1;
+        let edgeColorFn = () => '#30363d';
+        let edgeOpacityFn = () => 0.4;
+
+        if (edgeWeights && edgeWeights.length === links.length) {
+            const wExtent = d3.extent(edgeWeights);
+            const widthScale = d3.scaleLinear().domain(wExtent).range([0.5, 4]);
+            const colorInterp = d3.scaleSequential(d3.interpolateOrRd).domain(wExtent);
+            edgeWidthFn = (d, i) => widthScale(edgeWeights[i]);
+            edgeColorFn = (d, i) => colorInterp(edgeWeights[i]);
+            edgeOpacityFn = (d, i) => 0.3 + 0.6 * ((edgeWeights[i] - wExtent[0]) / (wExtent[1] - wExtent[0] || 1));
+        }
+
         const link = g.append('g')
             .attr('class', 'force-links')
             .selectAll('line')
             .data(links)
             .join('line')
-            .attr('stroke', '#30363d')
-            .attr('stroke-opacity', 0.4)
-            .attr('stroke-width', 1);
+            .attr('stroke', edgeColorFn)
+            .attr('stroke-opacity', edgeOpacityFn)
+            .attr('stroke-width', edgeWidthFn);
 
         const node = g.append('g')
             .attr('class', 'force-nodes')

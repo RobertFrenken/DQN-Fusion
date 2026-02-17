@@ -9,6 +9,9 @@ import './charts/TimelineChart.js';
 import './charts/BubbleChart.js';
 import './charts/ForceGraph.js';
 import './charts/HistogramChart.js';
+import './charts/SummaryChart.js';
+import './charts/HeatmapChart.js';
+import './charts/CurveChart.js';
 
 // Import and initialize PanelManager
 import { PanelManager } from './panels/PanelManager.js';

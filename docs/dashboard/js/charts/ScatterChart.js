@@ -71,8 +71,28 @@ export class ScatterChart extends BaseChart {
                 .attr('stroke-width', 1);
         }
 
-        const pointOpacity = showDensity ? 0.4 : 0.8;
-        const pointRadius = showDensity ? 3 : 6;
+        // Voronoi overlay (opt-in)
+        const showVoronoi = options.showDensity === 'voronoi';
+        if (showVoronoi && data.length > 2 && typeof d3.Delaunay !== 'undefined') {
+            const points = data.map(d => [x(d[xField]), y(d[yField])]);
+            const delaunay = d3.Delaunay.from(points);
+            const voronoi = delaunay.voronoi([0, 0, w, h]);
+
+            g.append('g')
+                .attr('class', 'voronoi-overlay')
+                .selectAll('path')
+                .data(data)
+                .join('path')
+                .attr('d', (d, i) => voronoi.renderCell(i))
+                .attr('fill', d => colorFn(d))
+                .attr('fill-opacity', 0.06)
+                .attr('stroke', d => colorFn(d))
+                .attr('stroke-opacity', 0.15)
+                .attr('stroke-width', 0.5);
+        }
+
+        const pointOpacity = (showDensity && !showVoronoi) ? 0.4 : showVoronoi ? 0.9 : 0.8;
+        const pointRadius = (showDensity && !showVoronoi) ? 3 : showVoronoi ? 4 : 6;
 
         g.selectAll('circle')
             .data(data)
@@ -92,6 +112,35 @@ export class ScatterChart extends BaseChart {
             })
             .on('mousemove', (event) => this._moveTooltip(event))
             .on('mouseout', () => this._hideTooltip());
+
+        // Pareto frontier overlay
+        if (options.paretoLine) {
+            const valid = data.filter(d => d[xField] != null && d[yField] != null);
+            const sorted = [...valid].sort((a, b) => a[xField] - b[xField]);
+            // Sweep right-to-left to find non-dominated points (maximize y)
+            const frontier = [];
+            let maxY = -Infinity;
+            for (let i = sorted.length - 1; i >= 0; i--) {
+                if (sorted[i][yField] >= maxY) {
+                    maxY = sorted[i][yField];
+                    frontier.unshift(sorted[i]);
+                }
+            }
+            if (frontier.length > 1) {
+                const line = d3.line()
+                    .x(d => x(d[xField]))
+                    .y(d => y(d[yField]))
+                    .curve(d3.curveStepAfter);
+                g.append('path')
+                    .datum(frontier)
+                    .attr('d', line)
+                    .attr('fill', 'none')
+                    .attr('stroke', '#f0883e')
+                    .attr('stroke-width', 2)
+                    .attr('stroke-dasharray', '6,3')
+                    .attr('opacity', 0.8);
+            }
+        }
     }
 }
 

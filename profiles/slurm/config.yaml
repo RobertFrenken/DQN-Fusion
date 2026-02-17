@@ -26,6 +26,15 @@ printshellcmds: true
 rerun-incomplete: true
 cache: all
 
+# Content-based rerun triggers (Snakemake ≥7.8).
+# Fixes NFS timestamp cascade: touching cache files no longer triggers
+# upstream re-execution unless file *content* actually changed.
+rerun-triggers:
+  - mtime
+  - input
+  - code
+  - params
+
 # Between-workflow cache for deterministic preprocessing.
 # Set env before invoking Snakemake:
 #   export SNAKEMAKE_OUTPUT_CACHE=/fs/scratch/PAS1266/snakemake-cache

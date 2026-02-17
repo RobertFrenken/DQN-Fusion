@@ -89,6 +89,7 @@ class TrainingConfig(BaseModel, frozen=True):
     difficulty_cache_update: int = 10
     curriculum_memory_multiplier: float = 1.0
     log_teacher_student_comparison: bool = True
+    dynamic_batching: bool = True
 
 
 class FusionConfig(BaseModel, frozen=True):

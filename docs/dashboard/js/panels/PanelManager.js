@@ -28,22 +28,33 @@ export class PanelManager {
 
         this._buildNav();
         this._buildPanels();
-        this._showPanel(PANELS[0].id);
+
+        const initial = this._panelFromHash() || PANELS[0].id;
+        this._showPanel(initial);
+
+        window.addEventListener('hashchange', () => {
+            const id = this._panelFromHash();
+            if (id) this._showPanel(id);
+        });
+    }
+
+    _panelFromHash() {
+        const hash = window.location.hash.replace(/^#/, '');
+        if (!hash) return null;
+        const panel = PANELS.find(p => p.id === hash);
+        return panel ? panel.id : null;
     }
 
     _buildNav() {
         const nav = document.querySelector('nav');
         nav.innerHTML = '';
-        PANELS.forEach((panel, i) => {
+        PANELS.forEach((panel) => {
             const a = document.createElement('a');
             a.href = `#${panel.id}`;
             a.textContent = panel.title;
-            if (i === 0) a.classList.add('active');
             a.addEventListener('click', (e) => {
                 e.preventDefault();
-                nav.querySelectorAll('a').forEach(l => l.classList.remove('active'));
-                a.classList.add('active');
-                this._showPanel(panel.id);
+                window.location.hash = panel.id;
             });
             nav.appendChild(a);
         });
@@ -138,6 +149,34 @@ export class PanelManager {
                 opt.textContent = r.run_id;
                 select.appendChild(opt);
             });
+        } else if (ctrl.reconErrorSource || ctrl.attentionSource || ctrl.ckaSource) {
+            // Load index.json for recon_errors, attention, or cka
+            const dir = ctrl.reconErrorSource ? 'recon_errors'
+                : ctrl.attentionSource ? 'attention' : 'cka';
+            this._loadJSON(`${dir}/index.json`).then(index => {
+                select.innerHTML = '';
+                const files = Array.isArray(index) ? index : (index?.data ?? []);
+                if (files.length === 0) {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = 'No data available';
+                    select.appendChild(opt);
+                    return;
+                }
+                files.forEach(fname => {
+                    const opt = document.createElement('option');
+                    const base = fname.replace(/\.json$/, '');
+                    opt.value = base;
+                    opt.textContent = base;
+                    select.appendChild(opt);
+                });
+            }).catch(() => {
+                select.innerHTML = '';
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'No data available';
+                select.appendChild(opt);
+            });
         } else if (ctrl.embeddingSource || ctrl.dqnPolicySource) {
             // Load index.json to discover available files
             const dir = ctrl.embeddingSource ? 'embeddings' : 'dqn_policy';
@@ -187,6 +226,17 @@ export class PanelManager {
             s.style.display = s.id === panelId ? '' : 'none';
         });
 
+        // Sync nav active state
+        const nav = document.querySelector('nav');
+        nav.querySelectorAll('a').forEach(a => {
+            a.classList.toggle('active', a.getAttribute('href') === `#${panelId}`);
+        });
+
+        // Sync hash (no-op if already correct)
+        if (window.location.hash !== `#${panelId}`) {
+            history.replaceState(null, '', `#${panelId}`);
+        }
+
         const panel = PANELS.find(p => p.id === panelId);
         if (!panel) return;
 
@@ -198,13 +248,21 @@ export class PanelManager {
 
     async _initChart(panel) {
         const container = `#${panel.id}-chart`;
+
+        // Show loading skeleton while data loads
+        const containerEl = document.querySelector(container);
+        if (containerEl) {
+            containerEl.innerHTML = '<div class="loading-skeleton"></div>';
+        }
+
         const ChartClass = Registry.get(panel.chartType);
         const chart = new ChartClass(container, panel.chartConfig || {});
         this._charts.set(panel.id, chart);
 
-        const data = await this._loadPanelData(panel);
+        let data = await this._loadPanelData(panel);
         if (data !== null) {
             const options = this._gatherOptions(panel);
+            this._mergeDataOptions(data, options);
             chart.update(data, options);
         }
     }
@@ -277,6 +335,198 @@ export class PanelManager {
                 metric_name: m.metric_name,
                 best_value: m.value,
             }));
+        }
+
+        if (panel.dynamicLoader === 'confusion_matrix') {
+            const runId = options._run;
+            const model = options._model || 'gat';
+            const scenario = options._scenario || 'val';
+            if (!runId) return null;
+            const fname = runId.replace(/\//g, '_') + '.json';
+            const metrics = await this._loadCached('metrics/' + fname);
+            if (!metrics || metrics.length === 0) return null;
+            // Find confusion_matrix metric for this model+scenario
+            const cmEntry = metrics.find(m =>
+                m.model === model && m.scenario === scenario && m.metric_name === 'confusion_matrix'
+            );
+            if (!cmEntry || !cmEntry.value) return null;
+            const cm = typeof cmEntry.value === 'string' ? JSON.parse(cmEntry.value) : cmEntry.value;
+            return {
+                matrix: cm,
+                rowLabels: ['Actual Normal', 'Actual Attack'],
+                colLabels: ['Pred Normal', 'Pred Attack'],
+            };
+        }
+
+        if (panel.dynamicLoader === 'roc_curves') {
+            const runId = options._run;
+            const curveType = options._curveType || 'roc';
+            if (!runId) return null;
+            const runSlug = runId.replace(/\//g, '_');
+            // Load all model curves for this run
+            const index = await this._loadCached('roc_curves/index.json');
+            const files = Array.isArray(index) ? index : (index?.data ?? []);
+            const matching = files.filter(f => f.startsWith(runSlug));
+            if (matching.length === 0) return null;
+            const series = [];
+            for (const fname of matching) {
+                const curveData = await this._loadCached('roc_curves/' + fname);
+                if (!curveData) continue;
+                const d = curveData.data || curveData;
+                const model = d.model || fname.split('_').pop().replace('.json', '');
+                if (curveType === 'roc' && d.roc_curve) {
+                    series.push({
+                        name: model.toUpperCase(),
+                        auc: d.auc,
+                        points: d.roc_curve.fpr.map((fpr, i) => ({ x: fpr, y: d.roc_curve.tpr[i] })),
+                    });
+                } else if (curveType === 'pr' && d.pr_curve) {
+                    series.push({
+                        name: model.toUpperCase(),
+                        auc: d.pr_auc,
+                        points: d.pr_curve.recall.map((rec, i) => ({ x: rec, y: d.pr_curve.precision[i] })),
+                    });
+                }
+            }
+            return {
+                series,
+                _curveType: curveType,
+                _xLabel: curveType === 'roc' ? 'False Positive Rate' : 'Recall',
+                _yLabel: curveType === 'roc' ? 'True Positive Rate' : 'Precision',
+                _refLine: curveType === 'roc' ? 'diagonal' : 'none',
+            };
+        }
+
+        if (panel.dynamicLoader === 'recon_errors') {
+            const runId = options._run;
+            if (!runId) return null;
+            const fname = runId.replace(/\//g, '_') + '.json';
+            const recon = await this._loadCached('recon_errors/' + fname);
+            if (!recon) return null;
+            const d = recon.data || recon;
+            // Transform to histogram-friendly format (alpha_by_label style)
+            const normalErrors = [], attackErrors = [];
+            for (let i = 0; i < d.errors.length; i++) {
+                if (d.labels[i] === 0) normalErrors.push(d.errors[i]);
+                else attackErrors.push(d.errors[i]);
+            }
+            return {
+                alpha_by_label: { normal: normalErrors, attack: attackErrors },
+                _thresholdLine: d.optimal_threshold,
+                _xLabel: 'Reconstruction Error',
+            };
+        }
+
+        if (panel.dynamicLoader === 'attention') {
+            const runId = options._run;
+            const layer = parseInt(options._layer || '0', 10);
+            const sampleIdx = parseInt(options._sample || '0', 10);
+            if (!runId) return null;
+            const fname = runId.replace(/\//g, '_') + '.json';
+            const attnData = await this._loadCached('attention/' + fname);
+            if (!attnData || attnData.length === 0) return null;
+            const samples = Array.isArray(attnData) ? attnData : (attnData.data || []);
+            const sample = samples[sampleIdx] || samples[0];
+            if (!sample) return null;
+            // Build force graph data with attention edge weights
+            const edgeIndex = sample.edge_index;
+            const nodeFeatures = sample.node_features;
+            const layerData = sample.layers[layer] || sample.layers[0];
+            const numNodes = nodeFeatures.length;
+            const nodes = nodeFeatures.map((feat, i) => ({ id: i, features: [feat] }));
+            const links = [];
+            const edgeWeights = [];
+            for (let i = 0; i < edgeIndex[0].length; i++) {
+                links.push({ source: edgeIndex[0][i], target: edgeIndex[1][i] });
+                edgeWeights.push(layerData.alpha_mean[i] || 0);
+            }
+            return [{
+                dataset: 'attention',
+                sample_idx: sampleIdx,
+                label: sample.label,
+                nodes,
+                links,
+                _edgeWeights: edgeWeights,
+            }];
+        }
+
+        if (panel.dynamicLoader === 'attention_carpet') {
+            const runId = options._run;
+            const sampleIdx = parseInt(options._sample || '0', 10);
+            if (!runId) return null;
+            const fname = runId.replace(/\//g, '_') + '.json';
+            const attnData = await this._loadCached('attention/' + fname);
+            if (!attnData || attnData.length === 0) return null;
+            const samples = Array.isArray(attnData) ? attnData : (attnData.data || []);
+            const sample = samples[sampleIdx] || samples[0];
+            if (!sample || !sample.layers) return null;
+            // Build carpet: rows=edges, cols=layers, value=mean attention
+            const nEdges = Math.min(sample.layers[0].alpha_mean.length, 30); // cap for readability
+            const nLayers = sample.layers.length;
+            const matrix = [];
+            for (let e = 0; e < nEdges; e++) {
+                const row = [];
+                for (let l = 0; l < nLayers; l++) {
+                    row.push(sample.layers[l].alpha_mean[e] || 0);
+                }
+                matrix.push(row);
+            }
+            return {
+                matrix,
+                rowLabels: Array.from({ length: nEdges }, (_, i) => `E${i}`),
+                colLabels: sample.layers.map((_, i) => `Layer ${i + 1}`),
+            };
+        }
+
+        if (panel.dynamicLoader === 'training_carpet') {
+            const metric = options._metric || 'val_loss';
+            // Load all training curve files
+            const index = await this._loadCached('training_curves/index.json').catch(() => []);
+            const runs = this._runs.filter(r =>
+                r.status === 'complete' && ['autoencoder', 'curriculum', 'fusion'].includes(r.stage)
+            );
+            if (runs.length === 0) return null;
+            const matrix = [];
+            const rowLabels = [];
+            let maxEpochs = 0;
+            for (const run of runs.slice(0, 20)) { // cap at 20 runs
+                const fname = run.run_id.replace(/\//g, '_') + '.json';
+                try {
+                    const curveData = await this._loadCached('training_curves/' + fname);
+                    if (!curveData || curveData.length === 0) continue;
+                    const filtered = curveData.filter(d => d.metric_name === metric);
+                    if (filtered.length === 0) continue;
+                    const sorted = filtered.sort((a, b) => a.epoch - b.epoch);
+                    const row = sorted.map(d => d.value);
+                    matrix.push(row);
+                    rowLabels.push(run.run_id.split('/').pop() || run.run_id);
+                    maxEpochs = Math.max(maxEpochs, row.length);
+                } catch { continue; }
+            }
+            if (matrix.length === 0) return null;
+            // Pad rows to same length
+            for (const row of matrix) {
+                while (row.length < maxEpochs) row.push(null);
+            }
+            return {
+                matrix,
+                rowLabels,
+                colLabels: Array.from({ length: maxEpochs }, (_, i) => `${i + 1}`),
+            };
+        }
+
+        if (panel.dynamicLoader === 'cka') {
+            const runId = options._run;
+            if (!runId) return null;
+            const fname = runId.replace(/\//g, '_') + '.json';
+            const ckaData = await this._loadCached('cka/' + fname);
+            if (!ckaData) return null;
+            const d = ckaData.data || ckaData;
+            return {
+                matrix: d.matrix,
+                rowLabels: d.teacher_layers || d.matrix.map((_, i) => `Teacher L${i + 1}`),
+                colLabels: d.student_layers || d.matrix[0].map((_, i) => `Student L${i + 1}`),
+            };
         }
 
         return null;
@@ -354,7 +604,33 @@ export class PanelManager {
         }
 
         if (data !== null) {
+            this._mergeDataOptions(data, options);
             chart.update(data, options);
+        }
+    }
+
+    _mergeDataOptions(data, options) {
+        // Dynamic loaders can embed options in the data object via _-prefixed keys
+        if (data && typeof data === 'object' && !Array.isArray(data)) {
+            for (const key of Object.keys(data)) {
+                if (key.startsWith('_')) {
+                    const optKey = key.slice(1);
+                    if (!(optKey in options) || options[optKey] == null) {
+                        options[optKey] = data[key];
+                    }
+                }
+            }
+        }
+        // For arrays (e.g., force graph attention data), check first element
+        if (Array.isArray(data) && data.length > 0 && data[0]) {
+            for (const key of Object.keys(data[0])) {
+                if (key.startsWith('_')) {
+                    const optKey = key.slice(1);
+                    if (!(optKey in options) || options[optKey] == null) {
+                        options[optKey] = data[0][key];
+                    }
+                }
+            }
         }
     }
 }

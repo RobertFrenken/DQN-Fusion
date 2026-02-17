@@ -27,6 +27,12 @@ export class TableChart extends BaseChart {
 
         rows.sort((a, b) => (b.value ?? -Infinity) - (a.value ?? -Infinity));
 
+        // Search input
+        const input = this.container.append('input')
+            .attr('type', 'text')
+            .attr('class', 'table-search')
+            .attr('placeholder', 'Filter rows...');
+
         const table = this.container.append('table');
         const thead = table.append('thead').append('tr');
         const cols = ['dataset', 'model', 'model_type', 'scale', 'kd', metric];
@@ -42,15 +48,20 @@ export class TableChart extends BaseChart {
                         const key = c === metric ? 'value' : c;
                         return asc ? d3.ascending(a[key], b[key]) : d3.descending(a[key], b[key]);
                     });
-                    renderRows();
+                    renderRows(input.node().value);
                 });
         });
 
         const tbody = table.append('tbody');
 
-        function renderRows() {
+        function renderRows(filter = '') {
             tbody.selectAll('tr').remove();
-            rows.forEach(r => {
+            const needle = filter.toLowerCase();
+            const visible = needle
+                ? rows.filter(r => Object.values(r).some(v =>
+                    String(v ?? '').toLowerCase().includes(needle)))
+                : rows;
+            visible.forEach(r => {
                 const tr = tbody.append('tr');
                 tr.append('td').text(r.dataset);
                 tr.append('td').text(r.model);
@@ -64,6 +75,8 @@ export class TableChart extends BaseChart {
                     .text(r.value != null ? r.value.toFixed(4) : '\u2014');
             });
         }
+
+        input.on('input', function() { renderRows(this.value); });
         renderRows();
     }
 }

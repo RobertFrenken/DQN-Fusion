@@ -21,6 +21,7 @@
 from config.paths import (
     get_datasets, EXPERIMENT_ROOT,
     checkpoint_path_str, metrics_path_str, benchmark_path_str, log_path_str,
+    done_path_str,
 )
 from config.constants import SLURM_ACCOUNT, SLURM_PARTITION, SLURM_GPU_TYPE
 

@@ -66,6 +66,6 @@ Overkill at current scale (single pipeline), but useful if experiment branches d
 | Between-workflow caching | **Done** | — | Saves compute across experiments |
 | Group jobs | **Done** | — | Reduces SLURM overhead |
 | Paramspace | Not started | ~1 hr | Eliminates HP sweep boilerplate |
-| `--rulegraph` for docs | Trivial | ~5 min | Immediate onboarding value |
+| `--rulegraph` for docs | **Done** | — | Pipeline DAG in `docs/pipeline_dag.svg` |
 | Notebook integration | Not started | ~30 min | Self-documenting analysis |
 | Module pattern | Not started | ~half day | DRY shared pipeline code |

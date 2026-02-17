@@ -496,6 +496,223 @@ def export_dqn_policy(output_dir: Path) -> Path:
     return policy_dir
 
 
+def export_roc_curves(output_dir: Path) -> Path:
+    """Export ROC/PR curve arrays from evaluation metrics.json files."""
+    curves_dir = output_dir / "roc_curves"
+    curves_dir.mkdir(parents=True, exist_ok=True)
+
+    exp_root = Path("experimentruns")
+    count = 0
+    exported_files: list[str] = []
+
+    if not exp_root.is_dir():
+        index_path = curves_dir / "index.json"
+        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
+        return curves_dir
+
+    for ds_dir in sorted(exp_root.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            mp = run_dir / "metrics.json"
+            if not mp.exists():
+                continue
+
+            metrics = json.loads(mp.read_text())
+            run_id = f"{ds_dir.name}_{run_dir.name}"
+
+            for model_key in ("vgae", "gat", "fusion"):
+                model_metrics = metrics.get(model_key, {})
+                additional = model_metrics.get("additional", {})
+                roc = additional.get("roc_curve")
+                pr = additional.get("pr_curve")
+                if not roc and not pr:
+                    continue
+                curve_data = {"model": model_key}
+                if roc:
+                    curve_data["roc_curve"] = roc
+                    curve_data["auc"] = model_metrics.get("core", {}).get("auc")
+                if pr:
+                    curve_data["pr_curve"] = pr
+                    curve_data["pr_auc"] = additional.get("pr_auc")
+
+                fname = f"{run_id}_{model_key}.json"
+                (curves_dir / fname).write_text(json.dumps(_versioned_envelope(curve_data), indent=2))
+                exported_files.append(fname)
+                count += 1
+
+    index_path = curves_dir / "index.json"
+    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
+    log.info("Exported %d ROC/PR curve files → %s", count, curves_dir)
+    return curves_dir
+
+
+def export_attention(output_dir: Path) -> Path:
+    """Export GAT attention weights from evaluation runs as D3-friendly JSON."""
+    attn_dir = output_dir / "attention"
+    attn_dir.mkdir(parents=True, exist_ok=True)
+
+    import numpy as np
+
+    exp_root = Path("experimentruns")
+    count = 0
+    exported_files: list[str] = []
+
+    if not exp_root.is_dir():
+        index_path = attn_dir / "index.json"
+        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
+        return attn_dir
+
+    for ds_dir in sorted(exp_root.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            npz_path = run_dir / "attention_weights.npz"
+            if not npz_path.exists():
+                continue
+
+            data = np.load(npz_path, allow_pickle=True)
+            n_samples = int(data["n_samples"])
+            run_id = f"{ds_dir.name}_{run_dir.name}"
+
+            samples = []
+            for i in range(n_samples):
+                prefix = f"sample_{i}"
+                graph_idx = int(data[f"{prefix}_graph_idx"])
+                label = int(data[f"{prefix}_label"])
+                edge_index = data[f"{prefix}_edge_index"].tolist()
+                node_features = data[f"{prefix}_node_features"].tolist()
+
+                # Collect attention per layer
+                layers = []
+                layer_idx = 0
+                while f"{prefix}_layer_{layer_idx}_alpha" in data:
+                    alpha = data[f"{prefix}_layer_{layer_idx}_alpha"]
+                    # alpha shape: [n_edges, n_heads] or [n_edges]
+                    layers.append({
+                        "alpha_mean": alpha.mean(axis=-1).tolist() if alpha.ndim > 1 else alpha.tolist(),
+                        "n_heads": int(alpha.shape[-1]) if alpha.ndim > 1 else 1,
+                    })
+                    layer_idx += 1
+
+                samples.append({
+                    "graph_idx": graph_idx,
+                    "label": label,
+                    "edge_index": edge_index,
+                    "node_features": node_features,
+                    "layers": layers,
+                })
+
+            fname = f"{run_id}.json"
+            (attn_dir / fname).write_text(json.dumps(_versioned_envelope(samples), indent=2))
+            exported_files.append(fname)
+            count += 1
+
+    index_path = attn_dir / "index.json"
+    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
+    log.info("Exported %d attention files → %s", count, attn_dir)
+    return attn_dir
+
+
+def export_recon_errors(output_dir: Path) -> Path:
+    """Export VGAE reconstruction errors from evaluation embeddings.npz files."""
+    recon_dir = output_dir / "recon_errors"
+    recon_dir.mkdir(parents=True, exist_ok=True)
+
+    import numpy as np
+
+    exp_root = Path("experimentruns")
+    count = 0
+    exported_files: list[str] = []
+
+    if not exp_root.is_dir():
+        index_path = recon_dir / "index.json"
+        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
+        return recon_dir
+
+    for ds_dir in sorted(exp_root.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            npz_path = run_dir / "embeddings.npz"
+            if not npz_path.exists():
+                continue
+
+            data = np.load(npz_path, allow_pickle=True)
+            if "vgae_errors" not in data:
+                continue
+
+            errors = data["vgae_errors"].tolist()
+            labels = data["vgae_labels"].tolist() if "vgae_labels" in data else []
+
+            # Read optimal threshold from metrics.json if available
+            threshold = None
+            mp = run_dir / "metrics.json"
+            if mp.exists():
+                metrics = json.loads(mp.read_text())
+                threshold = metrics.get("vgae", {}).get("core", {}).get("optimal_threshold")
+
+            recon_data = {
+                "errors": errors,
+                "labels": labels,
+                "optimal_threshold": threshold,
+            }
+
+            run_id = f"{ds_dir.name}_{run_dir.name}"
+            fname = f"{run_id}.json"
+            (recon_dir / fname).write_text(json.dumps(_versioned_envelope(recon_data), indent=2))
+            exported_files.append(fname)
+            count += 1
+
+    index_path = recon_dir / "index.json"
+    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
+    log.info("Exported %d recon error files → %s", count, recon_dir)
+    return recon_dir
+
+
+def export_cka(output_dir: Path) -> Path:
+    """Export CKA matrices from KD evaluation runs."""
+    cka_dir = output_dir / "cka"
+    cka_dir.mkdir(parents=True, exist_ok=True)
+
+    exp_root = Path("experimentruns")
+    count = 0
+    exported_files: list[str] = []
+
+    if not exp_root.is_dir():
+        index_path = cka_dir / "index.json"
+        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
+        return cka_dir
+
+    for ds_dir in sorted(exp_root.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            cka_path = run_dir / "cka_matrix.json"
+            if not cka_path.exists():
+                continue
+
+            import shutil
+            run_id = f"{ds_dir.name}_{run_dir.name}"
+            fname = f"{run_id}.json"
+            shutil.copy2(cka_path, cka_dir / fname)
+            exported_files.append(fname)
+            count += 1
+
+    index_path = cka_dir / "index.json"
+    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
+    log.info("Exported %d CKA matrices → %s", count, cka_dir)
+    return cka_dir
+
+
 def export_all(output_dir: Path) -> None:
     """Run all exports."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -522,6 +739,10 @@ def export_all(output_dir: Path) -> None:
         ("model_sizes", export_model_sizes),
         ("embeddings", export_embeddings),
         ("dqn_policy", export_dqn_policy),
+        ("roc_curves", export_roc_curves),
+        ("attention", export_attention),
+        ("recon_errors", export_recon_errors),
+        ("cka", export_cka),
     ]:
         try:
             func(output_dir)

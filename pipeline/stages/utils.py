@@ -11,7 +11,7 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
-from torch_geometric.loader import DataLoader
+from torch_geometric.loader import DataLoader, DynamicBatchSampler
 
 from config import PipelineConfig, stage_dir, checkpoint_path, config_path, data_dir, cache_dir
 from config.constants import MMAP_TENSOR_LIMIT
@@ -249,18 +249,55 @@ def _safe_num_workers(data, cfg: PipelineConfig) -> int:
     return nw
 
 
+def compute_node_budget(batch_size: int, cfg: PipelineConfig) -> int | None:
+    """Derive max_num_nodes from batch_size * p95 graph node count.
+
+    Returns None when cache metadata is unavailable (falls back to static batching).
+    """
+    import json as _json
+
+    metadata_path = cache_dir(cfg) / "cache_metadata.json"
+    if not metadata_path.exists():
+        return None
+    try:
+        meta = _json.loads(metadata_path.read_text())
+        p95 = meta.get("graph_stats", {}).get("node_count", {}).get("p95")
+        if not p95:
+            return None
+        return int(batch_size * p95)
+    except Exception as e:
+        log.warning("Failed to read graph stats for node budget: %s", e)
+        return None
+
+
 def make_dataloader(
     data,
     cfg: PipelineConfig,
     batch_size: int,
     shuffle: bool = True,
+    max_num_nodes: int | None = None,
 ) -> DataLoader:
     """Create a DataLoader with consistent settings.
 
-    Falls back to single-process loading (num_workers=0) when the dataset has
-    too many tensor storages for the kernel mmap limit.
+    When *max_num_nodes* is provided, uses ``DynamicBatchSampler`` to pack
+    variable-size graphs up to a node budget per batch.  Falls back to
+    single-process loading (num_workers=0) when the dataset has too many
+    tensor storages for the kernel mmap limit.
     """
     nw = _safe_num_workers(data, cfg)
+
+    if max_num_nodes is not None:
+        sampler = DynamicBatchSampler(
+            data, max_num=max_num_nodes, mode="node", shuffle=shuffle,
+        )
+        return DataLoader(
+            data,
+            batch_sampler=sampler,
+            num_workers=nw,
+            pin_memory=True,
+            persistent_workers=nw > 0,
+            multiprocessing_context=cfg.mp_start_method if nw > 0 else None,
+        )
 
     return DataLoader(
         data,

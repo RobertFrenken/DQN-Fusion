@@ -28,6 +28,7 @@ dist/
 mlruns/
 slurm_logs/
 results/
+**/.done
 
 # ===== IDE & EDITOR FILES =====
 .vscode/

@@ -67,6 +67,7 @@ training:
   difficulty_cache_update: 10
   curriculum_memory_multiplier: 1.0
   log_teacher_student_comparison: true
+  dynamic_batching: true
 
 auxiliaries: []
 

@@ -10,7 +10,7 @@ import torch.nn.functional as F
 import pytorch_lightning as pl
 
 from config import PipelineConfig
-from .utils import build_optimizer_dict, effective_batch_size, make_dataloader
+from .utils import build_optimizer_dict, effective_batch_size, compute_node_budget, make_dataloader
 
 log = logging.getLogger(__name__)
 
@@ -223,11 +223,17 @@ class CurriculumDataModule(pl.LightningDataModule):
         )
         self._current_epoch += 1
         bs = effective_batch_size(self.cfg)
-        return make_dataloader(sampled, self.cfg, bs, shuffle=True)
+        max_nodes = None
+        if self.cfg.training.dynamic_batching:
+            max_nodes = compute_node_budget(bs, self.cfg)
+        return make_dataloader(sampled, self.cfg, bs, shuffle=True, max_num_nodes=max_nodes)
 
     def val_dataloader(self):
         bs = effective_batch_size(self.cfg)
-        return make_dataloader(self.val_data, self.cfg, bs, shuffle=False)
+        max_nodes = None
+        if self.cfg.training.dynamic_batching:
+            max_nodes = compute_node_budget(bs, self.cfg)
+        return make_dataloader(self.val_data, self.cfg, bs, shuffle=False, max_num_nodes=max_nodes)
 
 
 def _curriculum_sample(normals, attacks, scores, epoch, cfg: PipelineConfig):

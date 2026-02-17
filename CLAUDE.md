@@ -32,6 +32,13 @@ snakemake -s pipeline/Snakefile --profile profiles/slurm --config 'datasets=["hc
 # Dry run (always do this first)
 snakemake -s pipeline/Snakefile -n
 
+# Re-run ONLY evaluation (safe — prevents upstream cascade from cache timestamp changes)
+# Step 1: remove .done sentinels so Snakemake sees eval as missing
+find experimentruns -path '*/eval_*/.done' -delete
+# Step 2: fence to eval rules only (belt-and-suspenders with content-based triggers)
+snakemake -s pipeline/Snakefile --profile profiles/slurm evaluate_all \
+    --allowed-rules eval_large eval_small_kd eval_small_nokd evaluate_all --jobs 18
+
 # Data management
 python -m pipeline.ingest <dataset>     # CSV → Parquet conversion
 python -m pipeline.ingest --all         # Convert all datasets
@@ -163,6 +170,16 @@ These fix real crashes -- do not violate:
 - **Use spawn multiprocessing.** Never `fork` with CUDA. Set `mp_start_method='spawn'` and `multiprocessing_context='spawn'` on all DataLoaders.
 - **NFS filesystem.** `.nfs*` ghost files appear on delete. Already in `.gitignore`.
 - **No GUI on HPC.** Git auth via SSH key, not HTTPS.
+- **Dynamic batching for variable-size graphs.** DynamicBatchSampler (PyG built-in) packs graphs to a node budget instead of a fixed count. Budget = batch_size × p95_nodes (from cache_metadata.json). Keeps GPU ~85% utilized regardless of graph size variance. Disable with `-O training.dynamic_batching false` if needed for reproducibility comparisons.
+- **Snakemake `benchmark:` and `cache: True` are incompatible.** Snakemake cannot fill benchmark files from cached results. All training/eval rules use `cache: True` for between-workflow caching, so benchmark directives were removed. Timing data is tracked in the project DB instead.
+- **Snakemake DAG hardening (sentinel + content triggers).** The pipeline uses three layers of protection against NFS timestamp cascades:
+  1. **Content-based rerun triggers** (`profiles/slurm/config.yaml`): `rerun-triggers: [mtime, input, code, params]` — Snakemake checksums file content, so touching a cache file without changing it won't cascade.
+  2. **Sentinel files**: Rule outputs are lightweight `.done` files, not real artifacts. Training checkpoints (`best_model.pt`) and metrics (`metrics.json`) are side-effects recorded to DB via write-through. Sentinel stability prevents DAG cascading.
+  3. **Between-workflow caching** (`cache: True` on all training + eval rules): Snakemake hashes inputs + code + params and skips re-execution if the same combination was seen before.
+  - To re-run only evaluation: `find experimentruns -path '*/eval_*/.done' -delete` then run with `--allowed-rules`.
+  - To bootstrap sentinels for existing runs:
+    - Training: `find experimentruns -name 'best_model.pt' -exec sh -c 'touch "$(dirname "$1")/.done"' _ {} \;`
+    - Evaluation: `find experimentruns -name 'metrics.json' -path '*/eval_*' -exec sh -c 'touch "$(dirname "$1")/.done"' _ {} \;`
 
 ## Architecture Decisions
 
@@ -177,7 +194,7 @@ These fix real crashes -- do not violate:
 - Write-through DB: `cli.py` records run start/end directly to project DB (including teacher_run propagation for KD eval runs). `populate()` is a backfill/recovery tool that also runs legacy migrations, timestamp backfill, epoch_metrics backfill from Lightning CSVs, stale entry cleanup, and teacher_run backfill.
 - SQLite: WAL mode + 5s busy timeout for concurrent SLURM jobs. Foreign keys enabled. Indices on `metrics(run_id)`, `metrics(run_id, scenario, metric_name)`, `epoch_metrics(run_id, epoch)`.
 - Dashboard: Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types inherit from it. `PanelManager` reads config → builds nav + panels + controls → lazy-loads data → renders. All chart types registered in `Registry`.
-- Dual storage: Snakemake owns filesystem paths (DAG triggers), project DB owns structured results (write-through from cli.py). Dashboard exports static JSON for GitHub Pages.
+- **Dual storage (sentinel-based)**: Snakemake owns `.done` sentinel files (DAG triggers), project DB owns structured results (write-through from cli.py). The `.done` file is a Snakemake output marker — its presence/absence controls DAG scheduling. Real artifacts (`best_model.pt`, `metrics.json`, `embeddings.npz`) are side-effects written by stage code. The real metrics are written to the project DB by `cli.py → record_run_end() → _insert_metrics_from_dict()` as the authoritative copy. `pipeline.db populate` can backfill the DB from filesystem if write-through is missed. To re-run evaluation without re-triggering upstream training: delete the `.done` sentinel and use `--allowed-rules` to fence Snakemake. Dashboard `export.py` reads from both: DB for structured queries, filesystem for artifacts (`embeddings.npz`, `attention_weights.npz`, `dqn_policy.json`, `cka_matrix.json`).
 - Data layer: Parquet (columnar storage) + SQLite (project DB) + Datasette (interactive browsing). All serverless.
 - Dataset catalog: `config/datasets.yaml` — single place to register new datasets.
 - Delete unused code completely. No compatibility shims or `# removed` comments.

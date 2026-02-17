@@ -15,12 +15,19 @@ export class HistogramChart extends BaseChart {
         const attackAlphas = data.alpha_by_label?.attack || [];
 
         if (normalAlphas.length === 0 && attackAlphas.length === 0) {
-            return this._showNoData('No alpha data');
+            return this._showNoData('No distribution data');
         }
 
-        const x = d3.scaleLinear().domain([0, 1]).range([0, w]);
+        // Dynamic domain: default [0,1] for alphas, compute from data for errors
+        const allValues = [...normalAlphas, ...attackAlphas];
+        const extent = d3.extent(allValues);
+        const domain = (extent[0] >= 0 && extent[1] <= 1.01)
+            ? [0, 1]
+            : [extent[0] * 0.95, extent[1] * 1.05];
 
-        const histogram = d3.bin().domain([0, 1]).thresholds(bins);
+        const x = d3.scaleLinear().domain(domain).range([0, w]);
+
+        const histogram = d3.bin().domain(domain).thresholds(bins);
         const normalBins = histogram(normalAlphas);
         const attackBins = histogram(attackAlphas);
 
@@ -30,7 +37,7 @@ export class HistogramChart extends BaseChart {
         this._addXAxis(x);
         this._addYAxis(y);
         this._addGrid(y);
-        this._addAxisLabel('Alpha (VGAE weight)', 'x');
+        this._addAxisLabel(options.xLabel || 'Alpha (VGAE weight)', 'x');
         this._addAxisLabel('Count', 'y');
 
         // Normal bars
@@ -66,6 +73,23 @@ export class HistogramChart extends BaseChart {
             })
             .on('mousemove', (event) => this._moveTooltip(event))
             .on('mouseout', () => this._hideTooltip());
+
+        // Threshold line (opt-in)
+        const thresholdLine = options.thresholdLine;
+        if (thresholdLine != null && isFinite(thresholdLine)) {
+            const tx = x(thresholdLine);
+            g.append('line')
+                .attr('x1', tx).attr('y1', 0)
+                .attr('x2', tx).attr('y2', h)
+                .attr('stroke', '#d29922')
+                .attr('stroke-width', 2)
+                .attr('stroke-dasharray', '6,3');
+            g.append('text')
+                .attr('x', tx + 4).attr('y', 12)
+                .attr('fill', '#d29922')
+                .style('font-size', '10px')
+                .text(`θ=${thresholdLine.toFixed(4)}`);
+        }
 
         this._addLegend([
             { label: 'Normal', color: LABEL_COLORS.normal },

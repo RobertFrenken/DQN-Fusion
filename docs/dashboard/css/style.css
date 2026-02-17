@@ -71,6 +71,7 @@ nav a.active { background: var(--surface); color: var(--accent); }
     border-radius: 8px;
     padding: 1.5rem;
     margin-bottom: 1.5rem;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
 }
 
 .panel h2 {
@@ -207,6 +208,120 @@ footer code {
 /* Bubble chart */
 circle[opacity] {
     transition: opacity 0.15s;
+}
+
+/* Select focus */
+.controls select:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+}
+
+/* Loading skeleton */
+.loading-skeleton {
+    height: 200px;
+    border-radius: 6px;
+    background: linear-gradient(90deg, var(--bg) 25%, var(--border) 50%, var(--bg) 75%);
+    background-size: 200% 100%;
+    animation: shimmer 1.5s ease-in-out infinite;
+}
+
+@keyframes shimmer {
+    0% { background-position: 200% 0; }
+    100% { background-position: -200% 0; }
+}
+
+/* Table search input */
+.table-search {
+    width: 100%;
+    max-width: 300px;
+    padding: 0.4rem 0.6rem;
+    margin-bottom: 0.75rem;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 4px;
+    font-size: 0.8rem;
+    font-family: var(--font-mono);
+}
+
+.table-search:focus {
+    outline: none;
+    border-color: var(--accent);
+    box-shadow: 0 0 0 2px rgba(88, 166, 255, 0.2);
+}
+
+.table-search::placeholder {
+    color: var(--text-muted);
+}
+
+/* Summary overview grid */
+.summary-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    gap: 1rem;
+    margin-top: 0.5rem;
+}
+
+.summary-card {
+    background: var(--bg);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 1rem 1.25rem;
+    text-align: center;
+}
+
+.summary-card .card-value {
+    font-size: 1.6rem;
+    font-weight: 600;
+    color: var(--accent);
+    font-family: var(--font-mono);
+}
+
+.summary-card .card-label {
+    font-size: 0.8rem;
+    color: var(--text-muted);
+    margin-top: 0.25rem;
+}
+
+.summary-card .card-subtitle {
+    font-size: 0.7rem;
+    color: var(--text-muted);
+    margin-top: 0.15rem;
+    font-family: var(--font-mono);
+}
+
+/* Heatmap cells */
+.heatmap-cell {
+    transition: opacity 0.15s;
+}
+
+.heatmap-cell:hover {
+    opacity: 0.85;
+    stroke: var(--accent);
+    stroke-width: 2;
+}
+
+.heatmap-text {
+    pointer-events: none;
+}
+
+.heatmap-pct {
+    pointer-events: none;
+}
+
+/* Curve chart */
+.curve-line {
+    transition: opacity 0.15s;
+}
+
+/* Voronoi overlay */
+.voronoi-overlay path {
+    transition: fill-opacity 0.15s;
+}
+
+.voronoi-overlay path:hover {
+    fill-opacity: 0.15;
 }
 
 /* Responsive: wrap nav on small screens */

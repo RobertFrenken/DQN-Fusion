@@ -17,6 +17,7 @@ from .utils import (
     make_trainer,
     make_dataloader,
     compute_optimal_batch_size,
+    compute_node_budget,
     effective_batch_size,
     load_model,
     load_frozen_cfg,
@@ -52,9 +53,17 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
     else:
         bs = effective_batch_size(cfg)
 
+    max_nodes = None
+    if cfg.training.dynamic_batching:
+        max_nodes = compute_node_budget(bs, cfg)
+        if max_nodes:
+            log.info("Dynamic batching: max_num_nodes=%d (batch_size=%d × p95)", max_nodes, bs)
+        else:
+            log.info("Dynamic batching: no cache metadata, falling back to static batch_size=%d", bs)
+
     log_memory_state("pre-dataloader")
-    train_dl = make_dataloader(train_data, cfg, bs, shuffle=True)
-    val_dl = make_dataloader(val_data, cfg, bs, shuffle=False)
+    train_dl = make_dataloader(train_data, cfg, bs, shuffle=True, max_num_nodes=max_nodes)
+    val_dl = make_dataloader(val_data, cfg, bs, shuffle=False, max_num_nodes=max_nodes)
 
     trainer = make_trainer(cfg, "autoencoder")
     trainer.fit(module, train_dl, val_dl)
@@ -126,9 +135,17 @@ def train_normal(cfg: PipelineConfig) -> Path:
     else:
         bs = effective_batch_size(cfg)
 
+    max_nodes = None
+    if cfg.training.dynamic_batching:
+        max_nodes = compute_node_budget(bs, cfg)
+        if max_nodes:
+            log.info("Dynamic batching: max_num_nodes=%d (batch_size=%d × p95)", max_nodes, bs)
+        else:
+            log.info("Dynamic batching: no cache metadata, falling back to static batch_size=%d", bs)
+
     log_memory_state("pre-dataloader")
-    train_dl = make_dataloader(train_data, cfg, bs, shuffle=True)
-    val_dl = make_dataloader(val_data, cfg, bs, shuffle=False)
+    train_dl = make_dataloader(train_data, cfg, bs, shuffle=True, max_num_nodes=max_nodes)
+    val_dl = make_dataloader(val_data, cfg, bs, shuffle=False, max_num_nodes=max_nodes)
 
     trainer = make_trainer(cfg, "normal")
     trainer.fit(module, train_dl, val_dl)

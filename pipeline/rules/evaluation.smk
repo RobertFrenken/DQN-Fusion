@@ -2,66 +2,55 @@
 
 rule eval_large:
     input:
-        vgae=_ckpt("{ds}", "vgae", "large", "autoencoder"),
-        gat=_ckpt("{ds}", "gat", "large", "curriculum"),
-        dqn=_ckpt("{ds}", "dqn", "large", "fusion"),
+        vgae=_done("{ds}", "vgae", "large", "autoencoder"),
+        gat=_done("{ds}", "gat", "large", "curriculum"),
+        dqn=_done("{ds}", "dqn", "large", "fusion"),
     group: "evaluation"
     output:
-        report(
-            _metrics("{ds}", "eval", "large", "evaluation"),
-            category="Evaluation",
-            caption="Large model evaluation metrics for dataset {ds}",
-        ),
-    benchmark:
-        _bench("{ds}", "eval", "large", "evaluation")
+        done=_done("{ds}", "eval", "large", "evaluation"),
     resources: **_EVAL_RES,
+    cache: True
     log:
         out=_log("{ds}", "eval", "large", "evaluation"),
         err=_log("{ds}", "eval", "large", "evaluation", stream="err"),
     shell:
         CLI + " evaluation --model vgae --scale large --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
+        " && touch {output.done}"
 
 rule eval_small_kd:
     input:
-        vgae=_ckpt("{ds}", "vgae", "small", "autoencoder", aux="kd"),
-        gat=_ckpt("{ds}", "gat", "small", "curriculum", aux="kd"),
-        dqn=_ckpt("{ds}", "dqn", "small", "fusion", aux="kd"),
+        vgae=_done("{ds}", "vgae", "small", "autoencoder", aux="kd"),
+        gat=_done("{ds}", "gat", "small", "curriculum", aux="kd"),
+        dqn=_done("{ds}", "dqn", "small", "fusion", aux="kd"),
     group: "evaluation"
     output:
-        report(
-            _metrics("{ds}", "eval", "small", "evaluation", aux="kd"),
-            category="Evaluation",
-            caption="Small+KD evaluation metrics for dataset {ds}",
-        ),
-    benchmark:
-        _bench("{ds}", "eval", "small", "evaluation", aux="kd")
+        done=_done("{ds}", "eval", "small", "evaluation", aux="kd"),
     resources: **_EVAL_RES,
+    cache: True
     log:
         out=_log("{ds}", "eval", "small", "evaluation", aux="kd"),
         err=_log("{ds}", "eval", "small", "evaluation", aux="kd", stream="err"),
     shell:
         CLI + " evaluation --model vgae --scale small --auxiliaries kd_standard --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
+        " && touch {output.done}"
 
 rule eval_small_nokd:
     input:
-        vgae=_ckpt("{ds}", "vgae", "small", "autoencoder"),
-        gat=_ckpt("{ds}", "gat", "small", "curriculum"),
-        dqn=_ckpt("{ds}", "dqn", "small", "fusion"),
+        vgae=_done("{ds}", "vgae", "small", "autoencoder"),
+        gat=_done("{ds}", "gat", "small", "curriculum"),
+        dqn=_done("{ds}", "dqn", "small", "fusion"),
     group: "evaluation"
     output:
-        report(
-            _metrics("{ds}", "eval", "small", "evaluation"),
-            category="Evaluation",
-            caption="Small (no KD) evaluation metrics for dataset {ds}",
-        ),
-    benchmark:
-        _bench("{ds}", "eval", "small", "evaluation")
+        done=_done("{ds}", "eval", "small", "evaluation"),
     resources: **_EVAL_RES,
+    cache: True
     log:
         out=_log("{ds}", "eval", "small", "evaluation"),
         err=_log("{ds}", "eval", "small", "evaluation", stream="err"),
     shell:
         CLI + " evaluation --model vgae --scale small --dataset {wildcards.ds}"
         " > {log.out} 2> {log.err}"
+        " && touch {output.done}"
+
