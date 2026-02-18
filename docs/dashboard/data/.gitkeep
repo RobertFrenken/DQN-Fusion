@@ -1,0 +1,3 @@
+# Dashboard data is served from S3 (s3://kd-gat/dashboard/).
+# Run `bash scripts/export_dashboard.sh` to generate and sync.
+# JSON files in this directory are gitignored.
