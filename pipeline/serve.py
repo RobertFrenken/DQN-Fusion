@@ -14,9 +14,7 @@ import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
-import numpy as np
 import torch
-import torch.nn.functional as F
 from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 
@@ -29,16 +27,19 @@ log = logging.getLogger(__name__)
 class PredictRequest(BaseModel):
     """CAN frame window for classification."""
     node_features: list[list[float]] = Field(
-        ..., description="Node feature matrix [num_nodes, num_features]"
+        ..., max_length=1000,
+        description="Node feature matrix [num_nodes, num_features]",
     )
     edge_index: list[list[int]] = Field(
-        ..., description="Edge index [2, num_edges] as list of [src, dst] pairs"
+        ..., max_length=10000,
+        description="Edge index [2, num_edges] as list of [src, dst] pairs",
     )
     dataset: str = Field(
         default="hcrl_sa", description="Dataset the models were trained on"
     )
     scale: str = Field(
-        default="large", description="Model scale: large or small"
+        default="large", pattern=r"^(large|small)$",
+        description="Model scale: large or small",
     )
 
 
@@ -160,8 +161,12 @@ async def predict(req: PredictRequest):
 
     try:
         models = _load_models(req.dataset, req.scale)
-    except Exception as e:
-        raise HTTPException(status_code=503, detail=f"Model loading failed: {e}")
+    except Exception:
+        log.exception("Model loading failed for %s/%s", req.dataset, req.scale)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Model loading failed for {req.dataset}/{req.scale}",
+        )
 
     if "gat" not in models or "vgae" not in models:
         raise HTTPException(
@@ -178,42 +183,35 @@ async def predict(req: PredictRequest):
     data = data.to(_device)
 
     with torch.no_grad():
-        # GAT prediction
-        gat = models["gat"]
-        logits = gat(data)
-        probs = F.softmax(logits, dim=1)
-        gat_prob = probs[0, 1].item()
-
-        # VGAE reconstruction error
-        vgae = models["vgae"]
         batch_idx = torch.zeros(x.size(0), dtype=torch.long, device=_device)
-        cont, _, _, _, _ = vgae(data.x, data.edge_index, batch_idx)
-        vgae_error = F.mse_loss(cont, data.x[:, 1:]).item()
+        # Build 15-D state using registry extractors (VGAE 8-D + GAT 7-D)
+        from src.models.registry import extractors as get_extractors
+        features = []
+        for name, extractor in get_extractors():
+            feat = extractor.extract(models[name], data, batch_idx, _device)
+            features.append(feat)
+        state = torch.cat(features).numpy()
 
     # DQN fusion
     if "dqn" in models:
         agent = models["dqn"]
-        state = np.array([
-            gat_prob, 1.0 - gat_prob,
-            vgae_error,
-            float(gat_prob > 0.5),
-            float(vgae_error > 0.5),
-        ], dtype=np.float32)
-        # Pad to expected state dim
-        expected_dim = agent.q_network[0].in_features
-        if len(state) < expected_dim:
-            state = np.pad(state, (0, expected_dim - len(state)))
         alpha, _, _ = agent.select_action(state, training=False)
+        anomaly_score, gat_prob = agent._derive_scores(state)
     else:
         alpha = 0.5
+        # Derive scores directly from state features
+        # VGAE recon error at index 0, GAT class-1 prob at index 9
+        anomaly_score = float(state[0])
+        gat_prob = float(state[9])
 
-    prediction = 1 if alpha > 0.5 else 0
+    fused_score = (1 - alpha) * anomaly_score + alpha * gat_prob
+    prediction = 1 if fused_score > 0.5 else 0
 
     return PredictResponse(
         prediction=prediction,
         label="attack" if prediction == 1 else "normal",
-        confidence=max(alpha, 1.0 - alpha),
+        confidence=max(fused_score, 1.0 - fused_score),
         alpha=float(alpha),
         gat_prob=gat_prob,
-        vgae_error=vgae_error,
+        vgae_error=anomaly_score,
     )

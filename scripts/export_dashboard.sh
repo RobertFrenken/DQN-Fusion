@@ -45,8 +45,13 @@ if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "gnn-experime
 fi
 
 # --- Export experiment data → JSON ---
-echo "Exporting experiment data → ${DASHBOARD_DATA}/ ${EXPORT_FLAG:+(${EXPORT_FLAG})}"
-python -m pipeline.export --output-dir "$DASHBOARD_DATA" $EXPORT_FLAG
+WORKERS_FLAG=""
+if [[ "$EXPORT_FLAG" == "--only-heavy" ]] || [[ -z "$EXPORT_FLAG" ]]; then
+    WORKERS_FLAG="--workers 4"
+fi
+
+echo "Exporting experiment data → ${DASHBOARD_DATA}/ ${EXPORT_FLAG:+(${EXPORT_FLAG})} ${WORKERS_FLAG}"
+python -m pipeline.export --output-dir "$DASHBOARD_DATA" $EXPORT_FLAG $WORKERS_FLAG
 echo "Export complete."
 
 if $DRY_RUN; then

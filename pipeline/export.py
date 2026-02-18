@@ -11,10 +11,16 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import logging
+import random
+import shutil
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
+
+import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -63,7 +69,16 @@ def _scan_runs() -> list[dict]:
             parts = run_dir.name.split("_")
             model_type = cfg.get("model_type") or (parts[0] if parts else "")
             scale = cfg.get("scale") or (parts[1] if len(parts) > 1 else "")
-            stage = parts[2] if len(parts) > 2 else ""
+
+            _AUX_SUFFIXES = {"kd", "nokd"}
+            if cfg.get("stage"):
+                stage = cfg["stage"]
+            else:
+                remaining = parts[2:]
+                if remaining and remaining[-1] in _AUX_SUFFIXES:
+                    remaining = remaining[:-1]
+                stage = "_".join(remaining)
+
             has_kd = bool(cfg.get("auxiliaries")) or ("_kd" in run_dir.name and "nokd" not in run_dir.name)
 
             run_id = f"{ds_dir.name}/{run_dir.name}"
@@ -333,7 +348,6 @@ def export_training_curves(output_dir: Path) -> Path:
                 continue
 
             try:
-                import csv
                 rows = []
                 with open(csv_logs[0]) as f:
                     reader = csv.DictReader(f)
@@ -395,8 +409,7 @@ def export_graph_samples(output_dir: Path) -> Path:
             log.warning("Could not load graphs from %s: %s", graphs_path, e)
             continue
 
-        import random as _random
-        rng = _random.Random(42)
+        rng = random.Random(42)
         normal_idx = [i for i, g in enumerate(graphs)
                       if hasattr(g, 'y') and g.y is not None and int(g.y.item()) == 0]
         attack_idx = [i for i, g in enumerate(graphs)
@@ -479,8 +492,6 @@ EMBEDDING_MAX_SAMPLES = 2000
 
 def _stratified_sample(coords_2d, labels, errors, max_samples: int):
     """Stratified sampling to preserve class distribution."""
-    import numpy as np
-
     n = len(coords_2d)
     if n <= max_samples:
         return coords_2d, labels, errors, False
@@ -504,12 +515,79 @@ def _stratified_sample(coords_2d, labels, errors, max_samples: int):
     )
 
 
-def export_embeddings(output_dir: Path) -> Path:
+def _process_embedding_run(
+    npz_path: Path,
+    run_id: str,
+    embed_dir: Path,
+    methods: tuple[str, ...],
+    max_samples: int,
+) -> list[str]:
+    """Process a single embedding run — pickle-safe (no closures).
+
+    Returns list of exported filenames.
+    """
+    data = np.load(npz_path, allow_pickle=True)
+    exported: list[str] = []
+
+    for model_key in ("vgae_z", "gat_emb"):
+        if model_key not in data:
+            continue
+        embeddings = data[model_key]
+        model_name = model_key.split("_")[0]
+        labels = data.get(f"{model_name}_labels", np.array([]))
+        errors = data.get(f"{model_name}_errors", np.array([]))
+
+        if embeddings.shape[0] < 3:
+            continue
+
+        total_original = embeddings.shape[0]
+        embeddings, labels, errors, was_sampled = _stratified_sample(
+            embeddings, labels, errors, max_samples
+        )
+
+        for method in methods:
+            try:
+                coords_2d = _reduce_embeddings(embeddings, method)
+            except Exception:
+                continue
+
+            records = []
+            for i in range(len(coords_2d)):
+                rec = {
+                    "dim0": float(coords_2d[i, 0]),
+                    "dim1": float(coords_2d[i, 1]),
+                }
+                if i < len(labels):
+                    rec["label"] = int(labels[i])
+                if i < len(errors):
+                    rec["error"] = float(errors[i])
+                records.append(rec)
+
+            metadata = {
+                "n_points": len(records),
+                "sampled": was_sampled,
+                "total_original": total_original,
+            }
+
+            fname = f"{run_id}_{model_name}_{method}.json"
+            envelope = _versioned_envelope(records)
+            envelope["metadata"] = metadata
+            (embed_dir / fname).write_text(json.dumps(envelope, indent=2))
+            exported.append(fname)
+
+    return exported
+
+
+def export_embeddings(
+    output_dir: Path,
+    *,
+    methods: tuple[str, ...] = ("umap",),
+    workers: int = 1,
+) -> Path:
     """Export dimensionality-reduced embeddings from evaluation runs."""
     embed_dir = output_dir / "embeddings"
     embed_dir.mkdir(parents=True, exist_ok=True)
 
-    count = 0
     exported_files: list[str] = []
 
     if not EXPERIMENT_ROOT.is_dir():
@@ -518,6 +596,8 @@ def export_embeddings(output_dir: Path) -> Path:
         log.info("No experimentruns directory — wrote empty embeddings index")
         return embed_dir
 
+    # Collect all (npz_path, run_id) pairs
+    jobs: list[tuple[Path, str]] = []
     for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
         if not ds_dir.is_dir():
             continue
@@ -527,66 +607,35 @@ def export_embeddings(output_dir: Path) -> Path:
             npz_path = run_dir / "embeddings.npz"
             if not npz_path.exists():
                 continue
-
-            import numpy as np
-            data = np.load(npz_path, allow_pickle=True)
             run_id = f"{ds_dir.name}_{run_dir.name}"
+            jobs.append((npz_path, run_id))
 
-            for model_key in ("vgae_z", "gat_emb"):
-                if model_key not in data:
-                    continue
-                embeddings = data[model_key]
-                model_name = model_key.split("_")[0]
-                labels = data.get(f"{model_name}_labels", np.array([]))
-                errors = data.get(f"{model_name}_errors", np.array([]))
-
-                if embeddings.shape[0] < 3:
-                    continue
-
-                # Downsample BEFORE reduction to keep UMAP/PyMDE tractable
-                total_original = embeddings.shape[0]
-                embeddings, labels, errors, was_sampled = _stratified_sample(
-                    embeddings, labels, errors, EMBEDDING_MAX_SAMPLES
+    if workers > 1 and len(jobs) > 1:
+        with ProcessPoolExecutor(max_workers=workers) as pool:
+            futures = {
+                pool.submit(
+                    _process_embedding_run, npz_path, run_id,
+                    embed_dir, methods, EMBEDDING_MAX_SAMPLES,
+                ): run_id
+                for npz_path, run_id in jobs
+            }
+            for future in as_completed(futures):
+                try:
+                    exported_files.extend(future.result())
+                except Exception as e:
+                    log.warning("Embedding export failed for %s: %s",
+                                futures[future], e)
+    else:
+        for npz_path, run_id in jobs:
+            try:
+                exported_files.extend(
+                    _process_embedding_run(
+                        npz_path, run_id, embed_dir, methods,
+                        EMBEDDING_MAX_SAMPLES,
+                    )
                 )
-                if was_sampled:
-                    log.info("Pre-sampled embeddings %s/%s: %d → %d",
-                             run_id, model_name, total_original, len(embeddings))
-
-                for method in ("umap", "pymde"):
-                    try:
-                        coords_2d = _reduce_embeddings(embeddings, method)
-                    except Exception as e:
-                        log.warning("Dimensionality reduction (%s) failed for %s/%s: %s",
-                                    method, run_id, model_name, e)
-                        continue
-
-                    # _stratified_sample already applied before reduction
-                    s_labels, s_errors = labels, errors
-
-                    records = []
-                    for i in range(len(coords_2d)):
-                        rec = {
-                            "dim0": float(coords_2d[i, 0]),
-                            "dim1": float(coords_2d[i, 1]),
-                        }
-                        if i < len(s_labels):
-                            rec["label"] = int(s_labels[i])
-                        if i < len(s_errors):
-                            rec["error"] = float(s_errors[i])
-                        records.append(rec)
-
-                    metadata = {
-                        "n_points": len(records),
-                        "sampled": was_sampled,
-                        "total_original": total_original,
-                    }
-
-                    fname = f"{run_id}_{model_name}_{method}.json"
-                    envelope = _versioned_envelope(records)
-                    envelope["metadata"] = metadata
-                    (embed_dir / fname).write_text(json.dumps(envelope, indent=2))
-                    exported_files.append(fname)
-                    count += 1
+            except Exception as e:
+                log.warning("Embedding export failed for %s: %s", run_id, e)
 
     index_path = embed_dir / "index.json"
     index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
@@ -602,7 +651,6 @@ def _reduce_embeddings(embeddings, method: str):
     exceeds 50 — standard practice that makes UMAP/PyMDE tractable on
     high-dimensional latent spaces (e.g. 2049-D VGAE z-vectors).
     """
-    import numpy as np
     from sklearn.decomposition import PCA
 
     PCA_TARGET = 50
@@ -649,7 +697,6 @@ def export_dqn_policy(output_dir: Path) -> Path:
 
             run_id = f"{ds_dir.name}_{run_dir.name}"
             fname = f"{run_id}.json"
-            import shutil
             shutil.copy2(policy_path, policy_dir / fname)
             exported_files.append(fname)
             count += 1
@@ -718,8 +765,6 @@ def export_attention(output_dir: Path) -> Path:
     attn_dir = output_dir / "attention"
     attn_dir.mkdir(parents=True, exist_ok=True)
 
-    import numpy as np
-
     count = 0
     exported_files: list[str] = []
 
@@ -783,8 +828,6 @@ def export_recon_errors(output_dir: Path) -> Path:
     """Export VGAE reconstruction errors from evaluation embeddings.npz files."""
     recon_dir = output_dir / "recon_errors"
     recon_dir.mkdir(parents=True, exist_ok=True)
-
-    import numpy as np
 
     count = 0
     exported_files: list[str] = []
@@ -858,7 +901,6 @@ def export_cka(output_dir: Path) -> Path:
             if not cka_path.exists():
                 continue
 
-            import shutil
             run_id = f"{ds_dir.name}_{run_dir.name}"
             fname = f"{run_id}.json"
             shutil.copy2(cka_path, cka_dir / fname)
@@ -878,26 +920,34 @@ def export_cka(output_dir: Path) -> Path:
 HEAVY_EXPORTS = {"embeddings", "graph_samples", "recon_errors", "attention"}
 
 
-def export_all(output_dir: Path, *, skip_heavy: bool = False,
-               only_heavy: bool = False) -> None:
+def export_all(
+    output_dir: Path,
+    *,
+    skip_heavy: bool = False,
+    only_heavy: bool = False,
+    methods: tuple[str, ...] = ("umap",),
+    workers: int = 1,
+) -> None:
     """Run all exports.
 
     Args:
         skip_heavy: Skip CPU-intensive exports (embeddings, graph_samples,
                     recon_errors, attention). Fast exports finish in seconds.
         only_heavy: Run only the CPU-intensive exports.
+        methods: Dimensionality reduction methods for embeddings.
+        workers: Number of parallel workers for embedding export.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
 
     artifact_exports = [
-        ("graph_samples", export_graph_samples),
-        ("model_sizes", export_model_sizes),
-        ("embeddings", export_embeddings),
-        ("dqn_policy", export_dqn_policy),
-        ("roc_curves", export_roc_curves),
-        ("attention", export_attention),
-        ("recon_errors", export_recon_errors),
-        ("cka", export_cka),
+        ("graph_samples", lambda d: export_graph_samples(d)),
+        ("model_sizes", lambda d: export_model_sizes(d)),
+        ("embeddings", lambda d: export_embeddings(d, methods=methods, workers=workers)),
+        ("dqn_policy", lambda d: export_dqn_policy(d)),
+        ("roc_curves", lambda d: export_roc_curves(d)),
+        ("attention", lambda d: export_attention(d)),
+        ("recon_errors", lambda d: export_recon_errors(d)),
+        ("cka", lambda d: export_cka(d)),
     ]
 
     if not only_heavy:
@@ -947,6 +997,14 @@ def main(argv: list[str] | None = None) -> None:
         "--only-heavy", action="store_true",
         help="Run only CPU-intensive exports",
     )
+    parser.add_argument(
+        "--methods", type=str, default="umap",
+        help="Comma-separated dimensionality reduction methods (default: umap)",
+    )
+    parser.add_argument(
+        "--workers", type=int, default=1,
+        help="Parallel workers for embedding export (default: 1)",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -954,8 +1012,14 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s  %(name)-20s  %(levelname)-7s  %(message)s",
     )
 
-    export_all(args.output_dir, skip_heavy=args.skip_heavy,
-               only_heavy=args.only_heavy)
+    methods = tuple(m.strip() for m in args.methods.split(","))
+    export_all(
+        args.output_dir,
+        skip_heavy=args.skip_heavy,
+        only_heavy=args.only_heavy,
+        methods=methods,
+        workers=args.workers,
+    )
 
 
 if __name__ == "__main__":
