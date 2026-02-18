@@ -65,17 +65,20 @@ class GATWithJK(nn.Module):
             embedding_dim=cfg.gat.embedding_dim,
         )
 
-    def forward(self, data, return_intermediate=False, return_attention_weights=False):
+    def forward(self, data, return_intermediate=False, return_attention_weights=False, return_embedding=False):
         """Forward pass through the GATWithJK model.
 
         Args:
             data (torch_geometric.data.Data): Input graph data.
             return_intermediate (bool, optional): Whether to return intermediate representations. Defaults to False.
             return_attention_weights (bool, optional): Whether to return per-layer attention weights. Defaults to False.
+            return_embedding (bool, optional): Whether to return (logits, graph_embedding) where embedding
+                is the JK+pooled representation before FC layers. Defaults to False.
 
         Returns:
             torch.Tensor: Output predictions, or list of intermediate representations if return_intermediate=True,
-                or (xs, attention_weights) if return_attention_weights=True.
+                or (xs, attention_weights) if return_attention_weights=True,
+                or (logits, embedding) if return_embedding=True.
         """
         x, edge_index, batch = data.x, data.edge_index, data.batch
         # x shape: [num_nodes, in_channels], where x[:,0] is CAN ID index
@@ -106,6 +109,11 @@ class GATWithJK(nn.Module):
             return xs
         x = self.jk(xs)
         x = global_mean_pool(x, batch)
+        if return_embedding:
+            emb = x.clone()
+            for layer in self.fc_layers:
+                x = layer(x)
+            return x, emb
         for layer in self.fc_layers:
             x = layer(x)
         return x

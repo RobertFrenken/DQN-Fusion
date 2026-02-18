@@ -42,13 +42,20 @@ bash scripts/export_dashboard.sh              # Export + commit + push to Pages 
 bash scripts/export_dashboard.sh --no-push    # Export + commit only
 bash scripts/export_dashboard.sh --dry-run    # Export only (no git)
 
-# Run tests (slurm-marked tests auto-skip on login nodes)
-python -m pytest tests/ -v
-
-# Run heavy tests on SLURM compute node
+# Run tests — ALWAYS submit to SLURM, never on login node
 bash scripts/run_tests_slurm.sh                         # all tests
 bash scripts/run_tests_slurm.sh -k "test_full_pipeline"  # specific test
 bash scripts/run_tests_slurm.sh -m slurm                 # only slurm-marked
+
+# Hyperparameter sweeps via parallel-command-processor
+python scripts/generate_sweep.py \
+  --stage autoencoder --model vgae --scale large --dataset hcrl_sa \
+  --sweep "training.lr=0.001,0.0005" "vgae.latent_dim=8,16,32" \
+  --output /tmp/sweep_commands.txt
+sbatch scripts/sweep.sh /tmp/sweep_commands.txt
+
+# FastAPI inference server
+uvicorn pipeline.serve:app --host 0.0.0.0 --port 8000
 
 # Check SLURM jobs
 squeue -u $USER
@@ -72,7 +79,8 @@ config/             # Layer 1: Inert, declarative (no imports from pipeline/ or 
   auxiliaries/      # Loss modifier YAML files (composable)
     none.yaml, kd_standard.yaml
 pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from src/)
-  cli.py            # Entry point + W&B init + lakehouse sync
+  cli.py            # Entry point + W&B init + lakehouse sync + archive restore on failure
+  serve.py          # FastAPI inference server (/predict, /health)
   stages/           # Stage implementations (training, fusion, evaluation)
     evaluation.py   # Multi-model eval; captures embeddings.npz + dqn_policy.json artifacts
   flows/            # Prefect orchestration (train_flow, eval_flow, slurm_config)
@@ -88,7 +96,7 @@ data/
   automotive/       # 6 datasets (DVC-tracked): hcrl_ch, hcrl_sa, set_01-04
   cache/            # Preprocessed graph cache (.pt, .pkl, metadata)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json, embeddings.npz, dqn_policy.json
-scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh, build_test_cache.sh)
+scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh, build_test_cache.sh, sweep.sh, generate_sweep.py)
 docs/dashboard/     # GitHub Pages D3.js dashboard (ES modules, config-driven panels)
   js/core/          # BaseChart, Registry, Theme
   js/charts/        # 8 chart types (Table, Bar, Scatter, Line, Timeline, Bubble, ForceGraph, Histogram)
@@ -128,6 +136,7 @@ These fix real crashes -- do not violate:
 - **Use spawn multiprocessing.** Never `fork` with CUDA. Set `mp_start_method='spawn'` and `multiprocessing_context='spawn'` on all DataLoaders.
 - **NFS filesystem.** `.nfs*` ghost files appear on delete. Already in `.gitignore`.
 - **No GUI on HPC.** Git auth via SSH key, not HTTPS.
+- **Never run pytest on login nodes.** Always submit via `bash scripts/run_tests_slurm.sh`. Login nodes have strict resource limits and will crash.
 - **Dynamic batching for variable-size graphs.** DynamicBatchSampler (PyG built-in) packs graphs to a node budget instead of a fixed count. Budget = batch_size × p95_nodes (from cache_metadata.json). Keeps GPU ~85% utilized regardless of graph size variance. Disable with `-O training.dynamic_batching false` if needed for reproducibility comparisons.
 
 ## Architecture Decisions
@@ -141,7 +150,9 @@ These fix real crashes -- do not violate:
 - Auxiliaries: `cfg.auxiliaries` is a list of `AuxiliaryConfig`. KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
 - Constants: domain/infrastructure constants live in `config/constants.py` (not in PipelineConfig). Hyperparameters live in PipelineConfig.
 - Experiment tracking: W&B (online/offline) for live metrics + S3 lakehouse for structured JSON. `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle; Lightning's `WandbLogger` attaches to the active run. Compute nodes auto-set `WANDB_MODE=offline`.
-- Orchestration: Prefect flows (`pipeline/flows/`) with `dask-jobqueue` SLURMCluster. `train_pipeline()` runs the full DAG per dataset; `eval_pipeline()` re-runs evaluation only. Each stage task dispatches via subprocess for clean CUDA context.
+- Orchestration: Prefect flows (`pipeline/flows/`) with `dask-jobqueue` SLURMCluster. `train_pipeline()` fans out per-dataset work concurrently via `_dataset_pipeline` sub-flows; `eval_pipeline()` re-runs evaluation only. Each stage task dispatches via subprocess for clean CUDA context. `--local` flag uses local Dask cluster instead of SLURM.
+- Archive restore: `cli.py` archives previous runs before re-running, and restores the archive if the new run fails.
+- Inference serving: `pipeline/serve.py` provides FastAPI endpoints (`/predict`, `/health`) loading VGAE+GAT+DQN from `experimentruns/`.
 - Dashboard: Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types inherit from it. `PanelManager` reads config → builds nav + panels + controls → lazy-loads data → renders. All chart types registered in `Registry`.
 - Dashboard data: `export.py` scans `experimentruns/` filesystem for `config.json` and `metrics.json` files. No database dependency. Artifacts (`embeddings.npz`, `dqn_policy.json`, etc.) are read directly from run directories.
 - Dataset catalog: `config/datasets.yaml` — single place to register new datasets.

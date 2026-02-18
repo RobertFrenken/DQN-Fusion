@@ -148,9 +148,9 @@ def task_eval(
 def large_pipeline(dataset: str) -> dict[str, str]:
     """Large-scale teacher pipeline (no KD)."""
     vgae_ckpt = task_vgae(dataset, "large")
-    gat_ckpt = task_gat(dataset, "large", wait_for=[vgae_ckpt])
-    dqn_ckpt = task_dqn(dataset, "large", wait_for=[vgae_ckpt, gat_ckpt])
-    task_eval(dataset, "large", wait_for=[vgae_ckpt, gat_ckpt, dqn_ckpt])
+    gat_ckpt = task_gat(dataset, "large")
+    dqn_ckpt = task_dqn(dataset, "large")
+    task_eval(dataset, "large")
     return {"vgae": vgae_ckpt, "gat": gat_ckpt, "dqn": dqn_ckpt}
 
 
@@ -169,32 +169,71 @@ def small_kd_pipeline(
         dataset, "small",
         auxiliaries="kd_standard",
         teacher_path=teacher_ckpts["gat"],
-        wait_for=[vgae_ckpt],
     )
     dqn_ckpt = task_dqn(
         dataset, "small",
         auxiliaries="kd_standard",
         teacher_path=teacher_ckpts["dqn"],
-        wait_for=[vgae_ckpt, gat_ckpt],
     )
-    task_eval(
-        dataset, "small", auxiliaries="kd_standard",
-        wait_for=[vgae_ckpt, gat_ckpt, dqn_ckpt],
-    )
+    task_eval(dataset, "small", auxiliaries="kd_standard")
 
 
 @flow(name="small-nokd-pipeline")
 def small_nokd_pipeline(dataset: str) -> None:
     """Small-scale ablation pipeline (no KD, no teacher)."""
     vgae_ckpt = task_vgae(dataset, "small")
-    gat_ckpt = task_gat(dataset, "small", wait_for=[vgae_ckpt])
-    dqn_ckpt = task_dqn(dataset, "small", wait_for=[vgae_ckpt, gat_ckpt])
-    task_eval(dataset, "small", wait_for=[vgae_ckpt, gat_ckpt, dqn_ckpt])
+    gat_ckpt = task_gat(dataset, "small")
+    dqn_ckpt = task_dqn(dataset, "small")
+    task_eval(dataset, "small")
 
 
 # ---------------------------------------------------------------------------
 # Top-level flow
 # ---------------------------------------------------------------------------
+
+@flow(name="dataset-pipeline")
+def _dataset_pipeline(dataset: str, scale: str | None = None) -> None:
+    """All variants for a single dataset (fan-out target)."""
+    log.info("=== Pipeline for dataset: %s ===", dataset)
+
+    # Preprocess (shared by all variants)
+    task_preprocess(dataset)
+
+    if scale is None or scale == "large":
+        large_pipeline(dataset)
+
+        # Small KD depends on large teacher checkpoints
+        if scale is None or scale == "small_kd":
+            from config.resolver import resolve
+            from config import checkpoint_path
+
+            teacher_paths = {}
+            for model, stage in [("vgae", "autoencoder"), ("gat", "curriculum"), ("dqn", "fusion")]:
+                cfg = resolve(model, "large", dataset=dataset)
+                teacher_paths[model] = str(checkpoint_path(cfg, stage))
+
+            small_kd_pipeline(dataset, teacher_paths)
+
+    elif scale == "small_kd":
+        # Running small_kd alone — teacher must already exist
+        from config.resolver import resolve
+        from config import checkpoint_path
+
+        teacher_paths = {}
+        for model, stage in [("vgae", "autoencoder"), ("gat", "curriculum"), ("dqn", "fusion")]:
+            cfg = resolve(model, "large", dataset=dataset)
+            tp = checkpoint_path(cfg, stage)
+            if not tp.exists():
+                raise FileNotFoundError(
+                    f"Teacher checkpoint not found: {tp}. "
+                    f"Run with --scale large first."
+                )
+            teacher_paths[model] = str(tp)
+        small_kd_pipeline(dataset, teacher_paths)
+
+    if scale is None or scale == "small_nokd":
+        small_nokd_pipeline(dataset)
+
 
 @flow(name="kd-gat-pipeline", log_prints=True)
 def train_pipeline(
@@ -215,47 +254,10 @@ def train_pipeline(
         from config.paths import get_datasets
         datasets = get_datasets()
 
+    # Fan out per-dataset work — each dataset is independent
+    futures = []
     for ds in datasets:
-        log.info("=== Pipeline for dataset: %s ===", ds)
-
-        # Preprocess (shared by all variants)
-        prep = task_preprocess(ds)
-
-        if scale is None or scale == "large":
-            teacher_ckpts = large_pipeline(ds, wait_for=[prep])
-
-            # Small KD depends on large teacher checkpoints
-            if scale is None or scale == "small_kd":
-                # Resolve teacher checkpoint paths deterministically
-                # (in case large_pipeline returns futures)
-                from config.resolver import resolve
-                from config import checkpoint_path
-
-                teacher_paths = {}
-                for model, stage in [("vgae", "autoencoder"), ("gat", "curriculum"), ("dqn", "fusion")]:
-                    cfg = resolve(model, "large", dataset=ds)
-                    teacher_paths[model] = str(checkpoint_path(cfg, stage))
-
-                small_kd_pipeline(ds, teacher_paths, wait_for=[teacher_ckpts])
-
-        elif scale == "small_kd":
-            # Running small_kd alone — teacher must already exist
-            from config.resolver import resolve
-            from config import checkpoint_path
-
-            teacher_paths = {}
-            for model, stage in [("vgae", "autoencoder"), ("gat", "curriculum"), ("dqn", "fusion")]:
-                cfg = resolve(model, "large", dataset=ds)
-                tp = checkpoint_path(cfg, stage)
-                if not tp.exists():
-                    raise FileNotFoundError(
-                        f"Teacher checkpoint not found: {tp}. "
-                        f"Run with --scale large first."
-                    )
-                teacher_paths[model] = str(tp)
-            small_kd_pipeline(ds, teacher_paths, wait_for=[prep])
-
-        if scale is None or scale == "small_nokd":
-            small_nokd_pipeline(ds, wait_for=[prep])
+        futures.append(_dataset_pipeline.submit(ds, scale))
+    wait(futures)
 
     log.info("=== Pipeline complete for %d dataset(s) ===", len(datasets))

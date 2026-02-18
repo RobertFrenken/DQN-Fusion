@@ -3,6 +3,9 @@
 **Updated**: 2026-02-02
 **Context**: OSC Pitzer cluster (RHEL 9), VS Code Remote SSH, ML pipeline work
 
+# Claude skip call
+claude --dangerously-skip-permissions
+
 ## What's Available on OSC Right Now
 
 Checked on `pitzer-login04`:

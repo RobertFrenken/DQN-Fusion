@@ -520,6 +520,15 @@ def export_embeddings(output_dir: Path) -> Path:
                 if embeddings.shape[0] < 3:
                     continue
 
+                # Downsample BEFORE reduction to keep UMAP/PyMDE tractable
+                total_original = embeddings.shape[0]
+                embeddings, labels, errors, was_sampled = _stratified_sample(
+                    embeddings, labels, errors, EMBEDDING_MAX_SAMPLES
+                )
+                if was_sampled:
+                    log.info("Pre-sampled embeddings %s/%s: %d → %d",
+                             run_id, model_name, total_original, len(embeddings))
+
                 for method in ("umap", "pymde"):
                     try:
                         coords_2d = _reduce_embeddings(embeddings, method)
@@ -528,13 +537,8 @@ def export_embeddings(output_dir: Path) -> Path:
                                     method, run_id, model_name, e)
                         continue
 
-                    total_original = len(coords_2d)
-                    coords_2d, s_labels, s_errors, was_sampled = _stratified_sample(
-                        coords_2d, labels, errors, EMBEDDING_MAX_SAMPLES
-                    )
-                    if was_sampled:
-                        log.info("Sampled embeddings %s/%s/%s: %d → %d",
-                                 run_id, model_name, method, total_original, len(coords_2d))
+                    # _stratified_sample already applied before reduction
+                    s_labels, s_errors = labels, errors
 
                     records = []
                     for i in range(len(coords_2d)):
@@ -569,8 +573,19 @@ def export_embeddings(output_dir: Path) -> Path:
 
 
 def _reduce_embeddings(embeddings, method: str):
-    """Reduce high-dimensional embeddings to 2D."""
+    """Reduce high-dimensional embeddings to 2D.
+
+    Applies PCA pre-reduction to 50 dimensions when input dimensionality
+    exceeds 50 — standard practice that makes UMAP/PyMDE tractable on
+    high-dimensional latent spaces (e.g. 2049-D VGAE z-vectors).
+    """
     import numpy as np
+    from sklearn.decomposition import PCA
+
+    PCA_TARGET = 50
+    if embeddings.shape[1] > PCA_TARGET:
+        n_components = min(PCA_TARGET, embeddings.shape[0] - 1)
+        embeddings = PCA(n_components=n_components, random_state=42).fit_transform(embeddings)
 
     if method == "umap":
         import umap

@@ -11,7 +11,7 @@ PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$PROJECT_DIR/slurm_logs"
 
 sbatch --account=PAS3209 --partition=cpu \
-  --time=60 --mem=32G --cpus-per-task=8 \
+  --time=120 --mem=64G --cpus-per-task=8 \
   --job-name=pytest --output="$PROJECT_DIR/slurm_logs/%j-pytest.out" \
   --error="$PROJECT_DIR/slurm_logs/%j-pytest.err" \
   --wrap="cd $PROJECT_DIR && PYTHONPATH=$PROJECT_DIR python -m pytest tests/ -v --run-slurm $*"

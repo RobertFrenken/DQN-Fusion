@@ -1,7 +1,34 @@
 {
   "schema_version": "1.0.0",
-  "exported_at": "2026-02-17T21:56:34.083035+00:00",
+  "exported_at": "2026-02-18T01:45:55.176091+00:00",
   "data": [
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "auc",
+      "best_value": 0.999943
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.999725
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "recall",
+      "best_value": 0.999081
+    },
     {
       "dataset": "hcrl_ch",
       "model_type": "eval",
@@ -34,27 +61,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.999725
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.999943
+      "best_value": 0.875961
     },
     {
       "dataset": "hcrl_ch",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.755397
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.999081
+      "best_value": 0.860393
     },
     {
       "dataset": "hcrl_ch",
@@ -88,69 +115,6 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.755397
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "auc",
-      "best_value": 0.875961
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "recall",
-      "best_value": 0.860393
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "f1",
-      "best_value": 0.99954
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "mcc",
-      "best_value": 0.999344
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "precision",
-      "best_value": 1.0
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.999725
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
       "model": "fusion",
       "metric_name": "auc",
       "best_value": 0.999453
@@ -161,6 +125,69 @@
       "scale": "large",
       "has_kd": 0,
       "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.999725
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "fusion",
+      "metric_name": "recall",
+      "best_value": 0.999081
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "fusion",
+      "metric_name": "f1",
+      "best_value": 0.99954
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "fusion",
+      "metric_name": "mcc",
+      "best_value": 0.999344
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "fusion",
+      "metric_name": "precision",
+      "best_value": 1.0
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "auc",
+      "best_value": 1.0
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.999725
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
       "best_value": 0.999081
     },
@@ -196,27 +223,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.999725
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 1.0
+      "best_value": 0.880808
     },
     {
       "dataset": "hcrl_ch",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.768633
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.999081
+      "best_value": 0.825118
     },
     {
       "dataset": "hcrl_ch",
@@ -250,27 +277,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.768633
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.880808
+      "best_value": 0.998731
     },
     {
       "dataset": "hcrl_ch",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.999416
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.825118
+      "best_value": 0.998047
     },
     {
       "dataset": "hcrl_ch",
@@ -303,28 +330,28 @@
       "dataset": "hcrl_ch",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.999416
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.998731
+      "best_value": 0.999998
     },
     {
       "dataset": "hcrl_ch",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.999759
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.998047
+      "best_value": 0.999196
     },
     {
       "dataset": "hcrl_ch",
@@ -358,27 +385,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.999759
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.999998
+      "best_value": 0.864026
     },
     {
       "dataset": "hcrl_ch",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.737589
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.999196
+      "best_value": 0.851201
     },
     {
       "dataset": "hcrl_ch",
@@ -412,27 +439,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.737589
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.864026
+      "best_value": 0.999688
     },
     {
       "dataset": "hcrl_ch",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.999759
+    },
+    {
+      "dataset": "hcrl_ch",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.851201
+      "best_value": 0.999196
     },
     {
       "dataset": "hcrl_ch",
@@ -462,31 +489,31 @@
       "best_value": 1.0
     },
     {
-      "dataset": "hcrl_ch",
+      "dataset": "hcrl_sa",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.999759
-    },
-    {
-      "dataset": "hcrl_ch",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.999688
+      "best_value": 1.0
     },
     {
-      "dataset": "hcrl_ch",
+      "dataset": "hcrl_sa",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.999466
+    },
+    {
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.999196
+      "best_value": 0.996016
     },
     {
       "dataset": "hcrl_sa",
@@ -520,27 +547,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.999466
-    },
-    {
-      "dataset": "hcrl_sa",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 1.0
+      "best_value": 0.938542
     },
     {
       "dataset": "hcrl_sa",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.81527
+    },
+    {
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.996016
+      "best_value": 0.916335
     },
     {
       "dataset": "hcrl_sa",
@@ -574,27 +601,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.81527
-    },
-    {
-      "dataset": "hcrl_sa",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.938542
+      "best_value": 0.999579
     },
     {
       "dataset": "hcrl_sa",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.999466
+    },
+    {
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.916335
+      "best_value": 0.996016
     },
     {
       "dataset": "hcrl_sa",
@@ -626,29 +653,29 @@
     {
       "dataset": "hcrl_sa",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.999466
-    },
-    {
-      "dataset": "hcrl_sa",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.999579
+      "best_value": 1.0
     },
     {
       "dataset": "hcrl_sa",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 1.0
+    },
+    {
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.996016
+      "best_value": 1.0
     },
     {
       "dataset": "hcrl_sa",
@@ -682,27 +709,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 1.0
-    },
-    {
-      "dataset": "hcrl_sa",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 1.0
+      "best_value": 0.877553
     },
     {
       "dataset": "hcrl_sa",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.67165
+    },
+    {
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 1.0
+      "best_value": 0.896414
     },
     {
       "dataset": "hcrl_sa",
@@ -736,27 +763,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.67165
-    },
-    {
-      "dataset": "hcrl_sa",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.877553
+      "best_value": 0.993791
     },
     {
       "dataset": "hcrl_sa",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.998932
+    },
+    {
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.896414
+      "best_value": 0.992032
     },
     {
       "dataset": "hcrl_sa",
@@ -789,28 +816,28 @@
       "dataset": "hcrl_sa",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.998932
-    },
-    {
-      "dataset": "hcrl_sa",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.993791
+      "best_value": 1.0
     },
     {
       "dataset": "hcrl_sa",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 1.0
+    },
+    {
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.992032
+      "best_value": 1.0
     },
     {
       "dataset": "hcrl_sa",
@@ -844,27 +871,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 1.0
-    },
-    {
-      "dataset": "hcrl_sa",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 1.0
+      "best_value": 0.948325
     },
     {
       "dataset": "hcrl_sa",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.838761
+    },
+    {
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 1.0
+      "best_value": 0.916335
     },
     {
       "dataset": "hcrl_sa",
@@ -898,27 +925,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.838761
-    },
-    {
-      "dataset": "hcrl_sa",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.948325
+      "best_value": 0.972155
     },
     {
       "dataset": "hcrl_sa",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.996263
+    },
+    {
+      "dataset": "hcrl_sa",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.916335
+      "best_value": 0.972112
     },
     {
       "dataset": "hcrl_sa",
@@ -948,31 +975,31 @@
       "best_value": 1.0
     },
     {
-      "dataset": "hcrl_sa",
+      "dataset": "set_01",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.996263
-    },
-    {
-      "dataset": "hcrl_sa",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.972155
+      "best_value": 0.999361
     },
     {
-      "dataset": "hcrl_sa",
+      "dataset": "set_01",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.980343
+    },
+    {
+      "dataset": "set_01",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.972112
+      "best_value": 0.989916
     },
     {
       "dataset": "set_01",
@@ -1006,27 +1033,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.980343
-    },
-    {
-      "dataset": "set_01",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.999361
+      "best_value": 0.762
     },
     {
       "dataset": "set_01",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.828976
+    },
+    {
+      "dataset": "set_01",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.989916
+      "best_value": 0.596639
     },
     {
       "dataset": "set_01",
@@ -1060,27 +1087,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.828976
-    },
-    {
-      "dataset": "set_01",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.762
+      "best_value": 0.923334
     },
     {
       "dataset": "set_01",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.997467
+    },
+    {
+      "dataset": "set_01",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.596639
+      "best_value": 0.893401
     },
     {
       "dataset": "set_01",
@@ -1112,29 +1139,29 @@
     {
       "dataset": "set_01",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.997467
-    },
-    {
-      "dataset": "set_01",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.923334
+      "best_value": 0.98092
     },
     {
       "dataset": "set_01",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.863724
+    },
+    {
+      "dataset": "set_01",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.893401
+      "best_value": 0.94958
     },
     {
       "dataset": "set_01",
@@ -1168,27 +1195,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.863724
-    },
-    {
-      "dataset": "set_01",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.98092
+      "best_value": 0.775978
     },
     {
       "dataset": "set_01",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.778609
+    },
+    {
+      "dataset": "set_01",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.94958
+      "best_value": 0.668908
     },
     {
       "dataset": "set_01",
@@ -1222,27 +1249,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.778609
-    },
-    {
-      "dataset": "set_01",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.775978
+      "best_value": 0.843933
     },
     {
       "dataset": "set_01",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.9899
+    },
+    {
+      "dataset": "set_01",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.668908
+      "best_value": 0.685279
     },
     {
       "dataset": "set_01",
@@ -1275,28 +1302,28 @@
       "dataset": "set_01",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.9899
-    },
-    {
-      "dataset": "set_01",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.843933
+      "best_value": 0.98986
     },
     {
       "dataset": "set_01",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.94864
+    },
+    {
+      "dataset": "set_01",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.685279
+      "best_value": 0.941176
     },
     {
       "dataset": "set_01",
@@ -1330,27 +1357,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.94864
-    },
-    {
-      "dataset": "set_01",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.98986
+      "best_value": 0.745574
     },
     {
       "dataset": "set_01",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.828083
+    },
+    {
+      "dataset": "set_01",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.941176
+      "best_value": 0.559664
     },
     {
       "dataset": "set_01",
@@ -1384,27 +1411,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.828083
-    },
-    {
-      "dataset": "set_01",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.745574
+      "best_value": 0.872235
     },
     {
       "dataset": "set_01",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.973033
+    },
+    {
+      "dataset": "set_01",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.559664
+      "best_value": 0.773266
     },
     {
       "dataset": "set_01",
@@ -1434,31 +1461,31 @@
       "best_value": 0.40371
     },
     {
-      "dataset": "set_01",
+      "dataset": "set_02",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.973033
-    },
-    {
-      "dataset": "set_01",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.872235
+      "best_value": 0.999559
     },
     {
-      "dataset": "set_01",
+      "dataset": "set_02",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.998624
+    },
+    {
+      "dataset": "set_02",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.773266
+      "best_value": 0.991796
     },
     {
       "dataset": "set_02",
@@ -1492,27 +1519,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.998624
-    },
-    {
-      "dataset": "set_02",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.999559
+      "best_value": 0.812445
     },
     {
       "dataset": "set_02",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.838378
+    },
+    {
+      "dataset": "set_02",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.991796
+      "best_value": 0.623762
     },
     {
       "dataset": "set_02",
@@ -1546,27 +1573,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.838378
-    },
-    {
-      "dataset": "set_02",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.812445
+      "best_value": 0.994235
     },
     {
       "dataset": "set_02",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.9989
+    },
+    {
+      "dataset": "set_02",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.623762
+      "best_value": 0.989041
     },
     {
       "dataset": "set_02",
@@ -1598,29 +1625,29 @@
     {
       "dataset": "set_02",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.9989
-    },
-    {
-      "dataset": "set_02",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.994235
+      "best_value": 0.999353
     },
     {
       "dataset": "set_02",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.994595
+    },
+    {
+      "dataset": "set_02",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.989041
+      "best_value": 0.990948
     },
     {
       "dataset": "set_02",
@@ -1654,27 +1681,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.994595
-    },
-    {
-      "dataset": "set_02",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.999353
+      "best_value": 0.820336
     },
     {
       "dataset": "set_02",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.851474
+    },
+    {
+      "dataset": "set_02",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.990948
+      "best_value": 0.634795
     },
     {
       "dataset": "set_02",
@@ -1708,27 +1735,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.851474
-    },
-    {
-      "dataset": "set_02",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.820336
+      "best_value": 0.861549
     },
     {
       "dataset": "set_02",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.9772
+    },
+    {
+      "dataset": "set_02",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.634795
+      "best_value": 0.760078
     },
     {
       "dataset": "set_02",
@@ -1761,28 +1788,28 @@
       "dataset": "set_02",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.9772
-    },
-    {
-      "dataset": "set_02",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.861549
+      "best_value": 0.99918
     },
     {
       "dataset": "set_02",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.997199
+    },
+    {
+      "dataset": "set_02",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.760078
+      "best_value": 0.985856
     },
     {
       "dataset": "set_02",
@@ -1816,27 +1843,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.997199
-    },
-    {
-      "dataset": "set_02",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.99918
+      "best_value": 0.787972
     },
     {
       "dataset": "set_02",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.855823
+    },
+    {
+      "dataset": "set_02",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.985856
+      "best_value": 0.58133
     },
     {
       "dataset": "set_02",
@@ -1870,27 +1897,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.855823
-    },
-    {
-      "dataset": "set_02",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.787972
+      "best_value": 0.990846
     },
     {
       "dataset": "set_02",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.997767
+    },
+    {
+      "dataset": "set_02",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.58133
+      "best_value": 0.983562
     },
     {
       "dataset": "set_02",
@@ -1920,31 +1947,31 @@
       "best_value": 0.99015
     },
     {
-      "dataset": "set_02",
+      "dataset": "set_03",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.997767
-    },
-    {
-      "dataset": "set_02",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.990846
+      "best_value": 0.99393
     },
     {
-      "dataset": "set_02",
+      "dataset": "set_03",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.968272
+    },
+    {
+      "dataset": "set_03",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.983562
+      "best_value": 0.960899
     },
     {
       "dataset": "set_03",
@@ -1978,27 +2005,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.968272
-    },
-    {
-      "dataset": "set_03",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.99393
+      "best_value": 0.730636
     },
     {
       "dataset": "set_03",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.621945
+    },
+    {
+      "dataset": "set_03",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.960899
+      "best_value": 0.71797
     },
     {
       "dataset": "set_03",
@@ -2032,27 +2059,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.621945
-    },
-    {
-      "dataset": "set_03",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.730636
+      "best_value": 0.957341
     },
     {
       "dataset": "set_03",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.9967
+    },
+    {
+      "dataset": "set_03",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.71797
+      "best_value": 0.922934
     },
     {
       "dataset": "set_03",
@@ -2084,29 +2111,29 @@
     {
       "dataset": "set_03",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.9967
-    },
-    {
-      "dataset": "set_03",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.957341
+      "best_value": 0.975497
     },
     {
       "dataset": "set_03",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.879711
+    },
+    {
+      "dataset": "set_03",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.922934
+      "best_value": 0.935108
     },
     {
       "dataset": "set_03",
@@ -2140,27 +2167,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.879711
-    },
-    {
-      "dataset": "set_03",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.975497
+      "best_value": 0.842855
     },
     {
       "dataset": "set_03",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.819356
+    },
+    {
+      "dataset": "set_03",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.935108
+      "best_value": 0.712978
     },
     {
       "dataset": "set_03",
@@ -2194,27 +2221,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.819356
-    },
-    {
-      "dataset": "set_03",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.842855
+      "best_value": 0.934856
     },
     {
       "dataset": "set_03",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.990767
+    },
+    {
+      "dataset": "set_03",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.712978
+      "best_value": 0.869081
     },
     {
       "dataset": "set_03",
@@ -2247,28 +2274,28 @@
       "dataset": "set_03",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.990767
-    },
-    {
-      "dataset": "set_03",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.934856
+      "best_value": 0.984411
     },
     {
       "dataset": "set_03",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.953251
+    },
+    {
+      "dataset": "set_03",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.869081
+      "best_value": 0.939268
     },
     {
       "dataset": "set_03",
@@ -2302,27 +2329,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.953251
-    },
-    {
-      "dataset": "set_03",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.984411
+      "best_value": 0.915257
     },
     {
       "dataset": "set_03",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.915954
+    },
+    {
+      "dataset": "set_03",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.939268
+      "best_value": 0.824459
     },
     {
       "dataset": "set_03",
@@ -2356,27 +2383,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.915954
-    },
-    {
-      "dataset": "set_03",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.915257
+      "best_value": 0.926826
     },
     {
       "dataset": "set_03",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.993133
+    },
+    {
+      "dataset": "set_03",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.824459
+      "best_value": 0.861653
     },
     {
       "dataset": "set_03",
@@ -2406,31 +2433,31 @@
       "best_value": 0.942132
     },
     {
-      "dataset": "set_03",
+      "dataset": "set_04",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.993133
-    },
-    {
-      "dataset": "set_03",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.926826
+      "best_value": 0.993381
     },
     {
-      "dataset": "set_03",
+      "dataset": "set_04",
       "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.957763
+    },
+    {
+      "dataset": "set_04",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.861653
+      "best_value": 0.965066
     },
     {
       "dataset": "set_04",
@@ -2464,27 +2491,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.957763
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.993381
+      "best_value": 0.84737
     },
     {
       "dataset": "set_04",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.866917
+    },
+    {
+      "dataset": "set_04",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.965066
+      "best_value": 0.69214
     },
     {
       "dataset": "set_04",
@@ -2518,27 +2545,27 @@
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.866917
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.84737
+      "best_value": 0.853245
     },
     {
       "dataset": "set_04",
       "model_type": "eval",
       "scale": "large",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.993587
+    },
+    {
+      "dataset": "set_04",
+      "model_type": "eval",
+      "scale": "large",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.69214
+      "best_value": 0.720524
     },
     {
       "dataset": "set_04",
@@ -2570,29 +2597,29 @@
     {
       "dataset": "set_04",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.993587
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "large",
-      "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.853245
+      "best_value": 0.959067
     },
     {
       "dataset": "set_04",
       "model_type": "eval",
-      "scale": "large",
+      "scale": "small",
       "has_kd": 0,
-      "model": "fusion",
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.703321
+    },
+    {
+      "dataset": "set_04",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.720524
+      "best_value": 0.962882
     },
     {
       "dataset": "set_04",
@@ -2626,27 +2653,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.703321
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.959067
+      "best_value": 0.778812
     },
     {
       "dataset": "set_04",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.883665
+    },
+    {
+      "dataset": "set_04",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.962882
+      "best_value": 0.582969
     },
     {
       "dataset": "set_04",
@@ -2680,27 +2707,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.883665
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.778812
+      "best_value": 0.753011
     },
     {
       "dataset": "set_04",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 0,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.990401
+    },
+    {
+      "dataset": "set_04",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 0,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.582969
+      "best_value": 0.515284
     },
     {
       "dataset": "set_04",
@@ -2733,28 +2760,28 @@
       "dataset": "set_04",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.990401
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "auc",
-      "best_value": 0.753011
+      "best_value": 0.881922
     },
     {
       "dataset": "set_04",
       "model_type": "eval",
       "scale": "small",
-      "has_kd": 0,
-      "model": "fusion",
+      "has_kd": 1,
+      "model": "gat",
+      "metric_name": "accuracy",
+      "best_value": 0.694171
+    },
+    {
+      "dataset": "set_04",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "gat",
       "metric_name": "recall",
-      "best_value": 0.515284
+      "best_value": 0.858079
     },
     {
       "dataset": "set_04",
@@ -2788,27 +2815,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
-      "metric_name": "accuracy",
-      "best_value": 0.694171
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
       "metric_name": "auc",
-      "best_value": 0.881922
+      "best_value": 0.824147
     },
     {
       "dataset": "set_04",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "gat",
+      "model": "vgae",
+      "metric_name": "accuracy",
+      "best_value": 0.892692
+    },
+    {
+      "dataset": "set_04",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "vgae",
       "metric_name": "recall",
-      "best_value": 0.858079
+      "best_value": 0.648472
     },
     {
       "dataset": "set_04",
@@ -2842,27 +2869,27 @@
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
-      "metric_name": "accuracy",
-      "best_value": 0.892692
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
       "metric_name": "auc",
-      "best_value": 0.824147
+      "best_value": 0.746096
     },
     {
       "dataset": "set_04",
       "model_type": "eval",
       "scale": "small",
       "has_kd": 1,
-      "model": "vgae",
+      "model": "fusion",
+      "metric_name": "accuracy",
+      "best_value": 0.989134
+    },
+    {
+      "dataset": "set_04",
+      "model_type": "eval",
+      "scale": "small",
+      "has_kd": 1,
+      "model": "fusion",
       "metric_name": "recall",
-      "best_value": 0.648472
+      "best_value": 0.443231
     },
     {
       "dataset": "set_04",
@@ -2890,33 +2917,6 @@
       "model": "fusion",
       "metric_name": "precision",
       "best_value": 0.948598
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
-      "metric_name": "accuracy",
-      "best_value": 0.989134
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
-      "metric_name": "auc",
-      "best_value": 0.746096
-    },
-    {
-      "dataset": "set_04",
-      "model_type": "eval",
-      "scale": "small",
-      "has_kd": 1,
-      "model": "fusion",
-      "metric_name": "recall",
-      "best_value": 0.443231
     }
   ]
 }

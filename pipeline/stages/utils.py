@@ -77,7 +77,6 @@ class MemoryMonitorCallback(pl.Callback):
 
     def on_train_end(self, trainer, pl_module):
         log.info("Memory at train end: %s", get_memory_summary())
-        self._record_epoch(trainer.current_epoch)
 
 
 # ---------------------------------------------------------------------------

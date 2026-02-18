@@ -81,7 +81,6 @@ def make_dask_runner(
         cluster_class="dask_jobqueue.SLURMCluster",
         cluster_kwargs=cluster_kwargs,
         adapt_kwargs=adapt_kwargs,
-        **({} if adapt_max else {"cluster_kwargs": {**cluster_kwargs}}),
     )
 
 

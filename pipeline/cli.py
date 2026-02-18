@@ -124,14 +124,19 @@ def _run_flow(args: argparse.Namespace, log: logging.Logger) -> None:
     if "--scale" not in sys.argv:
         scale = None
 
+    flow_kwargs = {}
+    if not args.local:
+        from .flows.slurm_config import make_dask_runner
+        flow_kwargs["task_runner"] = make_dask_runner()
+
     if args.eval_only:
         from .flows.eval_flow import eval_pipeline
         log.info("Starting Prefect evaluation flow (datasets=%s, scale=%s)", datasets, scale)
-        eval_pipeline(datasets=datasets, scale=scale)
+        eval_pipeline.with_options(**flow_kwargs)(datasets=datasets, scale=scale)
     else:
         from .flows.train_flow import train_pipeline
         log.info("Starting Prefect training flow (datasets=%s, scale=%s)", datasets, scale)
-        train_pipeline(datasets=datasets, scale=scale)
+        train_pipeline.with_options(**flow_kwargs)(datasets=datasets, scale=scale)
 
 
 def _init_wandb(cfg: PipelineConfig, stage: str, run_name: str):
@@ -267,6 +272,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # ---- Archive completed run if re-running same config ----
     sdir = stage_dir(cfg, args.stage)
+    archive = None
     if (sdir / "metrics.json").exists():
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         archive = sdir.parent / f"{sdir.name}.archive_{ts}"
@@ -298,9 +304,21 @@ def main(argv: list[str] | None = None) -> None:
         # Sync to S3 lakehouse (fire-and-forget)
         _sync_lakehouse(cfg, args.stage, run_name, result)
 
+        # Success → delete archive
+        if archive and archive.exists():
+            import shutil
+            shutil.rmtree(archive, ignore_errors=True)
+
         log.info("Run completed successfully")
 
     except Exception as e:
+        # Failure → restore archive
+        if archive and archive.exists():
+            if sdir.exists():
+                import shutil
+                shutil.rmtree(sdir, ignore_errors=True)
+            archive.rename(sdir)
+            log.warning("Restored archive after failure: %s", sdir)
         _sync_lakehouse(cfg, args.stage, run_name, None, success=False)
         log.error("Run failed: %s", str(e))
         raise

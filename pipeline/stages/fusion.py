@@ -66,7 +66,12 @@ def train_fusion(cfg: PipelineConfig) -> Path:
             state_np = batch_states[i].numpy()
             alpha, action_idx, proc_state = agent.select_action(state_np, training=True)
             pred = 1 if alpha > 0.5 else 0
-            reward = 3.0 if pred == batch_labels[i].item() else -3.0
+            reward = agent.compute_fusion_reward(
+                prediction=pred,
+                true_label=batch_labels[i].item(),
+                state_features=state_np,
+                alpha=alpha,
+            )
             agent.store_experience(proc_state, action_idx, reward, proc_state, False)
             total_reward += reward
 
