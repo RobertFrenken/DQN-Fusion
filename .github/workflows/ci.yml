@@ -43,11 +43,11 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - name: Install CPU-only PyTorch + PyG
+      - name: Install dependencies
         run: |
           pip install torch --index-url https://download.pytorch.org/whl/cpu
           pip install torch-geometric
-      - name: Install project
-        run: pip install -e ".[dev]"
+          pip install fastapi httpx pydantic pyyaml numpy scikit-learn psutil wandb pytorch-lightning pandas pyarrow
+          pip install -e ".[dev]" --no-deps
       - name: Run tests
         run: pytest tests/test_layer_boundaries.py tests/test_serve.py tests/test_registry.py -v -m "not slurm and not slow"
