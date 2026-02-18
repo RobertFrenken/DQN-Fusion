@@ -640,7 +640,7 @@ def export_embeddings(
     index_path = embed_dir / "index.json"
     index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
 
-    log.info("Exported %d embedding projections → %s", count, embed_dir)
+    log.info("Exported %d embedding projections → %s", len(exported_files), embed_dir)
     return embed_dir
 
 

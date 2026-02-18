@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
-from pathlib import Path
 
 import torch
 from fastapi import FastAPI, HTTPException

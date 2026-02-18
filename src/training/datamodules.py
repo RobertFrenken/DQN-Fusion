@@ -19,7 +19,6 @@ from config.constants import (
     DEFAULT_STRIDE,
     NODE_FEATURE_COUNT,
     EDGE_FEATURE_COUNT,
-    MMAP_TENSOR_LIMIT,
     PREPROCESSING_VERSION,
 )
 import config.constants as constants

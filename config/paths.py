@@ -30,7 +30,6 @@ STAGES = {
     "evaluation":  ("evaluation",   "eval", "evaluation"),
 }
 
-from .constants import CATALOG_PATH
 
 _datasets_cache: list[str] | None = None
 

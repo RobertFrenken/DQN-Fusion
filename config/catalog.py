@@ -6,7 +6,6 @@ malformed entries are caught at load time, not deep in preprocessing.
 from __future__ import annotations
 
 import yaml
-from pathlib import Path
 
 from pydantic import BaseModel
 
