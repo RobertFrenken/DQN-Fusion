@@ -59,12 +59,12 @@ def _scan_runs() -> list[dict]:
             except Exception:
                 continue
 
-            # Parse run_id components from directory name
+            # Prefer config.json fields, fall back to directory name parsing
             parts = run_dir.name.split("_")
-            model_type = parts[0] if parts else ""
-            scale = parts[1] if len(parts) > 1 else ""
+            model_type = cfg.get("model_type") or (parts[0] if parts else "")
+            scale = cfg.get("scale") or (parts[1] if len(parts) > 1 else "")
             stage = parts[2] if len(parts) > 2 else ""
-            has_kd = "_kd" in run_dir.name and "nokd" not in run_dir.name
+            has_kd = bool(cfg.get("auxiliaries")) or ("_kd" in run_dir.name and "nokd" not in run_dir.name)
 
             run_id = f"{ds_dir.name}/{run_dir.name}"
             has_metrics = (run_dir / "metrics.json").exists()
@@ -312,8 +312,11 @@ def export_training_curves(output_dir: Path) -> Path:
     curves_dir = output_dir / "training_curves"
     curves_dir.mkdir(parents=True, exist_ok=True)
     count = 0
+    exported_files: list[str] = []
 
     if not EXPERIMENT_ROOT.is_dir():
+        index_path = curves_dir / "index.json"
+        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
         return curves_dir
 
     for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
@@ -356,9 +359,13 @@ def export_training_curves(output_dir: Path) -> Path:
                     (curves_dir / fname).write_text(
                         json.dumps(_versioned_envelope(rows), indent=2)
                     )
+                    exported_files.append(fname)
                     count += 1
             except Exception as e:
                 log.warning("Failed to parse CSV log in %s: %s", run_dir, e)
+
+    index_path = curves_dir / "index.json"
+    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
 
     log.info("Exported training curves for %d runs → %s", count, curves_dir)
     return curves_dir

@@ -37,10 +37,13 @@ sbatch scripts/build_test_cache.sh set_02 set_03      # Specific datasets
 
 # Export dashboard data (filesystem → static JSON)
 python -m pipeline.export                                    # Default: docs/dashboard/data/
+python -m pipeline.export --skip-heavy                       # Light exports only (~2s, login node OK)
+python -m pipeline.export --only-heavy                       # Heavy exports only (UMAP, attention, graphs)
 python -m pipeline.export --output-dir docs/dashboard/data   # Explicit output dir
 bash scripts/export_dashboard.sh              # Export + commit + push to Pages + DVC push
 bash scripts/export_dashboard.sh --no-push    # Export + commit only
 bash scripts/export_dashboard.sh --dry-run    # Export only (no git)
+sbatch scripts/export_dashboard_slurm.sh      # Heavy exports via SLURM (cpu partition, 16GB)
 
 # Run tests — ALWAYS submit to SLURM, never on login node
 bash scripts/run_tests_slurm.sh                         # all tests
@@ -96,7 +99,7 @@ data/
   automotive/       # 6 datasets (DVC-tracked): hcrl_ch, hcrl_sa, set_01-04
   cache/            # Preprocessed graph cache (.pt, .pkl, metadata)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json, embeddings.npz, dqn_policy.json
-scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh, build_test_cache.sh, sweep.sh, generate_sweep.py)
+scripts/            # Automation (export_dashboard.sh, export_dashboard_slurm.sh, run_tests_slurm.sh, build_test_cache.sh, sweep.sh, generate_sweep.py)
 docs/dashboard/     # GitHub Pages D3.js dashboard (ES modules, config-driven panels)
   js/core/          # BaseChart, Registry, Theme
   js/charts/        # 8 chart types (Table, Bar, Scatter, Line, Timeline, Bubble, ForceGraph, Histogram)
@@ -154,7 +157,7 @@ These fix real crashes -- do not violate:
 - Archive restore: `cli.py` archives previous runs before re-running, and restores the archive if the new run fails.
 - Inference serving: `pipeline/serve.py` provides FastAPI endpoints (`/predict`, `/health`) loading VGAE+GAT+DQN from `experimentruns/`.
 - Dashboard: Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types inherit from it. `PanelManager` reads config → builds nav + panels + controls → lazy-loads data → renders. All chart types registered in `Registry`.
-- Dashboard data: `export.py` scans `experimentruns/` filesystem for `config.json` and `metrics.json` files. No database dependency. Artifacts (`embeddings.npz`, `dqn_policy.json`, etc.) are read directly from run directories.
+- Dashboard data: `export.py` scans `experimentruns/` filesystem for `config.json` and `metrics.json` files. No database dependency. Artifacts (`embeddings.npz`, `dqn_policy.json`, etc.) are read directly from run directories. `--skip-heavy` runs light exports (~2s, safe on login node); `--only-heavy` runs CPU-intensive exports (UMAP, attention, graph samples) via SLURM. Dashboard JS fetches from `s3://kd-gat/dashboard/` with `data/` fallback for local dev.
 - Dataset catalog: `config/datasets.yaml` — single place to register new datasets.
 - Delete unused code completely. No compatibility shims or `# removed` comments.
 

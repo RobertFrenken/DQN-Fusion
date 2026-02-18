@@ -1,86 +1,88 @@
 # Current State
 
 **Date**: 2026-02-18
-**Branch**: `main` (merged from `platform/wandb` via PR #2)
+**Branch**: `main`
 
-## What's Working
+## Ecosystem Status
 
-### Config System
-- Pydantic v2 frozen models + YAML composition fully operational
-- `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`
-- YAML files: `defaults.yaml`, `models/{vgae,gat,dqn}/{large,small}.yaml`, `auxiliaries/{none,kd_standard}.yaml`
-- Dataset catalog: `config/datasets.yaml` (6 automotive datasets)
-- Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
+### Fully Operational (Green)
 
-### Pipeline System
-- Pipeline system (`pipeline/`) fully operational with Prefect + W&B
-- CUDA multiprocessing fixes in place (clone-before-to, spawn context)
-- CLI: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>`
-- Flow: `python -m pipeline.cli flow --dataset <ds> [--scale <scale>]`
-- End-to-end validated: resolve() → config freeze → W&B init → graph loading → training → lakehouse sync
+| Component | Details |
+|-----------|---------|
+| **Config system** | Pydantic v2 frozen models + YAML composition. `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`. 6 datasets in `config/datasets.yaml`. |
+| **Training pipeline** | All 72 runs complete (6 datasets × 12 configs: 3 stages × {large, small, small+KD}). CLI: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>` |
+| **Prefect orchestration** | `train_pipeline()` and `eval_pipeline()` flows with dask-jobqueue SLURMCluster. `--local` flag for local Dask. |
+| **SLURM integration** | GPU (V100, PAS3209) + CPU partitions configured. |
+| **Graph caching** | All 6 datasets cached with test scenarios (`processed_graphs.pt` + `test_*.pt`). DynamicBatchSampler for variable-size graphs. |
+| **DVC tracking** | Raw data + cache tracked. S3 remote + local scratch remote configured. |
+| **Export pipeline** | 16 exporters with `--skip-heavy`/`--only-heavy` split. Light exports ~2s on login node; heavy exports (UMAP/attention/graph samples) via SLURM. |
+| **S3 lakehouse** | Fire-and-forget per-run JSON sync to `s3://kd-gat/lakehouse/runs/`. |
+| **S3 dashboard data** | Public read + CORS configured on `s3://kd-gat/dashboard/`. Dashboard JS fetches from S3 with `data/` fallback for local dev. |
+| **Dashboard** | Live at https://robertfrenken.github.io/DQN-Fusion/. D3.js v7 ES modules, 27 panels, config-driven via `panelConfig.js`. |
 
-### Platform
-- **W&B**: `wandb.init()`/`wandb.finish()` in CLI, WandbLogger in Lightning trainer. Offline mode on compute nodes. 77 runs total (3 offline pending sync).
-- **Prefect**: `train_pipeline()` and `eval_pipeline()` flows with dask-jobqueue SLURMCluster.
-- **S3 Lakehouse**: Fire-and-forget sync via `pipeline/lakehouse.py` to `s3://kd-gat/lakehouse/runs/`.
-- **DVC**: S3 remote configured alongside local scratch remote.
+### Partially Working (Yellow)
 
-### Dashboard (GitHub Pages)
-- **Live**: https://robertfrenken.github.io/DQN-Fusion/
-- **Stack**: Static JSON + D3.js v7 (ES modules), deployed from `docs/` on `main`
-- **All panels populated**: 73 embedding files, 18 DQN policy, 18 attention, 54 ROC curves, 18 recon errors, 6 CKA matrices
-- **Auto-export**: `scripts/export_dashboard.sh` runs export + commit + push + DVC push
+| Component | Issue |
+|-----------|-------|
+| **W&B tracking** | 77 online runs; 3 offline runs pending sync (2026-02-17). Run `wandb sync wandb/offline-run-*`. |
+| **Dashboard panels** | Most panels verified. Timeline, duration, and training curves panels need browser verification. |
+| **Inference server** | `pipeline/serve.py` exists (`/predict`, `/health`). Untested with current 72-run checkpoints. |
+| **Test suite** | 101 tests passing on SLURM. No CI — manual submission only via `scripts/run_tests_slurm.sh`. |
 
-### Test Infrastructure
-- **101 tests passing** across 8 test files
-- Parallel SLURM submission: `scripts/run_tests_parallel.sh`
-- Sequential fallback: `scripts/run_tests_slurm.sh` (120min, 64GB)
-- `@pytest.mark.slurm` marker auto-skips heavy tests on login nodes
+### Missing (Gray)
 
-## Experiment Status
+| Component | Impact |
+|-----------|--------|
+| **CI/CD** | No automated testing or deployment. GitHub Actions needed. |
+| **Export parallelization** | Heavy exports take ~10min. `ProcessPoolExecutor` could cut to 2-3min. |
 
-All 6 datasets have complete pipelines (9 checkpoints + 3 eval runs each = 54 checkpoints + 18 eval runs):
+## Experiment Runs
 
-| Dataset | VGAE (L/S/S-KD) | GAT (L/S/S-KD) | DQN (L/S/S-KD) | Eval (L/S/S-KD) |
-|---------|-----------------|-----------------|-----------------|------------------|
-| hcrl_ch | 1.8M/352K/352K | 6.4M/406K/406K | 5.3M/260K/260K | 234K/221K/224K |
-| hcrl_sa | 1.8M/352K/352K | 6.4M/406K/406K | 5.3M/260K/260K | 265K/297K/261K |
-| set_01  | 760K/55K/55K   | 6.3M/344K/344K | 5.3M/260K/260K | 293K/289K/292K |
-| set_02  | 1.8M/352K/352K | 6.4M/406K/406K | 5.3M/260K/260K | 233K/241K/232K |
-| set_03  | 1.7M/313K/313K | 6.4M/398K/398K | 5.3M/260K/260K | 232K/288K/232K |
-| set_04  | 1.8M/352K/352K | 6.4M/406K/406K | 5.3M/260K/260K | 290K/289K/287K |
+All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
 
-Most recent checkpoint: `hcrl_sa/vgae_large_autoencoder` (2026-02-17 20:01, validation run).
+**Per dataset (12 runs each):**
+- `vgae_{large,small,small_kd}_autoencoder` (3 VGAE)
+- `gat_{large,small,small_kd}_curriculum` (3 GAT)
+- `dqn_{large,small,small_kd}_fusion` (3 DQN)
+- `eval_{large,small,small_kd}_evaluation` (3 Eval)
+
+**Eval artifacts per run:** `metrics.json`, `config.json`, `embeddings.npz`, `dqn_policy.json`, `attention_weights.npz`
+
+| Dataset | Runs | Eval Artifacts |
+|---------|------|----------------|
+| hcrl_ch | 12 | metrics + embeddings + policy + attention |
+| hcrl_sa | 12 | metrics + embeddings + policy + attention |
+| set_01  | 12 | metrics + embeddings + policy + attention |
+| set_02  | 12 | metrics + embeddings + policy + attention |
+| set_03  | 12 | metrics + embeddings + policy + attention |
+| set_04  | 12 | metrics + embeddings + policy + attention |
 
 ## Recently Completed
 
-- **PR #2 merged to main** (2026-02-18): Full platform migration from Snakemake/SQLite to W&B/Prefect/S3
-- **Legacy cleanup**: Removed all Snakemake/SQLite/MLflow references from code and docs
-- **Dashboard export**: All 26 panels populated with fresh data
-- **Test validation**: 101 tests passing across 8 files on SLURM
+- **Dashboard rework** (2026-02-17/18): S3 data source migration, embedding panel fix, timestamp support, color theme update
+- **Export bug fixes** (2026-02-18): `_scan_runs` config.json parsing (prefer config fields over dir name parsing), `training_curves` index.json generation
+- **PR #2 merged** (2026-02-18): Full platform migration from Snakemake/SQLite to W&B/Prefect/S3
+- **Legacy cleanup**: Removed all Snakemake/SQLite/MLflow references
+- **72 training runs complete** across 6 datasets × 12 configurations
 
-## What's Not Working / Incomplete
+## Data Flow
 
-- **W&B offline runs**: 3 offline runs pending sync (`wandb sync wandb/offline-run-*`)
-- **OOD generalization collapse** (Bug 3.6): Research question, not a code bug
-
-## Next Steps
-
-1. **Sync W&B offline runs**: `wandb sync wandb/offline-run-*`
-2. **Push dashboard to GitHub Pages**: Verify live at https://robertfrenken.github.io/DQN-Fusion/
-3. **Investigate OOD threshold calibration** (Bug 3.6)
-4. **Run fresh experiments** with new platform on all datasets
-
-## Filesystem
-
-- **Inode usage**: ~390k / 20M
-- **Conda envs**: gnn-experiments
+```
+Raw CAN CSVs (6 datasets, 10.8 GB, DVC)
+  → Graph Cache (processed_graphs.pt + test_*.pt, DVC)
+    → Training Pipeline (VGAE → GAT → DQN, large + small + small-KD)
+      → Evaluation (metrics + embeddings + attention + policy)
+        → W&B (77 online) | S3 Lakehouse (DuckDB) | experimentruns/ (72 on disk)
+          → Export Pipeline (16 exporters, --skip-heavy/--only-heavy)
+            → S3 Dashboard Bucket (s3://kd-gat/dashboard/)
+              → GitHub Pages Dashboard (27 panels, D3.js v7)
+```
 
 ## OSC Environment
 
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
-- **Prefect home**: `/fs/scratch/PAS1266/.prefect/` (GPFS)
+- **Prefect home**: `/fs/scratch/PAS1266/.prefect/`
 - **W&B**: Project `kd-gat` (offline on compute nodes, sync later)
 - **Dashboard**: `docs/dashboard/` (GitHub Pages — static JSON + D3.js)
-- **Conda**: Auto-loaded via `~/.bashrc` (`module load miniconda3` + `conda activate gnn-experiments`)
+- **Conda**: `gnn-experiments` (auto-loaded via `~/.bashrc`)
