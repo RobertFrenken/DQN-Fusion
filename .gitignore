@@ -79,6 +79,10 @@ slurm-*.out
 # Snakemake working directory
 .snakemake/
 
+# ===== DASHBOARD DATA =====
+# Dashboard JSON is served from S3, not committed to git
+docs/dashboard/data/**/*.json
+
 # Generated figures
 *.png
 *.jpg

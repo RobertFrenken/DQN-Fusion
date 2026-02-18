@@ -1,7 +1,7 @@
 /* Scatter chart: generic scatter plot with configurable axes */
 
 import { BaseChart } from '../core/BaseChart.js';
-import { COLORS, LABEL_COLORS, DATASET_COLORS, MODEL_COLORS, semanticColorScale } from '../core/Theme.js';
+import { COLORS, LABEL_COLORS, DATASET_COLORS, MODEL_COLORS, CONFIG_COLORS, semanticColorScale } from '../core/Theme.js';
 import { register } from '../core/Registry.js';
 
 export class ScatterChart extends BaseChart {
@@ -44,7 +44,8 @@ export class ScatterChart extends BaseChart {
         } else {
             // Pick semantic map based on colorField
             const semanticMap = colorField === 'dataset' ? DATASET_COLORS
-                : (colorField === 'config' || colorField === 'model_type') ? MODEL_COLORS
+                : colorField === 'config' ? CONFIG_COLORS
+                : colorField === 'model_type' ? MODEL_COLORS
                 : null;
             const scale = semanticMap
                 ? semanticColorScale(colorDomain, semanticMap)

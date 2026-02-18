@@ -55,11 +55,18 @@ export class ForceGraph extends BaseChart {
                 const f = n.features?.[0];
                 return f != null ? Math.floor(f) : n.id;
             }))].sort((a, b) => a - b);
-            const canColor = d3.scaleOrdinal().domain(canIds).range(COLORS);
+            let canColor;
+            if (canIds.length <= 20) {
+                canColor = d3.scaleOrdinal().domain(canIds).range(COLORS);
+            } else {
+                const rankMap = new Map(canIds.map((id, i) => [id, i]));
+                const seqScale = d3.scaleSequential(d3.interpolateTurbo).domain([0, canIds.length - 1]);
+                canColor = id => seqScale(rankMap.get(id) ?? 0);
+            }
             colorFn = d => {
                 const f = d.features?.[0];
                 const canId = f != null ? Math.floor(f) : d.id;
-                return canColor(canId);
+                return typeof canColor === 'function' ? canColor(canId) : canColor(canId);
             };
         }
 

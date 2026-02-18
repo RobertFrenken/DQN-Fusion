@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -23,7 +24,6 @@ EXPERIMENT_ROOT = Path("experimentruns")
 
 def _versioned_envelope(data: list | dict) -> dict:
     """Wrap export data with schema version and timestamp."""
-    from datetime import datetime, timezone
     return {
         "schema_version": "1.0.0",
         "exported_at": datetime.now(timezone.utc).isoformat(),
@@ -136,6 +136,22 @@ def export_runs(output_dir: Path) -> Path:
     """All runs with status."""
     rows = []
     for run in _scan_runs():
+        # Derive timestamps from filesystem mtimes as fallback
+        started_at = None
+        completed_at = None
+        cfg_path = run["dir"] / "config.json"
+        if cfg_path.exists():
+            started_at = datetime.fromtimestamp(
+                cfg_path.stat().st_mtime, tz=timezone.utc
+            ).isoformat()
+        for end_file in ("best_model.pt", "metrics.json"):
+            p = run["dir"] / end_file
+            if p.exists():
+                completed_at = datetime.fromtimestamp(
+                    p.stat().st_mtime, tz=timezone.utc
+                ).isoformat()
+                break
+
         rows.append({
             "run_id": run["run_id"],
             "dataset": run["dataset"],
@@ -145,8 +161,8 @@ def export_runs(output_dir: Path) -> Path:
             "has_kd": run["has_kd"],
             "status": run["status"],
             "teacher_run": "",
-            "started_at": None,
-            "completed_at": None,
+            "started_at": started_at,
+            "completed_at": completed_at,
         })
 
     out = output_dir / "runs.json"
@@ -852,19 +868,21 @@ def export_cka(output_dir: Path) -> Path:
 # Main
 # ---------------------------------------------------------------------------
 
-def export_all(output_dir: Path) -> None:
-    """Run all exports."""
+HEAVY_EXPORTS = {"embeddings", "graph_samples", "recon_errors", "attention"}
+
+
+def export_all(output_dir: Path, *, skip_heavy: bool = False,
+               only_heavy: bool = False) -> None:
+    """Run all exports.
+
+    Args:
+        skip_heavy: Skip CPU-intensive exports (embeddings, graph_samples,
+                    recon_errors, attention). Fast exports finish in seconds.
+        only_heavy: Run only the CPU-intensive exports.
+    """
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    lb = export_leaderboard(output_dir)
-    runs = export_runs(output_dir)
-    export_metrics(output_dir)
-    ds = export_datasets(output_dir)
-    kd = export_kd_transfer(output_dir)
-    export_training_curves(output_dir)
-    export_metric_catalog(output_dir)
-
-    for name, func in [
+    artifact_exports = [
         ("graph_samples", export_graph_samples),
         ("model_sizes", export_model_sizes),
         ("embeddings", export_embeddings),
@@ -873,17 +891,33 @@ def export_all(output_dir: Path) -> None:
         ("attention", export_attention),
         ("recon_errors", export_recon_errors),
         ("cka", export_cka),
-    ]:
+    ]
+
+    if not only_heavy:
+        lb = export_leaderboard(output_dir)
+        runs = export_runs(output_dir)
+        export_metrics(output_dir)
+        ds = export_datasets(output_dir)
+        kd = export_kd_transfer(output_dir)
+        export_training_curves(output_dir)
+        export_metric_catalog(output_dir)
+
+        for name, path in [
+            ("leaderboard", lb), ("runs", runs), ("datasets", ds), ("kd_transfer", kd),
+        ]:
+            if path.stat().st_size < 10:
+                log.warning("EMPTY EXPORT: %s (%s)", name, path)
+
+    for name, func in artifact_exports:
+        if skip_heavy and name in HEAVY_EXPORTS:
+            log.info("Skipping heavy export: %s", name)
+            continue
+        if only_heavy and name not in HEAVY_EXPORTS:
+            continue
         try:
             func(output_dir)
         except Exception as e:
             log.warning("Export %s failed (non-fatal): %s", name, e)
-
-    for name, path in [
-        ("leaderboard", lb), ("runs", runs), ("datasets", ds), ("kd_transfer", kd),
-    ]:
-        if path.stat().st_size < 10:
-            log.warning("EMPTY EXPORT: %s (%s)", name, path)
 
     log.info("All exports complete → %s", output_dir)
 
@@ -897,6 +931,15 @@ def main(argv: list[str] | None = None) -> None:
         "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
     )
+    group = parser.add_mutually_exclusive_group()
+    group.add_argument(
+        "--skip-heavy", action="store_true",
+        help="Skip CPU-intensive exports (embeddings, graph_samples, recon_errors, attention)",
+    )
+    group.add_argument(
+        "--only-heavy", action="store_true",
+        help="Run only CPU-intensive exports",
+    )
     args = parser.parse_args(argv)
 
     logging.basicConfig(
@@ -904,7 +947,8 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s  %(name)-20s  %(levelname)-7s  %(message)s",
     )
 
-    export_all(args.output_dir)
+    export_all(args.output_dir, skip_heavy=args.skip_heavy,
+               only_heavy=args.only_heavy)
 
 
 if __name__ == "__main__":

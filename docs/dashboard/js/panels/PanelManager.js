@@ -3,7 +3,10 @@
 import { PANELS } from './panelConfig.js';
 import * as Registry from '../core/Registry.js';
 
-const BASE = 'data/';
+const S3_BASE = 'https://kd-gat.s3.us-east-2.amazonaws.com/dashboard/';
+const LOCAL_BASE = 'data/';
+const BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? LOCAL_BASE : S3_BASE;
 const EXPECTED_MAJOR_VERSION = '1';
 
 export class PanelManager {
@@ -177,10 +180,50 @@ export class PanelManager {
                 opt.textContent = 'No data available';
                 select.appendChild(opt);
             });
-        } else if (ctrl.embeddingSource || ctrl.dqnPolicySource) {
-            // Load index.json to discover available files
-            const dir = ctrl.embeddingSource ? 'embeddings' : 'dqn_policy';
-            this._loadJSON(`${dir}/index.json`).then(index => {
+        } else if (ctrl.embeddingSource) {
+            // Load index.json and extract unique run IDs for this model type
+            this._loadJSON('embeddings/index.json').then(index => {
+                select.innerHTML = '';
+                const files = Array.isArray(index) ? index : (index?.data ?? []);
+                if (files.length === 0) {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = 'No data available';
+                    select.appendChild(opt);
+                    return;
+                }
+                const runIds = new Set();
+                files.forEach(fname => {
+                    const base = fname.replace(/\.json$/, '');
+                    const parts = base.split('_');
+                    const method = parts.pop();   // umap or pymde
+                    const model = parts.pop();    // vgae or gat
+                    if (model !== ctrl.embeddingSource) return;
+                    runIds.add(parts.join('_'));
+                });
+                if (runIds.size === 0) {
+                    const opt = document.createElement('option');
+                    opt.value = '';
+                    opt.textContent = 'No data available';
+                    select.appendChild(opt);
+                    return;
+                }
+                [...runIds].sort().forEach(rid => {
+                    const opt = document.createElement('option');
+                    opt.value = rid;
+                    opt.textContent = rid;
+                    select.appendChild(opt);
+                });
+            }).catch(() => {
+                select.innerHTML = '';
+                const opt = document.createElement('option');
+                opt.value = '';
+                opt.textContent = 'No data available';
+                select.appendChild(opt);
+            });
+        } else if (ctrl.dqnPolicySource) {
+            // Load index.json to discover available DQN policy files
+            this._loadJSON('dqn_policy/index.json').then(index => {
                 select.innerHTML = '';
                 const files = Array.isArray(index) ? index : (index?.data ?? []);
                 if (files.length === 0) {
@@ -192,7 +235,6 @@ export class PanelManager {
                 }
                 files.forEach(fname => {
                     const opt = document.createElement('option');
-                    // Extract run ID from filename (strip extension and method suffix for embeddings)
                     const base = fname.replace(/\.json$/, '');
                     opt.value = base;
                     opt.textContent = base;
