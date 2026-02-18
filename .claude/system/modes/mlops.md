@@ -4,23 +4,23 @@
 
 ## Focus Areas
 
-- Snakemake pipeline execution and debugging
+- Prefect flow execution and debugging
 - SLURM job management (submission, monitoring, resource allocation)
 - Config system maintenance (YAML composition, Pydantic validation)
-- MLflow/WandB tracking and experiment management
+- W&B tracking and experiment management
 - Training failure triage (OOM, CUDA errors, NaN losses)
-- Data pipeline health (ingest, preprocessing, caching)
-- Project DB queries and analytics
+- Data pipeline health (preprocessing, caching)
+- S3 lakehouse sync and DuckDB queries
 
 ## Context Files (prioritize reading these)
 
 - `CLAUDE.md` — Full command reference and project structure
 - `.claude/system/STATE.md` — Current pipeline state and experiment status
-- `pipeline/Snakefile` — DAG definitions, SLURM resources, retry logic
+- `pipeline/flows/` — Prefect flow definitions (train_flow, eval_flow, slurm_config)
 - `config/` — Schema, resolver, constants, YAML files
 - `pipeline/stages/` — Stage implementations
-- `pipeline/tracking.py` — MLflow integration
-- `pipeline/db.py` — Project DB write-through
+- `pipeline/lakehouse.py` — S3 lakehouse sync
+- `pipeline/cli.py` — CLI entry point + W&B lifecycle
 
 ## Suppressed Topics
 
@@ -34,18 +34,18 @@ Do NOT initiate discussion about:
 
 | Command | Description |
 |---------|-------------|
-| `/run-pipeline <dataset> [target]` | Submit Snakemake jobs to SLURM |
-| `/check-status [dataset]` | Check SLURM queue, checkpoints, DB status |
+| `/run-pipeline <dataset> [scale]` | Submit Prefect flow to SLURM |
+| `/check-status [dataset]` | Check SLURM queue, checkpoints, W&B |
 | `/run-tests [pattern]` | Run pytest suite |
-| `/sync-state` | Update STATE.md from current outputs |
 | `python -m pipeline.cli <stage> ...` | Run single stage directly |
-| `python -m pipeline.db summary` | DB summary counts |
-| `python -m pipeline.analytics leaderboard` | Top metrics |
+| `python -m pipeline.cli flow --dataset <ds>` | Run full Prefect pipeline |
+| `python -m pipeline.cli flow --eval-only` | Re-run evaluation only |
+| `wandb sync wandb/run-*` | Sync offline W&B runs |
 
 ## Quick Diagnostics
 
 When troubleshooting, check in this order:
 1. `squeue -u $USER` — Are jobs running/pending?
-2. `slurm_logs/<jobid>-<rule>.err` — SLURM-level errors
-3. `experimentruns/{ds}/{run}/log.err` — Application-level errors
-4. `python -m pipeline.db query "SELECT * FROM runs WHERE status='failed' ORDER BY started_at DESC LIMIT 5"` — Recent failures
+2. `slurm_logs/<jobid>.{out,err}` — SLURM-level errors
+3. `experimentruns/{ds}/{run}/log.{out,err}` — Application-level errors
+4. W&B dashboard (project `kd-gat`) — Run metrics and status

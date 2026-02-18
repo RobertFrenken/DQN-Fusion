@@ -25,9 +25,8 @@ You are an expert ML debugger specializing in PyTorch, PyTorch Lightning, and GN
 - `config/resolver.py` - YAML composition: `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`
 - `config/paths.py` - Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
 - `pipeline/stages/` - Training, fusion, evaluation modules (use nested config access: `cfg.vgae.latent_dim`, `cfg.gat.hidden`, etc.)
-- `pipeline/cli.py` - Entry point, MLflow lifecycle, write-through DB recording
-- `pipeline/db.py` - SQLite project DB with `record_run_start()`/`record_run_end()` + backfill `populate()`
-- `pipeline/Snakefile` - Snakemake workflow (retries with resource scaling, preprocessing cache, evaluation group jobs)
+- `pipeline/cli.py` - Entry point, W&B lifecycle, archive/restore on failure
+- `pipeline/flows/` - Prefect orchestration (train_flow, eval_flow, SLURMCluster)
 - `experimentruns/` - Experiment outputs and logs
 
 ## Common Issues to Check
@@ -44,10 +43,10 @@ You are an expert ML debugger specializing in PyTorch, PyTorch Lightning, and GN
 - ID mapping errors → Check OOV handling in apply_dynamic_id_mapping
 
 ### Pipeline Issues
-- Snakemake failures → Check SLURM logs in `slurm_logs/<jobid>-<rule>.{out,err}` and per-rule logs in `experimentruns/{ds}/{run}/log.{out,err}`
+- SLURM failures → Check logs in `slurm_logs/<jobid>-<name>.{out,err}`
 - Missing checkpoints → Verify best_model.pt exists in run directory
-- MLflow errors → Check MLflow DB at `/fs/scratch/PAS1266/kd_gat_mlflow/mlflow.db`
-- DB recording errors → Check `data/project.db` via `python -m pipeline.db summary`
+- W&B errors → Check offline runs in `wandb/` directory, sync with `wandb sync`
+- Prefect failures → Check flow logs, verify dask-jobqueue SLURMCluster config
 
 ## Output Format
 

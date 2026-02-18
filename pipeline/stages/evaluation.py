@@ -271,19 +271,18 @@ def _run_gat_inference(gat, data, device, capture_embeddings=False, capture_atte
     with torch.no_grad():
         for idx, g in enumerate(data):
             g = g.clone().to(device)
-            logits = gat(g)
+            if capture_embeddings:
+                logits, emb = gat(g, return_embedding=True)
+                embeddings.append(emb[0].cpu().numpy())
+            else:
+                logits = gat(g)
             probs = F.softmax(logits, dim=1)
             preds.append(logits.argmax(1)[0].item())
             labels.append(graph_label(g))
             scores.append(probs[0, 1].item())
-            if capture_embeddings:
-                # Get hidden representations from last GAT layer (before FC)
-                xs = gat(g, return_intermediate=True)
-                # Use last layer's output, mean-pooled over nodes
-                emb = xs[-1].mean(dim=0).cpu().numpy()
-                embeddings.append(emb)
+            # Attention capture (separate pass, sampled subset only)
             if capture_attention and idx < ATTENTION_SAMPLE_LIMIT:
-                xs, att_weights = gat(g, return_attention_weights=True)
+                _, att_weights = gat(g, return_attention_weights=True)
                 attn_data.append({
                     "graph_idx": idx,
                     "label": graph_label(g),

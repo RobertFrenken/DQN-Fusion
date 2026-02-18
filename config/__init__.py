@@ -42,11 +42,7 @@ from .paths import (
     done_path_str,
 )
 from .constants import (
-    SCHEMA_VERSION,
     PREPROCESSING_VERSION,
-    DB_PATH,
-    PARQUET_ROOT,
-    ROW_GROUP_SIZE,
     DEFAULT_WINDOW_SIZE,
     DEFAULT_STRIDE,
     EXCLUDED_ATTACK_TYPES,

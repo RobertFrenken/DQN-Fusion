@@ -11,6 +11,7 @@ set -euo pipefail
 PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
 DASHBOARD_DATA="docs/dashboard/data"
 BRANCH="main"
+S3_BUCKET="${KD_GAT_S3_BUCKET:-kd-gat}"
 
 # --- Parse flags ---
 DRY_RUN=false
@@ -40,6 +41,17 @@ fi
 echo "Exporting project DB → ${DASHBOARD_DATA}/"
 python -m pipeline.export --output-dir "$DASHBOARD_DATA"
 echo "Export complete."
+
+# --- Sync dashboard data to S3 (public read) ---
+echo "Syncing dashboard data to s3://${S3_BUCKET}/dashboard/..."
+aws s3 sync "$DASHBOARD_DATA/" "s3://${S3_BUCKET}/dashboard/" --delete \
+    || echo "WARNING: S3 dashboard sync failed (non-fatal)"
+
+# --- Push DVC-tracked data to S3 remote (if configured) ---
+if dvc remote list 2>/dev/null | grep -q "s3"; then
+    echo "Pushing DVC data to S3 remote..."
+    dvc push -r s3 2>/dev/null || echo "WARNING: DVC push to S3 failed (non-fatal)"
+fi
 
 if $DRY_RUN; then
     echo "Dry run — skipping git operations."

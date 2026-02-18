@@ -11,11 +11,12 @@ import torch
 import torch.nn as nn
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
+from pytorch_lightning.loggers import CSVLogger, WandbLogger
 from torch_geometric.loader import DataLoader, DynamicBatchSampler
 
 from config import PipelineConfig, stage_dir, checkpoint_path, config_path, data_dir, cache_dir
 from config.constants import MMAP_TENSOR_LIMIT
-from ..tracking import log_memory_metrics, get_memory_summary
+from ..tracking import get_memory_summary
 from ..memory import compute_batch_size, log_memory_state, save_budget_cache, load_budget_cache
 
 if TYPE_CHECKING:
@@ -40,7 +41,7 @@ if str(_ROOT) not in sys.path:
 # ---------------------------------------------------------------------------
 
 class MemoryMonitorCallback(pl.Callback):
-    """Log memory usage at epoch boundaries and record to project DB."""
+    """Log memory usage at epoch boundaries."""
 
     def __init__(
         self,
@@ -51,41 +52,16 @@ class MemoryMonitorCallback(pl.Callback):
         super().__init__()
         self.log_every_n_epochs = log_every_n_epochs
         self.predicted_peak_mb = predicted_peak_mb
-        self.run_id = run_id
         self._logged_first_epoch = False
-
-    def _record_epoch(self, epoch: int, extra: dict[str, float] | None = None):
-        """Record epoch metrics to project DB if run_id is set."""
-        if not self.run_id:
-            return
-        import os
-        if os.environ.get("SLURM_JOB_ID"):
-            return  # Defer DB writes to onsuccess backfill
-        metrics = log_memory_metrics(step=epoch)
-        if extra:
-            metrics.update(extra)
-        try:
-            from pipeline.db import record_epoch_metrics
-            record_epoch_metrics(self.run_id, epoch, metrics)
-        except Exception as e:
-            log.warning("Failed to record epoch metrics: %s", e)
 
     def on_train_start(self, trainer, pl_module):
         log.info("Memory at train start: %s", get_memory_summary())
-        self._record_epoch(0)
 
     def on_train_epoch_end(self, trainer, pl_module):
         epoch = trainer.current_epoch
-        extra: dict[str, float] = {}
-
-        # Collect trainer-logged metrics (val_loss, val_f1, train_loss, lr, etc.)
-        for key in ("train_loss", "val_loss", "val_f1", "val_accuracy", "lr"):
-            val = trainer.callback_metrics.get(key)
-            if val is not None:
-                extra[key] = float(val)
 
         if epoch % self.log_every_n_epochs == 0:
-            self._record_epoch(epoch, extra)
+            log.info("Epoch %d memory: %s", epoch, get_memory_summary())
 
         # Log predicted vs actual peak memory after the first epoch
         if not self._logged_first_epoch and epoch == 0 and torch.cuda.is_available():
@@ -101,7 +77,6 @@ class MemoryMonitorCallback(pl.Callback):
 
     def on_train_end(self, trainer, pl_module):
         log.info("Memory at train end: %s", get_memory_summary())
-        self._record_epoch(trainer.current_epoch)
 
 
 # ---------------------------------------------------------------------------
@@ -290,8 +265,11 @@ def make_dataloader(
     nw = _safe_num_workers(data, cfg)
 
     if max_num_nodes is not None:
+        # num_steps required so Lightning can call len(dataloader)
+        num_steps = max(1, len(data) // max(1, batch_size))
         sampler = DynamicBatchSampler(
             data, max_num=max_num_nodes, mode="node", shuffle=shuffle,
+            num_steps=num_steps,
         )
         return DataLoader(
             data,
@@ -527,6 +505,32 @@ def build_optimizer_dict(optimizer, cfg: PipelineConfig):
 # Trainer factory
 # ---------------------------------------------------------------------------
 
+def _make_loggers(
+    cfg: PipelineConfig,
+    stage: str,
+    out: Path,
+    run_id_str: str,
+) -> list:
+    """Build Lightning loggers: CSV (always) + W&B (when available).
+
+    If a W&B run is already active (initialized by cli.py), the WandbLogger
+    attaches to it instead of creating a new run.
+    """
+    loggers: list = [CSVLogger(save_dir=str(out), name="csv_logs")]
+
+    try:
+        import wandb
+        if wandb.run is not None:
+            # Attach to existing run started by cli.py
+            loggers.append(WandbLogger(experiment=wandb.run))
+        else:
+            log.debug("No active wandb run — WandbLogger skipped in trainer")
+    except ImportError:
+        log.debug("wandb not installed — skipping WandbLogger")
+
+    return loggers
+
+
 def make_trainer(
     cfg: PipelineConfig,
     stage: str,
@@ -567,6 +571,7 @@ def make_trainer(
                 run_id=rid,
             ),
         ],
+        logger=_make_loggers(cfg, stage, out, rid),
         log_every_n_steps=t.log_every_n_steps,
         enable_progress_bar=True,
         deterministic=t.deterministic,

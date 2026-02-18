@@ -3,6 +3,9 @@
 **Updated**: 2026-02-02
 **Context**: OSC Pitzer cluster (RHEL 9), VS Code Remote SSH, ML pipeline work
 
+# Claude skip call
+claude --dangerously-skip-permissions
+
 ## What's Available on OSC Right Now
 
 Checked on `pitzer-login04`:
@@ -96,7 +99,7 @@ set -g default-terminal "screen-256color"
 **Pattern 1: Pipeline monitoring**
 ```bash
 tmux new -s pipeline
-# Pane 1: snakemake running
+# Pane 1: pipeline running
 # Ctrl-a | to split
 # Pane 2: watch -n 30 squeue -u rf15
 # Ctrl-a - to split pane 2 horizontally
@@ -236,7 +239,7 @@ tmux attach -t pipeline || tmux new -s pipeline
 
 # In tmux pane 1: run pipeline
 conda activate gnn-experiments
-snakemake -s pipeline/Snakefile --profile profiles/slurm --config 'datasets=["hcrl_sa"]'
+python -m pipeline.cli flow --dataset hcrl_sa
 
 # Ctrl-a | (split pane)
 # In tmux pane 2: monitor

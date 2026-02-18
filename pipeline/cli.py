@@ -24,11 +24,7 @@ from pathlib import Path
 from config import PipelineConfig, STAGES, config_path, run_id, stage_dir
 from config.resolver import resolve
 from .validate import validate
-from .db import record_run_start, record_run_end, get_connection
 
-# Skip DB writes on SLURM compute nodes to avoid SQLite WAL crashes from
-# concurrent NFS writers. The onsuccess hook runs `db populate` as a single-
-# writer backfill after all jobs complete.
 _ON_COMPUTE_NODE = bool(os.environ.get("SLURM_JOB_ID"))
 
 
@@ -42,8 +38,8 @@ def _build_parser() -> argparse.ArgumentParser:
         description="KD-GAT training pipeline",
     )
     p.add_argument(
-        "stage", choices=list(STAGES.keys()) + ["state"],
-        help="Training stage to run (or 'state' to update STATE.md)",
+        "stage", choices=list(STAGES.keys()) + ["flow"],
+        help="Training stage to run, or 'flow' to run Prefect pipeline",
     )
 
     # Config source
@@ -70,6 +66,12 @@ def _build_parser() -> argparse.ArgumentParser:
     # KD shorthand: --teacher-path sets auxiliaries + model_path
     p.add_argument("--teacher-path", type=str, default=None,
                     help="Shorthand: implies kd_standard aux with given model_path")
+
+    # Flow subcommand options
+    p.add_argument("--eval-only", action="store_true", default=False,
+                    help="(flow) Re-run evaluation only, skip training")
+    p.add_argument("--local", action="store_true", default=False,
+                    help="(flow) Use local Dask cluster instead of SLURM")
 
     # Nested overrides via dot-path: --training.lr 0.001, --vgae.latent-dim 16
     p.add_argument("--override", "-O", nargs=2, action="append", default=[],
@@ -103,6 +105,115 @@ def _parse_dot_overrides(pairs: list[list[str]]) -> dict:
     return result
 
 
+def _run_flow(args: argparse.Namespace, log: logging.Logger) -> None:
+    """Dispatch Prefect flow (train or eval-only).
+
+    --scale filters to a single variant (large, small_kd, small_nokd).
+    Without --scale, all variants run.  The argparse default "large" is
+    for single-stage dispatch; for flows, we treat it as "run all" unless
+    the user explicitly passes a flow-relevant scale value.
+    """
+    datasets = [args.dataset] if args.dataset else None
+
+    # Detect if --scale was explicitly provided on the CLI
+    # (argparse default is "large", which we ignore for flow mode)
+    _flow_scales = ("large", "small_kd", "small_nokd")
+    scale = args.scale if args.scale in _flow_scales else None
+    # Check if user actually passed --scale or if it's the default
+    import sys
+    if "--scale" not in sys.argv:
+        scale = None
+
+    flow_kwargs = {}
+    if not args.local:
+        from .flows.slurm_config import make_dask_runner
+        flow_kwargs["task_runner"] = make_dask_runner()
+
+    if args.eval_only:
+        from .flows.eval_flow import eval_pipeline
+        log.info("Starting Prefect evaluation flow (datasets=%s, scale=%s)", datasets, scale)
+        eval_pipeline.with_options(**flow_kwargs)(datasets=datasets, scale=scale)
+    else:
+        from .flows.train_flow import train_pipeline
+        log.info("Starting Prefect training flow (datasets=%s, scale=%s)", datasets, scale)
+        train_pipeline.with_options(**flow_kwargs)(datasets=datasets, scale=scale)
+
+
+def _init_wandb(cfg: PipelineConfig, stage: str, run_name: str):
+    """Initialize a W&B run. Returns the run object, or None on failure."""
+    try:
+        import wandb
+    except ImportError:
+        return None
+
+    # Offline mode on SLURM compute nodes (no internet); sync later via onsuccess
+    if _ON_COMPUTE_NODE and not os.environ.get("WANDB_MODE"):
+        os.environ["WANDB_MODE"] = "offline"
+
+    try:
+        return wandb.init(
+            project="kd-gat",
+            name=run_name,
+            config=cfg.model_dump(),
+            tags=[cfg.dataset, cfg.model_type, cfg.scale, stage],
+            reinit=True,
+        )
+    except Exception as e:
+        logging.getLogger("pipeline").warning("wandb.init() failed: %s", e)
+        return None
+
+
+def _wandb_log_metrics(result: dict) -> None:
+    """Log final result metrics to the active W&B run."""
+    try:
+        import wandb
+        if wandb.run is None:
+            return
+        flat: dict[str, float] = {}
+        for model_key, model_metrics in result.items():
+            if model_key == "test":
+                continue  # test metrics are nested differently
+            if isinstance(model_metrics, dict) and "core" in model_metrics:
+                for k, v in model_metrics["core"].items():
+                    if isinstance(v, (int, float)):
+                        flat[f"{model_key}/{k}"] = v
+        if flat:
+            wandb.log(flat)
+    except Exception:
+        pass
+
+
+def _sync_lakehouse(
+    cfg: PipelineConfig, stage: str, run_name: str,
+    result: object = None, success: bool = True,
+) -> None:
+    """Fire-and-forget sync to S3 lakehouse."""
+    try:
+        from .lakehouse import sync_to_lakehouse
+        sync_to_lakehouse(
+            run_id=run_name,
+            dataset=cfg.dataset,
+            model_type=cfg.model_type,
+            scale=cfg.scale,
+            stage=stage,
+            has_kd=cfg.has_kd,
+            metrics=result if isinstance(result, dict) else None,
+            success=success,
+        )
+    except Exception as e:
+        logging.getLogger("pipeline").debug("Lakehouse sync skipped: %s", e)
+
+
+def _finish_wandb() -> None:
+    """Finish the active W&B run if one exists."""
+    try:
+        import wandb
+        if wandb.run is not None:
+            wandb.finish()
+    except Exception:
+        pass
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -114,10 +225,8 @@ def main(argv: list[str] | None = None) -> None:
     log = logging.getLogger("pipeline")
 
     # ---- Handle non-training subcommands ----
-    if args.stage == "state":
-        from .state_sync import update_state
-        update_state(preview=False)
-        log.info("STATE.md updated")
+    if args.stage == "flow":
+        _run_flow(args, log)
         return
 
     # ---- Build config ----
@@ -163,6 +272,7 @@ def main(argv: list[str] | None = None) -> None:
 
     # ---- Archive completed run if re-running same config ----
     sdir = stage_dir(cfg, args.stage)
+    archive = None
     if (sdir / "metrics.json").exists():
         ts = datetime.now().strftime("%Y%m%d_%H%M%S")
         archive = sdir.parent / f"{sdir.name}.archive_{ts}"
@@ -174,37 +284,12 @@ def main(argv: list[str] | None = None) -> None:
     cfg.save(cfg_out)
     log.info("Frozen config: %s", cfg_out)
 
-    # ---- Record run start in project DB ----
+    # ---- Run ID ----
     run_name = run_id(cfg, args.stage)
-
-    if _ON_COMPUTE_NODE:
-        log.info("SLURM compute node detected — DB writes deferred to onsuccess backfill")
-    else:
-        # Propagate teacher_run for KD evaluation runs from their training counterpart
-        teacher_run = ""
-        if cfg.has_kd and args.stage == "evaluation":
-            conn = get_connection()
-            try:
-                row = conn.execute(
-                    """SELECT teacher_run FROM runs
-                       WHERE dataset = ? AND has_kd = 1 AND teacher_run != ''
-                         AND stage IN ('curriculum', 'fusion')
-                       LIMIT 1""",
-                    (cfg.dataset,),
-                ).fetchone()
-                if row and row[0]:
-                    teacher_run = row[0]
-                    log.info("Propagated teacher_run=%s for eval KD run", teacher_run)
-            finally:
-                conn.close()
-
-        record_run_start(
-            run_id=run_name, dataset=cfg.dataset, model_type=cfg.model_type,
-            scale=cfg.scale, stage=args.stage, has_kd=cfg.has_kd,
-            config_json=cfg.model_dump_json(indent=2),
-            teacher_run=teacher_run,
-        )
     log.info("Run started: %s", run_name)
+
+    # ---- W&B init ----
+    _wandb_run = _init_wandb(cfg, args.stage, run_name)
 
     # ---- Dispatch ----
     try:
@@ -212,16 +297,34 @@ def main(argv: list[str] | None = None) -> None:
         result = STAGE_FNS[args.stage](cfg)
         log.info("Stage '%s' complete. Result: %s", args.stage, result)
 
-        if not _ON_COMPUTE_NODE:
-            record_run_end(run_name, success=True,
-                           metrics=result if isinstance(result, dict) else None)
+        # Log final metrics to W&B
+        if _wandb_run is not None and isinstance(result, dict):
+            _wandb_log_metrics(result)
+
+        # Sync to S3 lakehouse (fire-and-forget)
+        _sync_lakehouse(cfg, args.stage, run_name, result)
+
+        # Success → delete archive
+        if archive and archive.exists():
+            import shutil
+            shutil.rmtree(archive, ignore_errors=True)
+
         log.info("Run completed successfully")
 
     except Exception as e:
-        if not _ON_COMPUTE_NODE:
-            record_run_end(run_name, success=False)
+        # Failure → restore archive
+        if archive and archive.exists():
+            if sdir.exists():
+                import shutil
+                shutil.rmtree(sdir, ignore_errors=True)
+            archive.rename(sdir)
+            log.warning("Restored archive after failure: %s", sdir)
+        _sync_lakehouse(cfg, args.stage, run_name, None, success=False)
         log.error("Run failed: %s", str(e))
         raise
+
+    finally:
+        _finish_wandb()
 
 
 if __name__ == "__main__":

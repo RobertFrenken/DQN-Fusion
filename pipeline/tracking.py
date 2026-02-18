@@ -1,7 +1,6 @@
 """Memory monitoring utilities for training stages.
 
 Provides CPU and GPU memory metrics collection and human-readable summaries.
-Tracking is handled by the project database (pipeline/db.py).
 """
 from __future__ import annotations
 

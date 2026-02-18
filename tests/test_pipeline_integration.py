@@ -396,7 +396,7 @@ class TestTeacherLoading:
 # ---------------------------------------------------------------------------
 
 class TestPathConstruction:
-    """Path logic must match Snakefile expectations exactly."""
+    """Path logic must be consistent between config-based and string-based variants."""
 
     def test_aux_suffix(self):
         from config import PipelineConfig
@@ -654,71 +654,3 @@ class TestSchemaValidation:
         from config import PipelineConfig
         cfg = PipelineConfig(model_type="gat")
         assert cfg.active_arch == cfg.gat
-
-
-# ---------------------------------------------------------------------------
-# 10. Write-through DB
-# ---------------------------------------------------------------------------
-
-class TestWriteThroughDB:
-    """Write-through DB records must survive the full lifecycle."""
-
-    def test_record_run_lifecycle(self, tmp_path):
-        from pipeline.db import get_connection, record_run_start, record_run_end
-
-        db = tmp_path / "test.db"
-        record_run_start(
-            run_id="ds/vgae_large_autoencoder", dataset="ds",
-            model_type="vgae", scale="large", stage="autoencoder", has_kd=False,
-            config_json='{"seed": 42}', db_path=db,
-        )
-
-        conn = get_connection(db)
-        row = conn.execute(
-            "SELECT status FROM runs WHERE run_id = ?",
-            ("ds/vgae_large_autoencoder",),
-        ).fetchone()
-        assert row[0] == "running"
-
-        record_run_end(
-            run_id="ds/vgae_large_autoencoder", success=True,
-            metrics={"gat": {"core": {"f1": 0.95, "accuracy": 0.96}}},
-            db_path=db,
-        )
-
-        row = conn.execute(
-            "SELECT status, completed_at FROM runs WHERE run_id = ?",
-            ("ds/vgae_large_autoencoder",),
-        ).fetchone()
-        assert row[0] == "complete"
-        assert row[1] is not None
-
-        metric_rows = conn.execute(
-            "SELECT metric_name, value FROM metrics WHERE run_id = ?",
-            ("ds/vgae_large_autoencoder",),
-        ).fetchall()
-        metric_dict = {r[0]: r[1] for r in metric_rows}
-        assert metric_dict["f1"] == pytest.approx(0.95)
-        assert metric_dict["accuracy"] == pytest.approx(0.96)
-        conn.close()
-
-    def test_record_failed_run(self, tmp_path):
-        from pipeline.db import get_connection, record_run_start, record_run_end
-
-        db = tmp_path / "test.db"
-        record_run_start(
-            run_id="ds/gat_small_curriculum_kd", dataset="ds",
-            model_type="gat", scale="small", stage="curriculum", has_kd=True,
-            config_json='{}', db_path=db,
-        )
-        record_run_end(
-            run_id="ds/gat_small_curriculum_kd", success=False, db_path=db,
-        )
-
-        conn = get_connection(db)
-        row = conn.execute(
-            "SELECT status FROM runs WHERE run_id = ?",
-            ("ds/gat_small_curriculum_kd",),
-        ).fetchone()
-        assert row[0] == "failed"
-        conn.close()

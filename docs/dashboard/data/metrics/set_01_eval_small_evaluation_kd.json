@@ -1,1255 +1,7 @@
 {
   "schema_version": "1.0.0",
-  "exported_at": "2026-02-17T16:48:19.371521+00:00",
+  "exported_at": "2026-02-18T01:45:55.280650+00:00",
   "data": [
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "accuracy",
-      "value": 0.9362064126850488
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "accuracy",
-      "value": 0.81796814705676
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "accuracy",
-      "value": 0.9682
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "auc",
-      "value": 0.9781282478901161
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "auc",
-      "value": 0.8194825998593747
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "auc",
-      "value": 0.9058082207741602
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.9328257845640486
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.7546986861100591
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.9065922630208509
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "detection_rate",
-      "value": 0.9291989664082687
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "detection_rate",
-      "value": 0.6868217054263566
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "detection_rate",
-      "value": 0.8388765705838876
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "f1",
-      "value": 0.4971657680077423
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "f1",
-      "value": 0.2038969008898435
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "f1",
-      "value": 0.7040942928039702
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "fnr",
-      "value": 0.07080103359173126
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "fnr",
-      "value": 0.31317829457364343
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "fnr",
-      "value": 0.16112342941611235
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "fpr",
-      "value": 0.06354739728017139
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "fpr",
-      "value": 0.17742433320623854
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "fpr",
-      "value": 0.02569204454218592
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "kappa",
-      "value": 0.47085631653077165
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "kappa",
-      "value": 0.15505520032071174
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "kappa",
-      "value": 0.6877491419811197
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "mcc",
-      "value": 0.5398942485841159
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "mcc",
-      "value": 0.232939369556281
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "mcc",
-      "value": 0.6978523382130459
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "miss_rate",
-      "value": 0.07080103359173126
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "miss_rate",
-      "value": 0.31317829457364343
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "miss_rate",
-      "value": 0.16112342941611235
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "n_samples",
-      "value": 57012.0
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "n_samples",
-      "value": 57012.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "n_samples",
-      "value": 30000.0
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "pr_auc",
-      "value": 0.9218185718966373
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "pr_auc",
-      "value": 0.5703897824301873
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "pr_auc",
-      "value": 0.30168982960574087
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "precision",
-      "value": 0.3393733484333711
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "precision",
-      "value": 0.11971894423925772
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "precision",
-      "value": 0.606627471940139
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "recall",
-      "value": 0.9291989664082687
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "recall",
-      "value": 0.6868217054263566
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "recall",
-      "value": 0.8388765705838876
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "specificity",
-      "value": 0.9364526027198286
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "specificity",
-      "value": 0.8225756667937615
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "specificity",
-      "value": 0.9743079554578141
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "threshold_from_val",
-      "value": 0.05178900435566902
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "tnr",
-      "value": 0.9364526027198286
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "tnr",
-      "value": 0.8225756667937615
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "tnr",
-      "value": 0.9743079554578141
-    },
-    {
-      "model": "gat",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "tpr",
-      "value": 0.9291989664082687
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "tpr",
-      "value": 0.6868217054263566
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_01_known_vehicle_known_attack",
-      "metric_name": "tpr",
-      "value": 0.8388765705838876
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "accuracy",
-      "value": 0.08705904253668828
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "accuracy",
-      "value": 0.08750891998386646
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "accuracy",
-      "value": 0.25593333333333335
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "auc",
-      "value": 0.5081493308933875
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "auc",
-      "value": 0.7316123706372311
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "auc",
-      "value": 0.4958612562539789
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.49995331965117673
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.5002803547762259
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.4962842322467187
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "detection_rate",
-      "value": 0.9998216833095578
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "detection_rate",
-      "value": 1.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "detection_rate",
-      "value": 0.8585858585858586
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "f1",
-      "value": 0.16005366522036996
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "f1",
-      "value": 0.16014392392592486
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "f1",
-      "value": 0.27974961280330407
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "fnr",
-      "value": 0.0001783166904422254
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "fnr",
-      "value": 0.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "fnr",
-      "value": 0.1414141414141414
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "fpr",
-      "value": 0.9999150440072043
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "fpr",
-      "value": 0.9994392904475482
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "fpr",
-      "value": 0.8660173940924212
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "kappa",
-      "value": -1.6245567470596356e-05
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "kappa",
-      "value": 9.760529302704768e-05
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "kappa",
-      "value": -0.002803906570374659
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "mcc",
-      "value": -0.0027273996647652473
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "mcc",
-      "value": 0.00698605957089402
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "mcc",
-      "value": -0.00813041322289672
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "miss_rate",
-      "value": 0.0001783166904422254
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "miss_rate",
-      "value": 0.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "miss_rate",
-      "value": 0.1414141414141414
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "n_samples",
-      "value": 64462.0
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "n_samples",
-      "value": 64462.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "n_samples",
-      "value": 30000.0
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "pr_auc",
-      "value": 0.5409042451326219
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "pr_auc",
-      "value": 0.22944770468226056
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "pr_auc",
-      "value": 0.5246829119605245
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "precision",
-      "value": 0.08698957428323197
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "precision",
-      "value": 0.08704154961275203
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "precision",
-      "value": 0.16709709748294338
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "recall",
-      "value": 0.9998216833095578
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "recall",
-      "value": 1.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "recall",
-      "value": 0.8585858585858586
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "specificity",
-      "value": 8.495599279573182e-05
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "specificity",
-      "value": 0.00056070955245183
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "specificity",
-      "value": 0.13398260590757885
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "threshold_from_val",
-      "value": 0.05178900435566902
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "tnr",
-      "value": 8.495599279573182e-05
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "tnr",
-      "value": 0.00056070955245183
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "tnr",
-      "value": 0.13398260590757885
-    },
-    {
-      "model": "gat",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "tpr",
-      "value": 0.9998216833095578
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "tpr",
-      "value": 1.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_02_unknown_vehicle_known_attack",
-      "metric_name": "tpr",
-      "value": 0.8585858585858586
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "accuracy",
-      "value": 0.8717131935595969
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "accuracy",
-      "value": 0.7800648673693965
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "accuracy",
-      "value": 0.8895333333333333
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "auc",
-      "value": 0.6177413765023909
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "auc",
-      "value": 0.509343860585767
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "auc",
-      "value": 0.5300045772620852
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.562516054247098
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.5009382951428453
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.5287745685329911
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "detection_rate",
-      "value": 0.1882243239643
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "detection_rate",
-      "value": 0.1630478220327694
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "detection_rate",
-      "value": 0.08084960602946215
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "f1",
-      "value": 0.2032947269980577
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "f1",
-      "value": 0.11420573827851645
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "f1",
-      "value": 0.12466983623877444
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "fnr",
-      "value": 0.8117756760357
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "fnr",
-      "value": 0.8369521779672305
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "fnr",
-      "value": 0.9191503939705379
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "fpr",
-      "value": 0.06319221547010391
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "fpr",
-      "value": 0.1611712317470789
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "fpr",
-      "value": 0.02330046896347993
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "kappa",
-      "value": 0.13402098856408529
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "kappa",
-      "value": 0.0013530465105935363
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "kappa",
-      "value": 0.08384245872135254
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "mcc",
-      "value": 0.13453141831995902
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "mcc",
-      "value": 0.0014375054211823496
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "mcc",
-      "value": 0.10180897353798317
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "miss_rate",
-      "value": 0.8117756760357
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "miss_rate",
-      "value": 0.8369521779672305
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "miss_rate",
-      "value": 0.9191503939705379
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "n_samples",
-      "value": 86330.0
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "n_samples",
-      "value": 86330.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "n_samples",
-      "value": 30000.0
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "pr_auc",
-      "value": 0.2038837486842735
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "pr_auc",
-      "value": 0.08810158833951033
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "pr_auc",
-      "value": 0.1744398592985242
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "precision",
-      "value": 0.22098842664998436
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "precision",
-      "value": 0.08788052843193567
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "precision",
-      "value": 0.2722029988465975
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "recall",
-      "value": 0.1882243239643
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "recall",
-      "value": 0.1630478220327694
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "recall",
-      "value": 0.08084960602946215
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "specificity",
-      "value": 0.9368077845298961
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "specificity",
-      "value": 0.8388287682529211
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "specificity",
-      "value": 0.9766995310365201
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "threshold_from_val",
-      "value": 0.05178900435566902
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "tnr",
-      "value": 0.9368077845298961
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "tnr",
-      "value": 0.8388287682529211
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "tnr",
-      "value": 0.9766995310365201
-    },
-    {
-      "model": "gat",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "tpr",
-      "value": 0.1882243239643
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "tpr",
-      "value": 0.1630478220327694
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_03_known_vehicle_unknown_attack",
-      "metric_name": "tpr",
-      "value": 0.08084960602946215
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "accuracy",
-      "value": 0.013315982205005598
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "accuracy",
-      "value": 0.011636352631419666
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "accuracy",
-      "value": 0.12563333333333335
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "auc",
-      "value": 0.4477133995378225
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "auc",
-      "value": 0.5703471839234664
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "auc",
-      "value": 0.5045882925392627
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.49309417739043837
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.5001262751880735
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "balanced_accuracy",
-      "value": 0.5049269804278096
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "detection_rate",
-      "value": 0.9840531561461794
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "detection_rate",
-      "value": 1.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "detection_rate",
-      "value": 0.8981132075471698
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "f1",
-      "value": 0.02220822649092027
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "f1",
-      "value": 0.02252252252252252
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "f1",
-      "value": 0.035021888680425266
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "fnr",
-      "value": 0.015946843853820596
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "fnr",
-      "value": 0.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "fnr",
-      "value": 0.1018867924528302
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "fpr",
-      "value": 0.9978648013653026
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "fpr",
-      "value": 0.999747449623853
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "fpr",
-      "value": 0.8882592466915508
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "kappa",
-      "value": -0.00031525189325321
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "kappa",
-      "value": 5.752839400963161e-06
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "kappa",
-      "value": 0.00039101271836772256
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "mcc",
-      "value": -0.03064107186803592
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "mcc",
-      "value": 0.0016960035301671406
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "mcc",
-      "value": 0.004123233499025447
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "miss_rate",
-      "value": 0.015946843853820596
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "miss_rate",
-      "value": 0.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "miss_rate",
-      "value": 0.1018867924528302
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "n_samples",
-      "value": 132172.0
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "n_samples",
-      "value": 132172.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "n_samples",
-      "value": 30000.0
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "pr_auc",
-      "value": 0.3739570951790068
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "pr_auc",
-      "value": 0.020044036899790355
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "pr_auc",
-      "value": 0.009823755932100144
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "precision",
-      "value": 0.01123084273028536
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "precision",
-      "value": 0.011389521640091117
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "precision",
-      "value": 0.017859152815818107
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "recall",
-      "value": 0.9840531561461794
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "recall",
-      "value": 1.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "recall",
-      "value": 0.8981132075471698
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "specificity",
-      "value": 0.0021351986346973603
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "specificity",
-      "value": 0.0002525503761469996
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "specificity",
-      "value": 0.11174075330844926
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "threshold_from_val",
-      "value": 0.05178900435566902
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "tnr",
-      "value": 0.0021351986346973603
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "tnr",
-      "value": 0.0002525503761469996
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "tnr",
-      "value": 0.11174075330844926
-    },
-    {
-      "model": "gat",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "tpr",
-      "value": 0.9840531561461794
-    },
-    {
-      "model": "vgae",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "tpr",
-      "value": 1.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "test_04_unknown_vehicle_unknown_attack",
-      "metric_name": "tpr",
-      "value": 0.8981132075471698
-    },
     {
       "model": "gat",
       "scenario": "val",
@@ -1257,70 +9,16 @@
       "value": 0.9486398835131379
     },
     {
-      "model": "vgae",
+      "model": "gat",
       "scenario": "val",
-      "metric_name": "accuracy",
-      "value": 0.8280825997749686
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "accuracy",
-      "value": 0.9730333333333333
+      "metric_name": "precision",
+      "value": 0.2696196437168994
     },
     {
       "model": "gat",
       "scenario": "val",
-      "metric_name": "auc",
-      "value": 0.9898597416213895
-    },
-    {
-      "model": "vgae",
-      "scenario": "val",
-      "metric_name": "auc",
-      "value": 0.7455740301724445
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "auc",
-      "value": 0.8722349748592104
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "balanced_accuracy",
-      "value": 0.9449831311520658
-    },
-    {
-      "model": "vgae",
-      "scenario": "val",
-      "metric_name": "balanced_accuracy",
-      "value": 0.6965689276757188
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "balanced_accuracy",
-      "value": 0.8751567469677175
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "detection_rate",
+      "metric_name": "recall",
       "value": 0.9411764705882353
-    },
-    {
-      "model": "vgae",
-      "scenario": "val",
-      "metric_name": "detection_rate",
-      "value": 0.5596638655462185
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "detection_rate",
-      "value": 0.7732656514382402
     },
     {
       "model": "gat",
@@ -1329,70 +27,16 @@
       "value": 0.41916167664670656
     },
     {
-      "model": "vgae",
+      "model": "gat",
       "scenario": "val",
-      "metric_name": "f1",
-      "value": 0.11363248592390376
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "f1",
-      "value": 0.53047011027278
+      "metric_name": "specificity",
+      "value": 0.9487897917158964
     },
     {
       "model": "gat",
       "scenario": "val",
-      "metric_name": "fnr",
-      "value": 0.058823529411764705
-    },
-    {
-      "model": "vgae",
-      "scenario": "val",
-      "metric_name": "fnr",
-      "value": 0.4403361344537815
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "fnr",
-      "value": 0.22673434856175972
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "fpr",
-      "value": 0.05121020828410357
-    },
-    {
-      "model": "vgae",
-      "scenario": "val",
-      "metric_name": "fpr",
-      "value": 0.16652601019478108
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "fpr",
-      "value": 0.022952157502805264
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "kappa",
-      "value": 0.40082001903492415
-    },
-    {
-      "model": "vgae",
-      "scenario": "val",
-      "metric_name": "kappa",
-      "value": 0.08112007763375151
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "kappa",
-      "value": 0.5179930972321721
+      "metric_name": "balanced_accuracy",
+      "value": 0.9449831311520658
     },
     {
       "model": "gat",
@@ -1401,58 +45,58 @@
       "value": 0.48871822422084094
     },
     {
-      "model": "vgae",
+      "model": "gat",
       "scenario": "val",
-      "metric_name": "mcc",
-      "value": 0.14398748898355954
+      "metric_name": "fpr",
+      "value": 0.05121020828410357
     },
     {
-      "model": "fusion",
+      "model": "gat",
       "scenario": "val",
-      "metric_name": "mcc",
-      "value": 0.5471987094259254
+      "metric_name": "fnr",
+      "value": 0.058823529411764705
+    },
+    {
+      "model": "gat",
+      "scenario": "val",
+      "metric_name": "n_samples",
+      "value": 30218
+    },
+    {
+      "model": "gat",
+      "scenario": "val",
+      "metric_name": "auc",
+      "value": 0.9898597416213895
+    },
+    {
+      "model": "gat",
+      "scenario": "val",
+      "metric_name": "kappa",
+      "value": 0.40082001903492415
+    },
+    {
+      "model": "gat",
+      "scenario": "val",
+      "metric_name": "tpr",
+      "value": 0.9411764705882353
+    },
+    {
+      "model": "gat",
+      "scenario": "val",
+      "metric_name": "tnr",
+      "value": 0.9487897917158964
+    },
+    {
+      "model": "gat",
+      "scenario": "val",
+      "metric_name": "detection_rate",
+      "value": 0.9411764705882353
     },
     {
       "model": "gat",
       "scenario": "val",
       "metric_name": "miss_rate",
       "value": 0.058823529411764705
-    },
-    {
-      "model": "vgae",
-      "scenario": "val",
-      "metric_name": "miss_rate",
-      "value": 0.4403361344537815
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "miss_rate",
-      "value": 0.22673434856175972
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "n_samples",
-      "value": 30218.0
-    },
-    {
-      "model": "vgae",
-      "scenario": "val",
-      "metric_name": "n_samples",
-      "value": 30218.0
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "n_samples",
-      "value": 30000.0
-    },
-    {
-      "model": "vgae",
-      "scenario": "val",
-      "metric_name": "optimal_threshold",
-      "value": 0.05178900435566902
     },
     {
       "model": "gat",
@@ -1463,20 +107,8 @@
     {
       "model": "vgae",
       "scenario": "val",
-      "metric_name": "pr_auc",
-      "value": 0.2606832846977767
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "pr_auc",
-      "value": 0.19725390111886712
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "precision",
-      "value": 0.2696196437168994
+      "metric_name": "accuracy",
+      "value": 0.8280825997749686
     },
     {
       "model": "vgae",
@@ -1485,34 +117,16 @@
       "value": 0.06323585263957462
     },
     {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "precision",
-      "value": 0.4037102473498233
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "recall",
-      "value": 0.9411764705882353
-    },
-    {
       "model": "vgae",
       "scenario": "val",
       "metric_name": "recall",
       "value": 0.5596638655462185
     },
     {
-      "model": "fusion",
+      "model": "vgae",
       "scenario": "val",
-      "metric_name": "recall",
-      "value": 0.7732656514382402
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "specificity",
-      "value": 0.9487897917158964
+      "metric_name": "f1",
+      "value": 0.11363248592390376
     },
     {
       "model": "vgae",
@@ -1521,52 +135,190 @@
       "value": 0.8334739898052189
     },
     {
-      "model": "fusion",
+      "model": "vgae",
       "scenario": "val",
-      "metric_name": "specificity",
-      "value": 0.9770478424971948
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "tnr",
-      "value": 0.9487897917158964
+      "metric_name": "balanced_accuracy",
+      "value": 0.6965689276757188
     },
     {
       "model": "vgae",
       "scenario": "val",
-      "metric_name": "tnr",
-      "value": 0.8334739898052189
-    },
-    {
-      "model": "fusion",
-      "scenario": "val",
-      "metric_name": "tnr",
-      "value": 0.9770478424971948
-    },
-    {
-      "model": "gat",
-      "scenario": "val",
-      "metric_name": "tpr",
-      "value": 0.9411764705882353
+      "metric_name": "mcc",
+      "value": 0.14398748898355954
     },
     {
       "model": "vgae",
       "scenario": "val",
-      "metric_name": "tpr",
-      "value": 0.5596638655462185
+      "metric_name": "fpr",
+      "value": 0.16652601019478108
     },
     {
-      "model": "fusion",
+      "model": "vgae",
       "scenario": "val",
-      "metric_name": "tpr",
-      "value": 0.7732656514382402
+      "metric_name": "fnr",
+      "value": 0.4403361344537815
+    },
+    {
+      "model": "vgae",
+      "scenario": "val",
+      "metric_name": "n_samples",
+      "value": 30218
+    },
+    {
+      "model": "vgae",
+      "scenario": "val",
+      "metric_name": "auc",
+      "value": 0.7455740301724445
+    },
+    {
+      "model": "vgae",
+      "scenario": "val",
+      "metric_name": "optimal_threshold",
+      "value": 0.05178900435566902
     },
     {
       "model": "vgae",
       "scenario": "val",
       "metric_name": "youden_j",
       "value": 0.394818527620345
+    },
+    {
+      "model": "vgae",
+      "scenario": "val",
+      "metric_name": "kappa",
+      "value": 0.08112007763375151
+    },
+    {
+      "model": "vgae",
+      "scenario": "val",
+      "metric_name": "tpr",
+      "value": 0.5596638655462185
+    },
+    {
+      "model": "vgae",
+      "scenario": "val",
+      "metric_name": "tnr",
+      "value": 0.8334739898052189
+    },
+    {
+      "model": "vgae",
+      "scenario": "val",
+      "metric_name": "detection_rate",
+      "value": 0.5596638655462185
+    },
+    {
+      "model": "vgae",
+      "scenario": "val",
+      "metric_name": "miss_rate",
+      "value": 0.4403361344537815
+    },
+    {
+      "model": "vgae",
+      "scenario": "val",
+      "metric_name": "pr_auc",
+      "value": 0.2606832846977767
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "accuracy",
+      "value": 0.9730333333333333
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "precision",
+      "value": 0.4037102473498233
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "recall",
+      "value": 0.7732656514382402
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "f1",
+      "value": 0.53047011027278
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "specificity",
+      "value": 0.9770478424971948
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "balanced_accuracy",
+      "value": 0.8751567469677175
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "mcc",
+      "value": 0.5471987094259254
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "fpr",
+      "value": 0.022952157502805264
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "fnr",
+      "value": 0.22673434856175972
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "n_samples",
+      "value": 30000
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "auc",
+      "value": 0.8722349748592104
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "kappa",
+      "value": 0.5179930972321721
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "tpr",
+      "value": 0.7732656514382402
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "tnr",
+      "value": 0.9770478424971948
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "detection_rate",
+      "value": 0.7732656514382402
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "miss_rate",
+      "value": 0.22673434856175972
+    },
+    {
+      "model": "fusion",
+      "scenario": "val",
+      "metric_name": "pr_auc",
+      "value": 0.19725390111886712
     }
   ]
 }
