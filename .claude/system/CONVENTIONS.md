@@ -50,12 +50,12 @@ Instead:
 1. **Name the pattern.** What category of failure is this? (env setup, path resolution, config incompatibility, NFS issue, etc.)
 2. **Read the actual error.** Don't skim — parse the full traceback. The root cause is usually in the first or last frame, not the middle.
 3. **Check if it's a known issue.** Search CONVENTIONS.md, CLAUDE.md Critical Constraints, and recent git log for prior fixes.
-4. **Fix the root cause, not the symptom.** If the env isn't on PATH, don't add it to one command — add it to the documented pattern. If two Snakemake directives conflict, don't remove one from one rule — remove it from all rules.
+4. **Fix the root cause, not the symptom.** If the env isn't on PATH, don't add it to one command — add it to the documented pattern. If two config values conflict, don't patch one — fix the underlying inconsistency.
 5. **Document it.** If this will come up again, add it to the appropriate file (CONVENTIONS.md for workflow, CLAUDE.md Critical Constraints for crash-prevention rules).
 
 Examples of structural vs transient:
 - `command not found` → **structural** (env not loaded). Fix the invocation pattern, don't retry.
-- `sqlite3.OperationalError: disk I/O error` → **transient** (NFS contention). Retry is reasonable once.
+- `OSError: [Errno 116] Stale file handle` → **transient** (NFS contention). Retry is reasonable once.
 - Same Prefect/SLURM error across 3 different flag combinations → **structural**. Stop, read the docs or error message, fix the flow definition.
 
 ## Git
@@ -66,10 +66,10 @@ Examples of structural vs transient:
 
 ## Shell Environment
 
-**This is critical — Claude does not inherit conda.** The login shell has no `conda` on PATH. Every command that needs Python packages (torch, snakemake, pytest, etc.) must set up the environment explicitly:
+**This is critical — Claude does not inherit conda.** The login shell has no `conda` on PATH. Every command that needs Python packages (torch, pytest, prefect, etc.) must set up the environment explicitly:
 
 ```bash
-# Required prefix for ALL Python/Snakemake commands:
+# Required prefix for ALL Python commands:
 export PATH="$HOME/.conda/envs/gnn-experiments/bin:$PATH"
 export PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT:$PYTHONPATH
 

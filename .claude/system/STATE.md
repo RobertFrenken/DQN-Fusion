@@ -12,19 +12,18 @@
 - Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
 - Legacy flat JSON loading via `PipelineConfig.load()` with automatic migration
 
-**Tests**: 39 passing (layer boundary + pipeline integration). No DB-dependent tests remain.
-
 ### Pipeline System
 - Pipeline system (`pipeline/`) fully operational with Prefect + W&B
 - CUDA multiprocessing fixes in place (clone-before-to, spawn context)
 - CLI: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>`
 - Flow: `python -m pipeline.cli flow --dataset <ds> [--scale <scale>]`
 - End-to-end validated: resolve() → config freeze → W&B init → graph loading → training → lakehouse sync
+- VGAE validation run completed: 300 epochs, val_loss 0.157, checkpoint + metrics + W&B offline run
 
-### Platform (newly migrated)
-- **W&B**: `wandb.init()`/`wandb.finish()` in CLI, WandbLogger in Lightning trainer. Offline mode on compute nodes.
-- **Prefect**: `train_pipeline()` and `eval_pipeline()` flows with dask-jobqueue SLURMCluster.
-- **S3 Lakehouse**: Fire-and-forget sync via `pipeline/lakehouse.py` to `s3://kd-gat/lakehouse/runs/`. boto3/awscli installed in gnn-experiments conda env. Sync tested and working.
+### Platform (fully migrated)
+- **W&B**: `wandb.init()`/`wandb.finish()` in CLI, WandbLogger in Lightning trainer. Offline mode on compute nodes. Project `kd-gat`.
+- **Prefect**: `train_pipeline()` and `eval_pipeline()` flows with dask-jobqueue SLURMCluster. Installed and configured.
+- **S3 Lakehouse**: Fire-and-forget sync via `pipeline/lakehouse.py` to `s3://kd-gat/lakehouse/runs/`. boto3/awscli installed. Tested and working.
 - **DVC**: S3 remote configured alongside local scratch remote. Tested and working (21 files pushed to `s3://kd-gat/dvc/`).
 
 ### Dashboard (GitHub Pages)
@@ -33,14 +32,26 @@
 - **Architecture**: Config-driven component system (BaseChart → 8 chart types, Registry, PanelManager)
 - **Data source**: `pipeline/export.py` scans `experimentruns/` filesystem (no DB dependency)
 - **Auto-export**: `scripts/export_dashboard.sh` runs export + commit + push + DVC push
+- **All panels populated**: 72 embedding projections, 18 DQN policy, 18 attention, 54 ROC curves, 18 recon errors, 6 CKA matrices
 
 ### Test Infrastructure
+- **101 tests passing** across 8 test files (parallel SLURM submission via `scripts/run_tests_parallel.sh`)
 - `@pytest.mark.slurm` marker auto-skips heavy tests on login nodes
-- `scripts/run_tests_slurm.sh` submits pytest to SLURM compute nodes
+- `scripts/run_tests_slurm.sh` submits pytest to SLURM compute nodes (sequential fallback)
+- Test coverage: config, preprocessing, pipeline integration, layer boundaries, GAT return_embedding, DQN fusion reward, sweep generation, CLI archive/restore, FastAPI serve
+
+**Tests**: 101 passing (layer boundary + pipeline integration + new feature tests).
 
 ## Recently Completed
 
-- **S3 setup** (2026-02-17): boto3/awscli installed in gnn-experiments, S3 bucket verified, lakehouse sync tested, DVC push (21 files) to `s3://kd-gat/dvc/`. Conda init added to `~/.bashrc` (`module load miniconda3` + `conda activate gnn-experiments`).
+- **Validation & cleanup** (2026-02-17):
+  - 101 tests passing across 8 files (parallel SLURM submission)
+  - VGAE validation run: 300 epochs, val_loss 0.157
+  - Dashboard export: all 26 panels populated (72 embeddings, 18 DQN, 18 attention, 54 ROC, 18 recon, 6 CKA)
+  - Fixed MemoryMonitorCallback._record_epoch bug
+  - Fixed export.py UMAP: PCA pre-reduction + pre-sampling before reduction
+  - Cleaned up legacy Snakemake/SQLite references from docstrings and comments
+  - Deleted obsolete files: snakemake_guide.md, RESEARCH_PLATFORM_ARCHITECTURE.md, research_osc_software.md
 - **Platform migration** (2026-02-17): 4-phase migration from Snakemake/SQLite to W&B/Prefect/S3:
   - Phase 1: W&B instrumentation (WandbLogger, wandb.init/finish lifecycle)
   - Phase 2: Prefect orchestration (train_flow, eval_flow, SLURMCluster)
@@ -50,21 +61,15 @@
 
 ## What's Not Working / Incomplete
 
-- **W&B not yet configured**: Need to run `wandb login` on cluster and set up API key
-- **Prefect not yet installed**: Need `pip install prefect prefect-dask dask-jobqueue` in conda env
-- **No pipeline runs with new platform yet**: First run needed to validate end-to-end
-- **Embedding panels (VGAE/GAT)**: `embeddings.npz` not yet captured — requires re-running evaluation
-- **DQN Policy panel**: `dqn_policy.json` not yet captured — requires re-running fusion evaluation
 - **OOD generalization collapse** (Bug 3.6): Research question, not a code bug
+- **W&B online sync**: Compute nodes use offline mode; offline runs need manual `wandb sync`
 
 ## Next Steps
 
-1. **Configure W&B**: `wandb login` on cluster, verify API key works
-2. **Install Prefect deps**: `pip install prefect prefect-dask dask-jobqueue` in gnn-experiments env
-3. **Validate pipeline**: Run single dataset through new platform end-to-end
-4. **Merge to main**: PR from `platform/wandb` → `main` after validation
-5. **Re-run evaluation**: Generate embeddings.npz and dqn_policy.json artifacts
-6. **Investigate OOD threshold calibration** (Bug 3.6)
+1. **Merge to main**: PR from `platform/wandb` → `main`
+2. **Sync W&B offline runs**: `wandb sync wandb/offline-run-*`
+3. **Push dashboard to GitHub Pages**: `bash scripts/export_dashboard.sh`
+4. **Investigate OOD threshold calibration** (Bug 3.6)
 
 ## Filesystem
 

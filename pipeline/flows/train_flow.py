@@ -30,7 +30,7 @@ from prefect.futures import wait
 
 log = logging.getLogger(__name__)
 
-# Python executable (same as Snakefile's PY)
+# Python executable for subprocess dispatch
 _PY = sys.executable
 
 

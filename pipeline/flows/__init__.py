@@ -1,7 +1,6 @@
 """Prefect flow orchestration for KD-GAT pipeline.
 
-Replaces Snakemake DAG with Prefect flows + dask-jobqueue SLURMCluster.
-Snakemake still works as a fallback (pipeline/Snakefile).
+Uses Prefect flows + dask-jobqueue SLURMCluster for distributed execution.
 
 Usage:
     python -m pipeline.cli flow --dataset hcrl_sa --scale large

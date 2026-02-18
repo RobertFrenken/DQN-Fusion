@@ -396,7 +396,7 @@ class TestTeacherLoading:
 # ---------------------------------------------------------------------------
 
 class TestPathConstruction:
-    """Path logic must match Snakefile expectations exactly."""
+    """Path logic must be consistent between config-based and string-based variants."""
 
     def test_aux_suffix(self):
         from config import PipelineConfig

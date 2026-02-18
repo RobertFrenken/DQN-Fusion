@@ -1,9 +1,5 @@
 """Standalone evaluation flow: re-run evaluations without re-training.
 
-Equivalent to Snakemake's:
-    find experimentruns -path '*/eval_*/.done' -delete
-    snakemake ... evaluate_all --allowed-rules eval_large eval_small_kd eval_small_nokd
-
 Usage:
     python -m pipeline.cli flow --eval-only --dataset hcrl_sa
     python -m pipeline.cli flow --eval-only  # all datasets

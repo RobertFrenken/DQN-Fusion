@@ -1,14 +1,14 @@
 """All paths derived from PipelineConfig. One function, one truth.
 
 Every file location in the entire system comes from stage_dir().
-The Snakefile, the CLI, the stages -- they all call these functions.
+The CLI, the stages -- they all call these functions.
 No second implementation. No disagreement possible.
 
 Path layout: {root}/{dataset}/{model_type}_{scale}_{stage}[_{aux}]
 
 Two interfaces:
   - PipelineConfig-based (stage_dir, checkpoint_path, etc.) -- used by Python stages
-  - String-based (_str variants) -- used by Snakefile (wildcard strings, no config object)
+  - String-based (_str variants) -- convenience for raw-string path construction
 """
 from __future__ import annotations
 
@@ -21,8 +21,7 @@ if TYPE_CHECKING:
 EXPERIMENT_ROOT = "experimentruns"
 
 # stage_name -> (learning_type, model_arch, training_mode)
-# NOTE: model_arch is used only by migrate_paths.py. run_id() overrides to
-# "eval" for the evaluation stage rather than reading from this dict.
+# run_id() overrides model_arch to "eval" for the evaluation stage.
 STAGES = {
     "autoencoder": ("unsupervised", "vgae", "autoencoder"),
     "curriculum":  ("supervised",   "gat",  "curriculum"),
@@ -67,8 +66,7 @@ def run_id(cfg: PipelineConfig, stage: str) -> str:
 
     This ID is used for:
     - Filesystem directory names (via stage_dir)
-    - MLflow run names (for tracking)
-    - Snakemake target paths (deterministic at DAG construction time)
+    - W&B run names (for tracking)
     """
     aux_suffix = f"_{cfg.auxiliaries[0].type}" if cfg.auxiliaries else ""
     model = "eval" if stage == "evaluation" else cfg.model_type
@@ -109,7 +107,7 @@ def metrics_path(cfg: PipelineConfig, stage: str) -> Path:
 
 
 def done_path(cfg: PipelineConfig, stage: str) -> Path:
-    """Sentinel file marking stage completion (Snakemake DAG marker)."""
+    """Sentinel file marking stage completion."""
     return stage_dir(cfg, stage) / ".done"
 
 
@@ -119,18 +117,18 @@ def cache_dir(cfg: PipelineConfig) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# String-based path functions (for Snakefile -- no PipelineConfig needed)
+# String-based path functions (no PipelineConfig needed)
 # ---------------------------------------------------------------------------
 
 def run_id_str(dataset: str, model_type: str, scale: str, stage: str, aux: str = "") -> str:
-    """Deterministic run ID from raw strings (Snakefile companion to run_id)."""
+    """Deterministic run ID from raw strings."""
     suffix = f"_{aux}" if aux else ""
     model = "eval" if stage == "evaluation" else model_type
     return f"{dataset}/{model}_{scale}_{stage}{suffix}"
 
 
 def checkpoint_path_str(dataset: str, model_type: str, scale: str, stage: str, aux: str = "") -> str:
-    """Checkpoint path from raw strings (Snakefile companion to checkpoint_path)."""
+    """Checkpoint path from raw strings."""
     return f"{EXPERIMENT_ROOT}/{run_id_str(dataset, model_type, scale, stage, aux)}/best_model.pt"
 
 
@@ -140,7 +138,7 @@ def metrics_path_str(dataset: str, model_type: str, scale: str, stage: str, aux:
 
 
 def benchmark_path_str(dataset: str, model_type: str, scale: str, stage: str, aux: str = "") -> str:
-    """Snakemake benchmark TSV path from raw strings."""
+    """Benchmark TSV path from raw strings."""
     return f"{EXPERIMENT_ROOT}/{run_id_str(dataset, model_type, scale, stage, aux)}/benchmark.tsv"
 
 
@@ -150,5 +148,5 @@ def log_path_str(dataset: str, model_type: str, scale: str, stage: str, aux: str
 
 
 def done_path_str(dataset: str, model_type: str, scale: str, stage: str, aux: str = "") -> str:
-    """Sentinel file path from raw strings (Snakemake DAG marker)."""
+    """Sentinel file path from raw strings."""
     return f"{EXPERIMENT_ROOT}/{run_id_str(dataset, model_type, scale, stage, aux)}/.done"
