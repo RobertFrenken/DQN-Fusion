@@ -30,6 +30,7 @@ STAGES = {
     "evaluation":  ("evaluation",   "eval", "evaluation"),
 }
 
+from .constants import CATALOG_PATH  # noqa: F401  # re-exported via config/__init__
 
 _datasets_cache: list[str] | None = None
 
