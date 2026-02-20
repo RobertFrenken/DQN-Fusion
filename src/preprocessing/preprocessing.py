@@ -18,6 +18,13 @@ import logging
 import os
 from typing import Dict, List, Optional, Tuple, Union
 
+try:
+    import cudf.pandas
+    cudf.pandas.install()
+    _CUDF_PANDAS = True
+except ImportError:
+    _CUDF_PANDAS = False
+
 import numpy as np
 import pandas as pd
 import torch

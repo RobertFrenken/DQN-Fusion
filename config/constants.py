@@ -48,3 +48,13 @@ SLURM_ACCOUNT = os.getenv("KD_GAT_SLURM_ACCOUNT", "PAS3209")
 SLURM_PARTITION = os.getenv("KD_GAT_SLURM_PARTITION", "gpu")
 SLURM_GPU_TYPE = os.getenv("KD_GAT_GPU_TYPE", "v100")
 
+# ---------------------------------------------------------------------------
+# RAPIDS / GPU acceleration
+# ---------------------------------------------------------------------------
+RAPIDS_AVAILABLE = False
+try:
+    import cuml
+    RAPIDS_AVAILABLE = True
+except ImportError:
+    pass
+

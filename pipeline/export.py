@@ -650,8 +650,16 @@ def _reduce_embeddings(embeddings, method: str):
     Applies PCA pre-reduction to 50 dimensions when input dimensionality
     exceeds 50 — standard practice that makes UMAP/PyMDE tractable on
     high-dimensional latent spaces (e.g. 2049-D VGAE z-vectors).
+
+    Uses cuML (GPU) when available, falls back to sklearn/umap-learn (CPU).
     """
-    from sklearn.decomposition import PCA
+    try:
+        from cuml.decomposition import PCA
+        from cuml.manifold import UMAP as CumlUMAP
+        _CUML = True
+    except ImportError:
+        from sklearn.decomposition import PCA
+        _CUML = False
 
     PCA_TARGET = 50
     if embeddings.shape[1] > PCA_TARGET:
@@ -659,8 +667,18 @@ def _reduce_embeddings(embeddings, method: str):
         embeddings = PCA(n_components=n_components, random_state=42).fit_transform(embeddings)
 
     if method == "umap":
-        import umap
-        reducer = umap.UMAP(n_components=2, random_state=42)
+        if _CUML:
+            reducer = CumlUMAP(n_components=2, random_state=42)
+        else:
+            import umap
+            reducer = umap.UMAP(n_components=2, random_state=42)
+        return reducer.fit_transform(embeddings)
+    elif method == "tsne":
+        if _CUML:
+            from cuml.manifold import TSNE
+        else:
+            from sklearn.manifold import TSNE
+        reducer = TSNE(n_components=2, random_state=42)
         return reducer.fit_transform(embeddings)
     elif method == "pymde":
         import pymde
