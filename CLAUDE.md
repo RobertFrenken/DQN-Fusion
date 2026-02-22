@@ -165,11 +165,60 @@ These fix real crashes -- do not violate:
 
 - **Cluster**: OSC (Ohio Supercomputer Center), RHEL 9, SLURM
 - **GPU**: V100 (account PAS3209, gpu partition)
-- **Python**: conda `gnn-experiments` (PyTorch, PyG, Lightning, Pydantic v2, W&B, Prefect)
+- **Python**: 3.12 (OSC `module load python/3.12`), uv venv `.venv/`
+- **Package manager**: uv 0.10+ (installed at `~/.local/bin/uv`)
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
 - **Tracking**: W&B (project `kd-gat`) + S3 lakehouse (JSON on `s3://kd-gat/lakehouse/`)
 - **Dashboard**: https://robertfrenken.github.io/DQN-Fusion/ (GitHub Pages from `docs/`)
+
+## uv + PyTorch + PyG on OSC — Version Compatibility
+
+This stack has a **three-way version coupling** that must stay in sync. Getting any axis wrong causes segfaults (not import errors — silent C++ ABI mismatches).
+
+### The constraint triangle
+
+```
+PyTorch version ←→ PyG extension wheels (torch-scatter, torch-sparse, torch-cluster)
+      ↕
+  CUDA version
+```
+
+1. **PyTorch from PyPI** bundles NVIDIA libs (cudnn, cublas, etc.) automatically. Do NOT use the `download.pytorch.org/whl/cu*` index — those are "lean" wheels that expect system CUDA, which OSC doesn't fully provide (e.g., no cuDNN 9).
+
+2. **PyG extensions** are compiled against a specific `torch+cu` combo. Wheels live at `https://data.pyg.org/whl/torch-{VERSION}+cu{CUDA}.html`. The `torch-geometric` package itself is on PyPI; only the C++ extensions (scatter, sparse, cluster) need the flat index.
+
+3. **PyTorch version on PyPI ≠ PyG's torch version tag.** PyPI may ship torch 2.10.0 but PyG only has wheels up to torch 2.8.0. Installing mismatched versions compiles fine but **segfaults at runtime**.
+
+### Current pinned versions (2026-02-22)
+
+| Component | Version | Source |
+|-----------|---------|--------|
+| Python | 3.12.4 | OSC `module load python/3.12` |
+| PyTorch | 2.8.0 (bundled cu128) | PyPI (default index) |
+| torch-scatter | 2.1.2+pt28cu126 | `data.pyg.org/whl/torch-2.8.0+cu126.html` |
+| torch-sparse | 0.6.18+pt28cu126 | same flat index |
+| torch-cluster | 1.6.3+pt28cu126 | same flat index |
+| torch-geometric | 2.7.0 | PyPI |
+| RAPIDS (optional) | 24.12+ | Separate conda env (no pip wheels) |
+
+### How to upgrade torch
+
+1. Check `https://data.pyg.org/whl/` for the new torch version's wheel page
+2. Verify the page returns HTTP 200 and has `cp312-linux_x86_64` wheels
+3. Update `pyproject.toml`:
+   - `torch>=X.Y.0,<X.Z` in `[project.dependencies]`
+   - PyG flat index URL in `[[tool.uv.index]]`
+4. `rm uv.lock && uv sync --extra dev`
+5. Verify: `.venv/bin/python -c "import torch; import torch_scatter; print('OK')"`
+
+### Traps to avoid
+
+- **`torch>=2.6`** without an upper bound: PyPI resolves to latest (2.10+), which has no PyG wheels. Always pin `<next_major`.
+- **`requires-python = ">=3.10"`** without upper bound: uv resolves for all supported Pythons including 3.13, where PyG wheels may not exist. Use `<3.13`.
+- **uv-managed Python downloads**: Standalone Python builds from uv can segfault on OSC's RHEL 9. Always use OSC's system Python via `uv venv --python /apps/python/3.12/bin/python3`.
+- **`[tool.uv] find-links`** for PyG: Use `[[tool.uv.index]]` with `format = "flat"` and `explicit = true` instead. `find-links` doesn't support the `explicit` flag, so non-PyG packages may accidentally resolve from the flat index.
+- **OSC CUDA modules** (cuda/12.6, cudnn/8.x): Not needed when torch comes from PyPI (nvidia-* pip packages bundle everything). Only load modules for RAPIDS or custom CUDA code.
 
 ## Session Modes
 
@@ -201,6 +250,25 @@ Tracking uses W&B + S3 lakehouse:
 - **S3 Lakehouse**: `pipeline/lakehouse.py` writes structured metrics as JSON to `s3://kd-gat/lakehouse/runs/{run_id}.json` via boto3 (fire-and-forget). Uses `KD_GAT_S3_BUCKET` env var (default: `kd-gat`). Queryable via DuckDB: `SELECT * FROM read_json('s3://kd-gat/lakehouse/runs/*.json')`.
 - **Artifacts**: Evaluation stage captures `embeddings.npz` (VGAE z-mean + GAT hidden layers) and `dqn_policy.json` (alpha values by class) — stored in run directories.
 - **Dashboard**: `python -m pipeline.export` scans `experimentruns/` filesystem to generate static JSON (leaderboard, metrics, training curves, KD transfer, datasets, runs, graph_samples, model_sizes, embeddings, dqn_policy); `scripts/export_dashboard.sh` commits + pushes to GitHub Pages + syncs to S3 + DVC push.
+
+## Documentation Sources
+
+| Topic | URL |
+|-------|-----|
+| uv (package manager) | https://docs.astral.sh/uv/ |
+| uv + PyTorch guide | https://docs.astral.sh/uv/guides/integration/pytorch/ |
+| PyTorch | https://pytorch.org/docs/stable/ |
+| PyTorch Geometric | https://pytorch-geometric.readthedocs.io/en/latest/ |
+| PyG Installation | https://pytorch-geometric.readthedocs.io/en/latest/install/installation.html |
+| PyTorch Lightning | https://lightning.ai/docs/pytorch/stable/ |
+| Pydantic v2 | https://docs.pydantic.dev/latest/ |
+| W&B (Weights & Biases) | https://docs.wandb.ai/ |
+| Prefect | https://docs.prefect.io/v3/ |
+| OSC Documentation | https://www.osc.edu/resources/technical_support/supercomputers/pitzer |
+| SLURM | https://slurm.schedmd.com/documentation.html |
+| Claude Code | https://docs.anthropic.com/en/docs/claude-code/ |
+| DuckDB | https://duckdb.org/docs/ |
+| Ruff | https://docs.astral.sh/ruff/ |
 
 ## Detailed Documentation
 

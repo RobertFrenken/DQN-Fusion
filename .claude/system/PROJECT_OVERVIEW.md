@@ -211,6 +211,7 @@ docs/dashboard/js/
 - **Home**: `/users/PAS2022/rf15/` — NFS v4, 1.7TB — permanent, safe for checkpoints
 - **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge
 - **Git remote**: `git@github.com:RobertFrenken/DQN-Fusion.git` (SSH)
-- **Python**: conda env `gnn-experiments` (`module load miniconda3/24.1.2-py310 && conda activate gnn-experiments`)
-- **Key packages**: PyTorch, PyG, Lightning, Pydantic v2, W&B, Prefect
+- **Python**: uv venv `.venv/` (`source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate`)
+- **Key packages**: PyTorch 2.10+cu126, PyG, Lightning, Pydantic v2, W&B, Prefect
+- **Package manager**: uv (lockfile: `uv.lock`, config: `pyproject.toml [tool.uv]`)
 - **SLURM account**: PAS3209, gpu partition, V100 GPUs

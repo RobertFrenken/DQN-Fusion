@@ -34,14 +34,8 @@ done
 cd "$PROJECT_ROOT"
 
 # --- Ensure Python env is available ---
-if [[ -z "${CONDA_DEFAULT_ENV:-}" ]] || [[ "$CONDA_DEFAULT_ENV" != "gnn-experiments" ]]; then
-    if command -v conda &>/dev/null; then
-        eval "$(conda shell.bash hook 2>/dev/null)"
-        conda activate gnn-experiments
-    else
-        # Fallback: add conda env bin directly (works in non-interactive shells)
-        export PATH="$HOME/.conda/envs/gnn-experiments/bin:$PATH"
-    fi
+if [[ -z "${VIRTUAL_ENV:-}" ]]; then
+    source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate
 fi
 
 # --- Export experiment data → JSON ---

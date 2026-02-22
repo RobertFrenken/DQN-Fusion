@@ -24,7 +24,7 @@ cd "$PROJECT_ROOT"
 mkdir -p slurm_logs
 
 # Load CUDA module
-module load cuda/12.4.1
+module load cuda/12.6.2
 
 # Activate RAPIDS conda env
 eval "$(conda shell.bash hook 2>/dev/null)"

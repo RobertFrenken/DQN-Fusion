@@ -20,7 +20,7 @@ for ds in $DATASETS; do
       --job-name="test-cache-${ds}" \
       --output="$PROJECT_DIR/slurm_logs/%j-test-cache-${ds}.out" \
       --error="$PROJECT_DIR/slurm_logs/%j-test-cache-${ds}.err" \
-      --wrap="module load miniconda3/24.1.2-py310 && conda activate gnn-experiments && cd $PROJECT_DIR && python -c \"
+      --wrap="source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate && cd $PROJECT_DIR && python -c \"
 from src.training.datamodules import load_test_scenarios
 from pathlib import Path
 import logging

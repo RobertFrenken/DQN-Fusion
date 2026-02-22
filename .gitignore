@@ -54,6 +54,7 @@ Thumbs.db
 .nfs*
 
 # ===== ENVIRONMENT =====
+.venv/
 venv/
 env/
 .env

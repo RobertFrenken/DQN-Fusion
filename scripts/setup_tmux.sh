@@ -7,7 +7,7 @@ set -euo pipefail
 # Constants
 # ---------------------------------------------------------------------------
 PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
-CONDA_ENV="/users/PAS2022/rf15/.conda/envs/gnn-experiments"
+VENV="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/.venv"
 SESSIONS=(claude terminal pipeline)
 
 # ---------------------------------------------------------------------------
@@ -108,7 +108,7 @@ for sess in "${SESSIONS[@]}"; do
         ok "$sess — already exists, skipping"
     else
         tmux new-session -d -s "$sess" -c "$PROJECT_ROOT"
-        tmux send-keys -t "$sess" "conda activate gnn-experiments" Enter
+        tmux send-keys -t "$sess" "source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate" Enter
         ok "$sess — created"
     fi
 done

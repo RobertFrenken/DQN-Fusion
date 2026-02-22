@@ -6,9 +6,9 @@ set -euo pipefail
 # Constants
 # ---------------------------------------------------------------------------
 PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
-CONDA_ENV="/users/PAS2022/rf15/.conda/envs/gnn-experiments"
+VENV="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/.venv"
 SLURM_ACCOUNT="PAS3209"
-JUPYTER="$CONDA_ENV/bin/jupyter"
+JUPYTER="$VENV/bin/jupyter"
 
 # ---------------------------------------------------------------------------
 # Colors
@@ -78,8 +78,8 @@ if [[ ! -x "$JUPYTER" ]]; then
     error "jupyter not found at $JUPYTER"
     echo ""
     echo "Install with:"
-    echo "  conda activate gnn-experiments"
-    echo "  conda install -c conda-forge jupyterlab"
+    echo "  source .venv/bin/activate"
+    echo "  uv pip install jupyterlab"
     echo ""
     echo "Or use OSC OnDemand instead: https://ondemand.osc.edu"
     exit 1

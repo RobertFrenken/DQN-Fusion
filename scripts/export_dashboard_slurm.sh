@@ -48,15 +48,15 @@ if [[ "${1:-}" == "--gpu" ]] && [[ -z "${SLURM_JOB_ID:-}" ]]; then
     exit 0
 fi
 
-# Activate conda env
-eval "$(conda shell.bash hook 2>/dev/null)"
+# Activate environment
 if [[ "${KD_GAT_USE_RAPIDS:-}" == "1" ]]; then
-    module load cuda/12.4.1
+    module load cuda/12.6.2
+    eval "$(conda shell.bash hook 2>/dev/null)"
     conda activate gnn-rapids
     echo "=== RAPIDS environment active ==="
     python -c "import cuml; import cudf; print('RAPIDS OK')"
 else
-    conda activate gnn-experiments
+    source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate
 fi
 
 # Run the export + S3 sync
