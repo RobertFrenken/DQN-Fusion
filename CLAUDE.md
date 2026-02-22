@@ -172,6 +172,27 @@ These fix real crashes -- do not violate:
 - **Tracking**: W&B (project `kd-gat`) + S3 lakehouse (JSON on `s3://kd-gat/lakehouse/`)
 - **Dashboard**: https://robertfrenken.github.io/DQN-Fusion/ (GitHub Pages from `docs/`)
 
+## Environment Variables
+
+| Variable | Location | Used By |
+|----------|----------|---------|
+| `GH_TOKEN` | `~/.env.local` | gh CLI, GitHub API |
+| `CLOUDFLARE_ACCOUNT_ID` | `~/.env.local` | DVC R2 remote |
+| `CLOUDFLARE_R2_TOKEN` | `~/.env.local` | DVC R2 remote |
+| `CLOUDFLARE_R2_ACCESS_KEY_ID` | `~/.env.local` | DVC R2 remote, lakehouse.py |
+| `CLOUDFLARE_R2_SECRET_ACCESS_KEY` | `~/.env.local` | DVC R2 remote, lakehouse.py |
+| `CLOUDFLARE_R2_ENDPOINT` | `~/.env.local` | DVC R2 remote, lakehouse.py |
+| `AWS_ACCESS_KEY_ID` | `~/.env.local` | AWS S3 (if used) |
+| `AWS_SECRET_ACCESS_KEY` | `~/.env.local` | AWS S3 (if used) |
+| `KD_GAT_S3_BUCKET` | `.env` | lakehouse.py, export scripts |
+| `KD_GAT_SLURM_ACCOUNT` | `.env` | SLURM job scripts |
+| `KD_GAT_SLURM_PARTITION` | `.env` | SLURM job scripts |
+| `KD_GAT_GPU_TYPE` | `.env` | SLURM job scripts |
+| `KD_GAT_SCRATCH` | `.env` | Scratch path for temp data |
+| `KD_GAT_PYTHON` | `.env` | Python command in scripts |
+| `WANDB_API_KEY` | `~/.env.local` or `wandb login` | W&B experiment tracking |
+| `WANDB_MODE` | Auto-set on compute nodes | W&B offline/online toggle |
+
 ## uv + PyTorch + PyG on OSC — Version Compatibility
 
 This stack has a **three-way version coupling** that must stay in sync. Getting any axis wrong causes segfaults (not import errors — silent C++ ABI mismatches).
@@ -250,6 +271,26 @@ Tracking uses W&B + S3 lakehouse:
 - **S3 Lakehouse**: `pipeline/lakehouse.py` writes structured metrics as JSON to `s3://kd-gat/lakehouse/runs/{run_id}.json` via boto3 (fire-and-forget). Uses `KD_GAT_S3_BUCKET` env var (default: `kd-gat`). Queryable via DuckDB: `SELECT * FROM read_json('s3://kd-gat/lakehouse/runs/*.json')`.
 - **Artifacts**: Evaluation stage captures `embeddings.npz` (VGAE z-mean + GAT hidden layers) and `dqn_policy.json` (alpha values by class) — stored in run directories.
 - **Dashboard**: `python -m pipeline.export` scans `experimentruns/` filesystem to generate static JSON (leaderboard, metrics, training curves, KD transfer, datasets, runs, graph_samples, model_sizes, embeddings, dqn_policy); `scripts/export_dashboard.sh` commits + pushes to GitHub Pages + syncs to S3 + DVC push.
+
+## Cross-Repo Context
+
+This project interacts with two other repos. Changes in one may require updates in the others.
+
+| Repo | Location | Role |
+|------|----------|------|
+| **KD-GAT** (this) | `~/CAN-Graph-Test/KD-GAT` | ML research project — source of tested version pins |
+| **dotfiles** | `~/dotfiles` | Shell config, aliases, `~/.env.local` secret management |
+| **lab-setup-guide** | `~/lab-setup-guide` | MSL lab onboarding docs — canonical OSC procedures |
+
+**Propagation triggers:**
+- Module version change (python/X.Y, cuda) → update dotfiles `dot_bashrc.tmpl` + lab guide docs
+- New env var added → document in dotfiles CLAUDE.md env.local section + `.env.example`
+- PyTorch/PyG version pin change → update lab guide `pytorch-setup.md` + `pyg-setup.md`
+- uv workflow change → update lab guide `osc-environment-management.md`
+
+**Read FROM (authoritative sources):**
+- Lab guide → canonical OSC procedures, module system docs
+- Dotfiles → `~/.env.local` pattern, shared aliases
 
 ## Documentation Sources
 
