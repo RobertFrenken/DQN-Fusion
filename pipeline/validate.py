@@ -63,6 +63,9 @@ def validate(cfg: PipelineConfig, stage: str) -> None:
         _check_prereq("vgae", "autoencoder", "Fusion")
         _check_prereq("gat", "curriculum", "Fusion")
 
+    if stage == "temporal":
+        _check_prereq("gat", "curriculum", "Temporal")
+
     if stage == "evaluation":
         exp = Path(cfg.experiment_root) / cfg.dataset
         aux_suffix = f"_{cfg.auxiliaries[0].type}" if cfg.auxiliaries else ""

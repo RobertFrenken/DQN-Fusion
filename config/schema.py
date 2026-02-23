@@ -71,7 +71,7 @@ class TrainingConfig(BaseModel, frozen=True):
     clear_cache_every_n: int = 100
     offload_teacher_to_cpu: bool = False
     optimize_batch_size: bool = True
-    memory_estimation: str = "measured"
+    memory_estimation: Literal["static", "measured", "trial"] = "measured"
     accumulate_grad_batches: int = 1
     save_top_k: int = 1
     monitor_metric: str = "val_loss"
@@ -97,6 +97,10 @@ class TrainingConfig(BaseModel, frozen=True):
     dynamic_batching: bool = True
     profile: bool = False
     profile_steps: int = 5
+    # GNNExplainer
+    run_explainer: bool = False
+    explainer_samples: int = 50
+    explainer_epochs: int = 200
 
 
 class FusionConfig(BaseModel, frozen=True):
@@ -113,6 +117,17 @@ class FusionConfig(BaseModel, frozen=True):
 class PreprocessingConfig(BaseModel, frozen=True):
     window_size: int = Field(100, ge=1)
     stride: int = Field(100, ge=1)
+
+
+class TemporalConfig(BaseModel, frozen=True):
+    enabled: bool = False
+    temporal_window: int = Field(8, ge=2, le=32)
+    temporal_stride: int = Field(1, ge=1)
+    temporal_hidden: int = Field(64, ge=1)
+    temporal_heads: int = Field(4, ge=1)
+    temporal_layers: int = Field(2, ge=1)
+    freeze_spatial: bool = True
+    spatial_lr_factor: float = Field(0.1, gt=0, le=1.0)
 
 
 class PipelineConfig(BaseModel, frozen=True):
@@ -134,6 +149,7 @@ class PipelineConfig(BaseModel, frozen=True):
     auxiliaries: list[AuxiliaryConfig] = []
     fusion: FusionConfig = FusionConfig()
     preprocessing: PreprocessingConfig = PreprocessingConfig()
+    temporal: TemporalConfig = TemporalConfig()
 
     # --- Infrastructure ---
     schema_version: str = "1.0.0"

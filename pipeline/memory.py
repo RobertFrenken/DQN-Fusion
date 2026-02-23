@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Optional, List
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 if TYPE_CHECKING:
     from torch_geometric.data import Data
@@ -183,6 +184,97 @@ def _measure_activation_memory_mb(model: nn.Module, sample_graph: "Data", device
 # ---------------------------------------------------------------------------
 # Main Entry Point
 # ---------------------------------------------------------------------------
+
+def _try_forward_backward(
+    model: nn.Module,
+    graphs: list["Data"],
+    device: torch.device,
+    precision: str = "16-mixed",
+) -> bool:
+    """Attempt a forward+backward pass on a batch of graphs. Returns True on success."""
+    from torch_geometric.data import Batch
+
+    try:
+        batch = Batch.from_data_list([g.clone() for g in graphs]).to(device)
+        model.train()
+
+        use_amp = "16" in precision
+        autocast_ctx = torch.amp.autocast("cuda", enabled=use_amp) if device.type == "cuda" else torch.amp.autocast("cpu", enabled=False)
+
+        with autocast_ctx:
+            if hasattr(model, "encode"):
+                # VGAE path
+                edge_attr = getattr(batch, "edge_attr", None)
+                cont, canid_logits, _, _, kl = model(
+                    batch.x, batch.edge_index, batch.batch, edge_attr=edge_attr,
+                )
+                loss = F.mse_loss(cont, batch.x[:, 1:]) + kl * 0.001
+            else:
+                # GAT path
+                logits = model(batch)
+                loss = F.cross_entropy(logits, batch.y.long())
+
+        loss.backward()
+        model.zero_grad(set_to_none=True)
+        del batch, loss
+        return True
+
+    except torch.cuda.OutOfMemoryError:
+        torch.cuda.empty_cache()
+        import gc
+        gc.collect()
+        return False
+
+    finally:
+        model.zero_grad(set_to_none=True)
+        torch.cuda.empty_cache()
+
+
+def _trial_batch_size(
+    model: nn.Module,
+    sample_graphs: list["Data"],
+    device: torch.device,
+    min_bs: int = 8,
+    max_bs: int = 512,
+    precision: str = "16-mixed",
+) -> int:
+    """Find maximum batch size via binary search with actual forward+backward trials.
+
+    Returns a safe batch size (90% of the largest successful value).
+    """
+    import torch.nn.functional as F
+
+    if len(sample_graphs) < min_bs:
+        log.warning("Trial batch: only %d graphs available, using min_bs=%d", len(sample_graphs), min_bs)
+        return min_bs
+
+    # Clamp max_bs to available graphs
+    max_bs = min(max_bs, len(sample_graphs))
+
+    low, high = min_bs, max_bs
+    known_good = min_bs
+
+    log.info("Trial batch size search: range [%d, %d]", low, high)
+
+    while high - low > max(1, low // 8):
+        mid = (low + high) // 2
+        torch.cuda.empty_cache()
+        torch.cuda.reset_peak_memory_stats(device)
+
+        success = _try_forward_backward(model, sample_graphs[:mid], device, precision)
+
+        if success:
+            known_good = mid
+            low = mid + 1
+            log.info("Trial batch: %d OK", mid)
+        else:
+            high = mid - 1
+            log.info("Trial batch: %d OOM", mid)
+
+    safe_bs = max(min_bs, int(known_good * 0.9))
+    log.info("Trial batch result: known_good=%d, safe=%d", known_good, safe_bs)
+    return safe_bs
+
 
 def compute_batch_size(
     model: nn.Module,

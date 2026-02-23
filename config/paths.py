@@ -12,6 +12,7 @@ Two interfaces:
 """
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import TYPE_CHECKING
 
@@ -19,6 +20,11 @@ if TYPE_CHECKING:
     from .schema import PipelineConfig
 
 EXPERIMENT_ROOT = "experimentruns"
+
+# Data storage root — overridable via env var for easy migration between
+# home dir (dev) and project storage (production).
+_DATA_ROOT: str | None = os.environ.get("KD_GAT_DATA_ROOT")
+_CACHE_ROOT: str | None = os.environ.get("KD_GAT_CACHE_ROOT")
 
 # stage_name -> (learning_type, model_arch, training_mode)
 # run_id() overrides model_arch to "eval" for the evaluation stage.
@@ -28,6 +34,7 @@ STAGES = {
     "normal":      ("supervised",   "gat",  "normal"),
     "fusion":      ("rl_fusion",    "dqn",  "fusion"),
     "evaluation":  ("evaluation",   "eval", "evaluation"),
+    "temporal":    ("temporal",     "gat",  "temporal"),
 }
 
 from .constants import CATALOG_PATH  # noqa: F401  # re-exported via config/__init__
@@ -97,7 +104,16 @@ def log_dir(cfg: PipelineConfig, stage: str) -> Path:
 
 
 def data_dir(cfg: PipelineConfig) -> Path:
-    """Raw data directory for a dataset."""
+    """Raw data directory for a dataset.
+
+    When KD_GAT_DATA_ROOT is set, looks for raw data under
+    ``$KD_GAT_DATA_ROOT/raw/{dataset}``, falling back to the in-repo
+    ``data/automotive/{dataset}`` for backwards compatibility.
+    """
+    if _DATA_ROOT:
+        candidate = Path(_DATA_ROOT) / "raw" / cfg.dataset
+        if candidate.exists():
+            return candidate
     return Path("data") / "automotive" / cfg.dataset
 
 
@@ -112,7 +128,14 @@ def done_path(cfg: PipelineConfig, stage: str) -> Path:
 
 
 def cache_dir(cfg: PipelineConfig) -> Path:
-    """Processed-graph cache directory."""
+    """Processed-graph cache directory.
+
+    Priority: KD_GAT_CACHE_ROOT > KD_GAT_DATA_ROOT/cache > data/cache (in-repo).
+    """
+    if _CACHE_ROOT:
+        return Path(_CACHE_ROOT) / cfg.dataset
+    if _DATA_ROOT:
+        return Path(_DATA_ROOT) / "cache" / cfg.dataset
     return Path("data") / "cache" / cfg.dataset
 
 
@@ -150,3 +173,14 @@ def log_path_str(dataset: str, model_type: str, scale: str, stage: str, aux: str
 def done_path_str(dataset: str, model_type: str, scale: str, stage: str, aux: str = "") -> str:
     """Sentinel file path from raw strings."""
     return f"{EXPERIMENT_ROOT}/{run_id_str(dataset, model_type, scale, stage, aux)}/.done"
+
+
+def lakehouse_dir() -> Path:
+    """Local lakehouse directory for structured JSON run records.
+
+    Returns $KD_GAT_DATA_ROOT/lakehouse/runs/ when set,
+    otherwise falls back to experimentruns/lakehouse/ (in-repo).
+    """
+    if _DATA_ROOT:
+        return Path(_DATA_ROOT) / "lakehouse" / "runs"
+    return Path(EXPERIMENT_ROOT) / "lakehouse"

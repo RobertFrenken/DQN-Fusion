@@ -896,6 +896,73 @@ def export_recon_errors(output_dir: Path) -> Path:
     return recon_dir
 
 
+def export_explanations(output_dir: Path) -> Path:
+    """Export GNNExplainer feature importance from evaluation runs."""
+    explain_dir = output_dir / "explanations"
+    explain_dir.mkdir(parents=True, exist_ok=True)
+
+    count = 0
+    exported_files: list[str] = []
+
+    if not EXPERIMENT_ROOT.is_dir():
+        index_path = explain_dir / "index.json"
+        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
+        return explain_dir
+
+    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
+        if not ds_dir.is_dir():
+            continue
+        for run_dir in sorted(ds_dir.iterdir()):
+            if not run_dir.is_dir():
+                continue
+            npz_path = run_dir / "explanations.npz"
+            if not npz_path.exists():
+                continue
+
+            data = np.load(npz_path, allow_pickle=True)
+            run_id = f"{ds_dir.name}_{run_dir.name}"
+
+            records = []
+            graph_indices = data.get("graph_indices", np.array([]))
+            labels = data.get("labels", np.array([]))
+            predictions = data.get("predictions", np.array([]))
+            node_masks = data.get("node_masks", np.array([]))
+            edge_masks = data.get("edge_masks", np.array([]))
+
+            for i in range(len(graph_indices)):
+                rec: dict = {
+                    "graph_idx": int(graph_indices[i]),
+                    "label": int(labels[i]),
+                    "prediction": int(predictions[i]),
+                }
+                if i < len(node_masks) and node_masks[i] is not None:
+                    nm = node_masks[i]
+                    # Top-k important features (mean across nodes)
+                    if nm.ndim == 2:
+                        feat_importance = nm.mean(axis=0).tolist()
+                        top_k = sorted(range(len(feat_importance)),
+                                       key=lambda j: feat_importance[j], reverse=True)[:5]
+                        rec["feature_importance"] = feat_importance
+                        rec["top_features"] = top_k
+                if i < len(edge_masks) and edge_masks[i] is not None:
+                    em = edge_masks[i]
+                    rec["edge_mask_mean"] = float(em.mean())
+                    rec["edge_mask_std"] = float(em.std())
+                records.append(rec)
+
+            fname = f"{run_id}.json"
+            (explain_dir / fname).write_text(
+                json.dumps(_versioned_envelope(records), indent=2)
+            )
+            exported_files.append(fname)
+            count += 1
+
+    index_path = explain_dir / "index.json"
+    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
+    log.info("Exported %d explanation files → %s", count, explain_dir)
+    return explain_dir
+
+
 def export_cka(output_dir: Path) -> Path:
     """Export CKA matrices from KD evaluation runs."""
     cka_dir = output_dir / "cka"
@@ -935,7 +1002,7 @@ def export_cka(output_dir: Path) -> Path:
 # Main
 # ---------------------------------------------------------------------------
 
-HEAVY_EXPORTS = {"embeddings", "graph_samples", "recon_errors", "attention"}
+HEAVY_EXPORTS = {"embeddings", "graph_samples", "recon_errors", "attention", "explanations"}
 
 
 def export_all(
@@ -966,6 +1033,7 @@ def export_all(
         ("attention", lambda d: export_attention(d)),
         ("recon_errors", lambda d: export_recon_errors(d)),
         ("cka", lambda d: export_cka(d)),
+        ("explanations", lambda d: export_explanations(d)),
     ]
 
     if not only_heavy:

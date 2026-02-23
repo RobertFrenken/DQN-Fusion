@@ -1,17 +1,17 @@
 # CAN-Graph KD-GAT: Project Context
 
-**Updated**: 2026-02-16
+**Updated**: 2026-02-23
 
 ## What This Is
 
-CAN bus intrusion detection via knowledge distillation. Large models (VGAE → GAT → DQN fusion) are compressed into small models via KD auxiliaries. Runs on OSC HPC via Prefect/SLURM with W&B tracking.
+CAN bus intrusion detection via knowledge distillation. Large models (VGAE → GAT → DQN fusion) are compressed into small models via KD auxiliaries. Optional temporal stage adds cross-window sequence classification. Runs on OSC HPC via Ray/SLURM with W&B tracking.
 
 ## Architecture
 
 ```
 VGAE (unsupervised reconstruction) → GAT (supervised classification) → DQN (RL fusion of both)
-                                          ↑
-                                     EVALUATION (all models)
+                                          ↑                      ↓
+                                     EVALUATION ←────── TEMPORAL (optional: GAT + Transformer)
 ```
 
 **Entry point**: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>`
@@ -22,7 +22,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
 ### Layer 1: `config/` (inert, declarative — no pipeline/ or src/ imports)
 
-- `schema.py` — Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`, `PreprocessingConfig`. Legacy flat JSON loading via `_from_legacy_flat()` (for old config.json files — all dirs now use new naming).
+- `schema.py` — Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`, `PreprocessingConfig`, `TemporalConfig`. Legacy flat JSON loading via `_from_legacy_flat()` (for old config.json files — all dirs now use new naming).
 - `resolver.py` — YAML composition: `resolve(model_type, scale, auxiliaries="none", **cli_overrides)`, `list_models()`, `list_auxiliaries()`. Merge order: defaults → model_def → auxiliaries → CLI.
 - `paths.py` — Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`. String-based variants for flow tasks.
 - `constants.py` — Domain/infrastructure constants: feature counts, window sizes, SLURM defaults, memory limits
@@ -38,16 +38,16 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 - `stages/` — Training logic split into modules:
   - `training.py` — VGAE (autoencoder) and GAT (curriculum) training
   - `fusion.py` — DQN fusion training (uses `cfg.dqn.*`, `cfg.fusion.*`)
-  - `evaluation.py` — Multi-model evaluation and metrics; captures `embeddings.npz` (VGAE z-mean per graph, GAT hidden representations) and `dqn_policy.json` (alpha values + class breakdown) as artifacts
+  - `evaluation.py` — Multi-model evaluation and metrics; captures `embeddings.npz`, `dqn_policy.json`, `explanations.npz` (when `run_explainer=True`) as artifacts; optional temporal model evaluation
+  - `temporal.py` — Temporal graph classification stage (GAT spatial encoder + Transformer temporal head)
   - `modules.py` — PyTorch Lightning modules (uses `cfg.vgae.*`, `cfg.gat.*`, `cfg.training.*`)
-  - `utils.py` — Shared utilities: model loading with cross-model path resolution (`_cross_model_path`, `_STAGE_MODEL_TYPE`), batch size optimization, trainer construction, WandbLogger setup
-- `flows/` — Prefect orchestration:
-  - `train_flow.py` — Full training DAG: preprocess → large pipeline → small_kd + small_nokd → evaluation
-  - `eval_flow.py` — Standalone evaluation flow (re-run evals without re-training)
-  - `slurm_config.py` — SLURMCluster configuration via dask-jobqueue
+  - `utils.py` — Shared utilities: model loading with cross-model path resolution (`_cross_model_path`, `_STAGE_MODEL_TYPE`), batch size optimization (static/measured/trial), trainer construction, WandbLogger setup
+- `orchestration/` — Ray orchestration:
+  - `ray_pipeline.py` — Full training DAG via Ray remote tasks
+  - `ray_slurm.py` — Ray cluster bootstrap on SLURM
 - `validate.py` — Config validation (simplified — Pydantic handles field constraints)
 - `tracking.py` — Memory monitoring utilities
-- `memory.py` — Memory monitoring and GPU/CPU optimization
+- `memory.py` — GPU memory management: static estimation, measured (forward hooks), trial-based (binary search with forward+backward passes)
 - `lakehouse.py` — Fire-and-forget sync to S3 (structured metrics as JSON)
 - `export.py` — Filesystem scanning → static JSON export for dashboard
 
@@ -80,9 +80,11 @@ pairs = extractors()                 # [("vgae", ext), ("gat", ext)] in registra
 ## Supporting Code: `src/`
 
 `pipeline/stages/` imports from these `src/` modules:
-- `src.models.vgae`, `src.models.gat`, `src.models.dqn` — model architectures
+- `src.models.vgae`, `src.models.gat`, `src.models.dqn`, `src.models.temporal` — model architectures
+- `src.explain` — GNNExplainer feature importance analysis
 - `src.training.datamodules` — `load_dataset()`, `load_test_scenarios()`
 - `src.preprocessing.preprocessing` — `GraphDataset`, graph construction
+- `src.preprocessing.temporal` — `TemporalGrouper`, `GraphSequence` (sliding window over ordered graphs)
 
 `load_dataset()` accepts direct `Path` arguments from `pipeline/paths.py`. No legacy adapters remain.
 
@@ -128,8 +130,11 @@ data/automotive/{dataset}/train_*/  →  data/cache/{dataset}/processed_graphs.p
 | `GraphAutoencoderNeighborhood` | `src/models/vgae.py` | (480,240,48) latent 48 | (80,40,16) latent 16 | ~4x |
 | `GATWithJK` | `src/models/gat.py` | hidden 48, 3 layers, 8 heads, fc_layers 1 (343k) | hidden 24, 2 layers, 4 heads, fc_layers 2 (65k) | 5.3x |
 | `EnhancedDQNFusionAgent` | `src/models/dqn.py` | hidden 576, 3 layers | hidden 160, 2 layers | ~13x |
+| `TemporalGraphClassifier` | `src/models/temporal.py` | Shared GAT + 2-layer Transformer (hidden 64, 4 heads) | — | opt-in |
 
 DQN state: 15D vector (VGAE 8D: errors + latent stats + confidence; GAT 7D: logits + embedding stats + confidence).
+
+Temporal model wraps a pretrained GAT spatial encoder (optionally frozen) with a `nn.TransformerEncoder` over sequences of graph embeddings. Not part of the DQN fusion state — it's a separate classification path for slow-onset attack detection.
 
 ## Memory Optimization
 
@@ -160,6 +165,7 @@ experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
 ├── metrics.json        # Evaluation stage only
 ├── embeddings.npz      # Evaluation artifact: VGAE z-mean + GAT hidden representations
 ├── dqn_policy.json     # Evaluation artifact: DQN alpha values + class breakdown
+├── explanations.npz    # Evaluation artifact: GNNExplainer feature importance (when run_explainer=True)
 ├── lightning_logs/     # Training logs (per-epoch metrics CSVs)
 ```
 
@@ -203,7 +209,7 @@ docs/dashboard/js/
 
 **Data sources**: Static JSON files in `docs/dashboard/data/`, lazy-loaded per panel. Some panels use `dynamicLoader` for run-specific data (training curves, embeddings, DQN policy).
 
-**Export pipeline**: `pipeline/export.py` → `export_all()` generates: leaderboard, per-run metrics, training curves, KD transfer, datasets, runs, metric catalog, graph samples, model sizes, embeddings, DQN policy.
+**Export pipeline**: `pipeline/export.py` → `export_all()` generates: leaderboard, per-run metrics, training curves, KD transfer, datasets, runs, metric catalog, graph samples, model sizes, embeddings, DQN policy, ROC/PR curves, attention weights, reconstruction errors, CKA matrices, explanations.
 
 ## Environment
 
@@ -212,6 +218,6 @@ docs/dashboard/js/
 - **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge
 - **Git remote**: `git@github.com:RobertFrenken/DQN-Fusion.git` (SSH)
 - **Python**: uv venv `.venv/` (`source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate`)
-- **Key packages**: PyTorch 2.10+cu126, PyG, Lightning, Pydantic v2, W&B, Prefect
+- **Key packages**: PyTorch 2.8.0+cu128, PyG 2.7.0, Lightning, Pydantic v2, W&B, Ray
 - **Package manager**: uv (lockfile: `uv.lock`, config: `pyproject.toml [tool.uv]`)
 - **SLURM account**: PAS3209, gpu partition, V100 GPUs

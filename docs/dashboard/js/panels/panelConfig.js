@@ -606,6 +606,32 @@ export const PANELS = [
         ],
     },
     {
+        id: 'feature-importance',
+        title: 'Feature Importance (GNNExplainer)',
+        description: 'Node feature importance masks from GNNExplainer — reveals which input features drive predictions',
+        chartType: 'bar',
+        dataSource: null,
+        dynamicLoader: 'explanations',
+        controls: [
+            {
+                type: 'select', id: 'fi-run', label: 'Run',
+                options: [],
+                explanationSource: true,
+                mapTo: '_run',
+            },
+            {
+                type: 'select', id: 'fi-class', label: 'Class',
+                options: [
+                    { value: '', label: 'All' },
+                    { value: '0', label: 'Normal' },
+                    { value: '1', label: 'Attack' },
+                ],
+                default: '',
+                mapTo: '_class_filter',
+            },
+        ],
+    },
+    {
         id: 'kd-cka',
         title: 'Knowledge Transfer (CKA)',
         description: 'Centered Kernel Alignment between teacher and student GAT layers',

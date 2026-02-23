@@ -211,6 +211,87 @@ def evaluate(cfg: PipelineConfig) -> dict:
         np.savez_compressed(attn_path, **attn_export)
         log.info("Saved attention weights (%d samples) → %s", len(attn_list), attn_path)
 
+    # Temporal model evaluation
+    if cfg.temporal.enabled:
+        temporal_ckpt = _cross_model_path(cfg, "gat", "temporal", "best_model.pt")
+        if temporal_ckpt.exists():
+            try:
+                from src.preprocessing.temporal import TemporalGrouper
+                from src.models.temporal import TemporalGraphClassifier
+
+                # Load spatial encoder
+                gat_for_temporal = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
+
+                # Probe spatial dim
+                with torch.no_grad():
+                    probe = val_data[0].clone().to(device)
+                    _, probe_emb = gat_for_temporal(probe, return_embedding=True)
+                    spatial_dim = probe_emb.shape[-1]
+
+                tc = cfg.temporal
+                temporal_model = TemporalGraphClassifier(
+                    spatial_encoder=gat_for_temporal,
+                    spatial_dim=spatial_dim,
+                    temporal_hidden=tc.temporal_hidden,
+                    temporal_heads=tc.temporal_heads,
+                    temporal_layers=tc.temporal_layers,
+                    max_seq_len=tc.temporal_window,
+                    freeze_spatial=True,
+                    num_classes=2,
+                ).to(device)
+                temporal_model.load_state_dict(
+                    torch.load(temporal_ckpt, map_location="cpu", weights_only=True)
+                )
+                temporal_model.eval()
+
+                grouper = TemporalGrouper(
+                    window=tc.temporal_window, stride=tc.temporal_stride,
+                )
+                val_sequences = grouper.group(val_data)
+
+                if val_sequences:
+                    t_preds, t_labels = [], []
+                    with torch.no_grad():
+                        for seq_obj in val_sequences:
+                            moved = [g.clone().to(device) for g in seq_obj.graphs]
+                            logits = temporal_model([[g for g in moved]])
+                            t_preds.append(logits.argmax(dim=1)[0].item())
+                            t_labels.append(seq_obj.y)
+
+                    all_metrics["temporal"] = _compute_metrics(
+                        np.array(t_labels), np.array(t_preds),
+                    )
+                    log.info("Temporal val metrics: %s",
+                             {k: f"{v:.4f}" for k, v in
+                              all_metrics["temporal"]["core"].items()
+                              if isinstance(v, float)})
+
+                del temporal_model, gat_for_temporal
+                cleanup()
+            except Exception as e:
+                log.warning("Temporal evaluation failed (non-fatal): %s", e)
+
+    # GNNExplainer feature importance
+    if cfg.training.run_explainer:
+        gat_ckpt_for_explain = _cross_model_path(cfg, "gat", gat_stage, "best_model.pt")
+        if gat_ckpt_for_explain.exists():
+            try:
+                from src.explain import explain_graphs
+
+                gat_for_explain = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
+                explanations = explain_graphs(
+                    gat_for_explain, "gat",
+                    val_data[:cfg.training.explainer_samples], device,
+                    n_samples=cfg.training.explainer_samples,
+                    epochs=cfg.training.explainer_epochs,
+                )
+                np.savez_compressed(out / "explanations.npz", **explanations)
+                log.info("Saved explanations for %d graphs", len(explanations["graph_indices"]))
+                del gat_for_explain
+                cleanup()
+            except Exception as e:
+                log.warning("GNNExplainer failed (non-fatal): %s", e)
+
     # CKA computation for KD runs (teacher vs student layer similarity)
     if cfg.has_kd:
         try:

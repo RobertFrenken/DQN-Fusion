@@ -1,6 +1,6 @@
 # Current State
 
-**Date**: 2026-02-20
+**Date**: 2026-02-23
 **Branch**: `main`
 
 ## Ecosystem Status
@@ -11,7 +11,7 @@
 |-----------|---------|
 | **Config system** | Pydantic v2 frozen models + YAML composition. `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`. 6 datasets in `config/datasets.yaml`. |
 | **Training pipeline** | All 72 runs complete (6 datasets × 12 configs: 3 stages × {large, small, small+KD}). CLI: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>` |
-| **Prefect orchestration** | `train_pipeline()` and `eval_pipeline()` flows with dask-jobqueue SLURMCluster. `--local` flag for local Dask. |
+| **Ray orchestration** | `train_pipeline()` and `eval_pipeline()` via Ray remote tasks + SLURM. `--local` flag for Ray local mode. |
 | **SLURM integration** | GPU (V100, PAS3209) + CPU partitions configured. |
 | **Graph caching** | All 6 datasets cached with test scenarios (`processed_graphs.pt` + `test_*.pt`). DynamicBatchSampler for variable-size graphs. |
 | **DVC tracking** | Raw data + cache tracked. S3 remote + local scratch remote configured. |
@@ -62,7 +62,7 @@ All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
 - `dqn_{large,small,small_kd}_fusion` (3 DQN)
 - `eval_{large,small,small_kd}_evaluation` (3 Eval)
 
-**Eval artifacts per run:** `metrics.json`, `config.json`, `embeddings.npz`, `dqn_policy.json`, `attention_weights.npz`
+**Eval artifacts per run:** `metrics.json`, `config.json`, `embeddings.npz`, `dqn_policy.json`, `attention_weights.npz`, `explanations.npz` (when `run_explainer=True`)
 
 | Dataset | Runs | Eval Artifacts |
 |---------|------|----------------|
@@ -75,6 +75,11 @@ All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
 
 ## Recently Completed
 
+- **Phase 5: Advanced Enhancements** (2026-02-23):
+  - 5.1 GNNExplainer integration (`src/explain.py`, evaluation wiring, export, dashboard panel)
+  - 5.4 Trial-based batch size auto-tuning (binary search in `pipeline/memory.py`)
+  - 5.3 cuGraph decision gate Phase A (profiling scripts + `scripts/analyze_profile.py`)
+  - 5.2 Temporal graph classification (`TemporalGrouper`, `TemporalGraphClassifier`, `train_temporal` stage)
 - **RAPIDS Phase 1** (2026-02-20): GPU-accelerated dimensionality reduction + preprocessing with CPU fallback. 108 tests passing.
 - **Dashboard rework** (2026-02-17/18): S3 data source migration, embedding panel fix, timestamp support, color theme update
 - **Export bug fixes** (2026-02-18): `_scan_runs` config.json parsing, `training_curves` index.json generation

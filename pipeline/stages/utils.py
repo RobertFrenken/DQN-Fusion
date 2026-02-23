@@ -17,7 +17,10 @@ from torch_geometric.loader import DataLoader, DynamicBatchSampler
 from config import PipelineConfig, stage_dir, checkpoint_path, config_path, data_dir, cache_dir
 from config.constants import MMAP_TENSOR_LIMIT
 from ..tracking import get_memory_summary
-from ..memory import compute_batch_size, log_memory_state, save_budget_cache, load_budget_cache
+from ..memory import (
+    MemoryBudget, compute_batch_size, log_memory_state,
+    save_budget_cache, load_budget_cache, _get_gpu_memory_mb,
+)
 
 if TYPE_CHECKING:
     from torch_geometric.data import Data
@@ -210,6 +213,29 @@ def compute_optimal_batch_size(
 
     sample_graph = _get_representative_graph(train_data, cfg)
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+
+    # Trial mode: binary search with actual forward+backward passes
+    if cfg.training.memory_estimation == "trial":
+        from ..memory import _trial_batch_size
+        try:
+            trial_bs = _trial_batch_size(
+                model, train_data, device,
+                min_bs=8, max_bs=cfg.training.batch_size,
+                precision=cfg.training.precision,
+            )
+            log.info("Trial batch size: %d (max=%d)", trial_bs, cfg.training.batch_size)
+            # Cache result using existing mechanism
+            if run_dir is not None:
+                budget = MemoryBudget(
+                    total_gpu_mb=_get_gpu_memory_mb(device),
+                    recommended_batch_size=trial_bs,
+                    estimation_mode="trial",
+                )
+                save_budget_cache(budget, run_dir, cfg)
+            return trial_bs
+        except Exception as e:
+            log.warning("Trial batch size failed: %s, falling back to measured", e)
+
     mode = cfg.training.memory_estimation if cfg.training.memory_estimation in ("static", "measured") else "measured"
 
     try:

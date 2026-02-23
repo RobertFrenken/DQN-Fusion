@@ -2,7 +2,7 @@
 
 **Created**: 2026-02-22
 **Last audited**: 2026-02-22
-**Status**: Phases 0-3 complete. Phase 4 partial. Phase 5 not started.
+**Status**: Phases 0-5 complete.
 
 ## Context
 
@@ -247,30 +247,33 @@ All code references `KD_GAT_DATA_ROOT` — the migration to project storage is a
 
 **Why last**: These depend on stable infrastructure from Phases 0-4 and profiling data from Phase 2.
 
-### 5.1 — GNNExplainer integration
+### 5.1 — GNNExplainer integration ✅
 
-- Post-hoc interpretability using `torch_geometric.explain`
-- New: `src/explain/explainer.py`
-- Outputs per-node/per-edge importance to `experimentruns/{run_id}/explanations/`
-- Dashboard force-graph visualization
+- `src/explain.py` — `_wrap_for_explainer()`, `explain_graphs()` using `torch_geometric.explain`
+- Config: `training.run_explainer`, `training.explainer_samples`, `training.explainer_epochs`
+- Outputs `explanations.npz` in evaluation run directory
+- `pipeline/export.py` — `export_explanations()` for dashboard
+- Dashboard panel: "Feature Importance" in `panelConfig.js`
 
-### 5.2 — PyG Temporal (A3TGCN)
+### 5.2 — Temporal Graph Classification ✅
 
-- New model variant: `src/models/temporal_gat.py`
-- Requires temporal sequence grouping in preprocessing (consecutive windows → sequences)
-- Strongest for slow-onset attacks
+- `src/preprocessing/temporal.py` — `TemporalGrouper`, `GraphSequence` (sliding window over ordered graphs)
+- `src/models/temporal.py` — `TemporalGraphClassifier` (shared GAT encoder + nn.TransformerEncoder + FC head)
+- `pipeline/stages/temporal.py` — `train_temporal()` stage with contiguous time split
+- Config: `TemporalConfig` (enabled, window, stride, hidden, heads, layers, freeze_spatial, spatial_lr_factor)
+- Registered in `STAGE_FNS` and `STAGES` dict; `pipeline/validate.py` checks curriculum prereq
 
-### 5.3 — cuGraph integration (decision gate)
+### 5.3 — cuGraph integration (decision gate) ✅ Phase A
 
-- Only proceed if Phase 2.3 profiler shows >30% time in message passing AND TransformerConv `edge_attr` doesn't already capture the benefit
-- `CuGraphGATConv` does NOT support `edge_attr` — may conflict with TransformerConv gains
-- Requires separate RAPIDS conda env on OSC
+- `scripts/profile_conv_type.sh` — SLURM profiling comparison (GAT vs TransformerConv, 5 epochs)
+- `scripts/analyze_profile.py` — parses Chrome traces, outputs decision matrix and `docs/decisions/cugraph_decision.md`
+- Phase B (actual cuGraph integration) conditional on profiling results
 
-### 5.4 — Trial-based batch size auto-tuning
+### 5.4 — Trial-based batch size auto-tuning ✅
 
-- Binary search for max batch in `pipeline/memory.py`
-- Replaces heuristic estimation
-- Cache result per `(model_type, scale, GPU_type)` tuple
+- Config: `training.memory_estimation` now `Literal["static", "measured", "trial"]`
+- `pipeline/memory.py` — `_trial_batch_size()`, `_try_forward_backward()` (binary search with actual forward+backward passes, 0.9 safety factor)
+- `pipeline/stages/utils.py` — routes `"trial"` mode to new function, cached via existing `memory_cache.json`
 
 ---
 
@@ -332,13 +335,13 @@ _Updated as phases are completed. Check boxes when done._
   - [x] 3.3 Vectorize graph construction (np.unique + scatter ops, 1.7x speedup)
   - [x] 3.4 Parallel file processing + caching (parallel.py + Ray @ray.remote, datamodules.py rewired, preprocessing.py deleted)
   - [x] 3.5 Network flow adapter (adapters/network_flow.py — UNSW-NB15 + CICIDS, explicit IP edges, schema-derived node features)
-- [ ] **Phase 4**: Data Lake & Storage Architecture (PARTIAL)
+- [x] **Phase 4**: Data Lake & Storage Architecture ✅ (completed 2026-02)
   - [x] 4.1 Canonical directory structure (done via Phase 0 KD_GAT_DATA_ROOT)
-  - [ ] 4.2 Dual-write lakehouse (S3 only — no local write)
+  - [x] 4.2 Dual-write lakehouse (local via lakehouse_dir() + S3 fire-and-forget)
   - [x] 4.3 W&B sync integration (in ray_slurm.sh)
-  - [ ] 4.4 Failed run handling (no cleanup_orphans.sh)
-- [ ] **Phase 5**: Advanced Enhancements (NOT STARTED)
-  - [ ] 5.1 GNNExplainer integration
-  - [ ] 5.2 PyG Temporal (A3TGCN)
-  - [ ] 5.3 cuGraph integration (decision gate — needs Phase 2.3 profiler first)
-  - [ ] 5.4 Batch size auto-tuning
+  - [x] 4.4 Failed run handling (failure_reason in lakehouse + scripts/cleanup_orphans.sh)
+- [x] **Phase 5**: Advanced Enhancements ✅ (completed 2026-02)
+  - [x] 5.1 GNNExplainer integration (src/explain.py, evaluation wiring, export, dashboard)
+  - [x] 5.2 Temporal Graph Classification (TemporalGrouper, TemporalGraphClassifier, train_temporal stage)
+  - [x] 5.3 cuGraph decision gate — Phase A (profiling scripts + analyze_profile.py)
+  - [x] 5.4 Trial-based batch size auto-tuning (binary search in memory.py)

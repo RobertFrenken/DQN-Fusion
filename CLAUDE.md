@@ -10,7 +10,7 @@ Large models are compressed into small models via KD auxiliaries for edge deploy
 # Run a single stage
 python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>
 
-# Stages: autoencoder, curriculum, fusion, evaluation
+# Stages: autoencoder, curriculum, normal, fusion, evaluation, temporal
 # Models: vgae, gat, dqn
 # Scales: large, small
 # Auxiliaries: none (default), kd_standard
@@ -19,14 +19,24 @@ python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>
 python -m pipeline.cli autoencoder --model vgae --scale large --dataset hcrl_sa
 python -m pipeline.cli curriculum --model gat --scale small --auxiliaries kd_standard --teacher-path <path> --dataset hcrl_sa
 python -m pipeline.cli fusion --model dqn --scale large --dataset hcrl_ch
+python -m pipeline.cli temporal --model gat --scale large --dataset hcrl_sa -O temporal.enabled true
 
 # Override nested config values
 python -m pipeline.cli autoencoder --model vgae --scale large -O training.lr 0.001 -O vgae.latent_dim 16
 
-# Full pipeline via Prefect + SLURM
+# Advanced: trial-based batch sizing, GNNExplainer
+python -m pipeline.cli curriculum --model gat --scale large --dataset hcrl_sa -O training.memory_estimation trial
+python -m pipeline.cli evaluation --model gat --scale large --dataset hcrl_sa -O training.run_explainer true
+
+# cuGraph decision gate profiling
+sbatch scripts/profile_conv_type.sh hcrl_sa large
+python scripts/analyze_profile.py --dataset hcrl_sa --scale large
+
+# Full pipeline via Ray + SLURM
 python -m pipeline.cli flow --dataset hcrl_sa
 python -m pipeline.cli flow --dataset hcrl_sa --scale large
 python -m pipeline.cli flow --eval-only --dataset hcrl_sa
+sbatch scripts/ray_slurm.sh flow --dataset hcrl_sa
 
 # Local execution (no SLURM)
 python -m pipeline.cli flow --dataset hcrl_sa --local
@@ -50,7 +60,9 @@ bash scripts/run_tests_slurm.sh                         # all tests
 bash scripts/run_tests_slurm.sh -k "test_full_pipeline"  # specific test
 bash scripts/run_tests_slurm.sh -m slurm                 # only slurm-marked
 
-# Hyperparameter sweeps via parallel-command-processor
+# Hyperparameter sweeps via Ray Tune
+# See pipeline/orchestration/tune_config.py for search spaces
+# Legacy parallel-command-processor approach still works:
 python scripts/generate_sweep.py \
   --stage autoencoder --model vgae --scale large --dataset hcrl_sa \
   --sweep "training.lr=0.001,0.0005" "vgae.latent_dim=8,16,32" \
@@ -84,21 +96,23 @@ config/             # Layer 1: Inert, declarative (no imports from pipeline/ or 
 pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from src/)
   cli.py            # Entry point + W&B init + lakehouse sync + archive restore on failure
   serve.py          # FastAPI inference server (/predict, /health)
-  stages/           # Stage implementations (training, fusion, evaluation)
-    evaluation.py   # Multi-model eval; captures embeddings.npz + dqn_policy.json artifacts
-  flows/            # Prefect orchestration (train_flow, eval_flow, slurm_config)
+  stages/           # Stage implementations (training, fusion, evaluation, temporal)
+    evaluation.py   # Multi-model eval; captures embeddings.npz + dqn_policy.json + explanations.npz
+    temporal.py     # Temporal graph classification (GAT encoder + Transformer over time)
+  orchestration/    # Ray orchestration (ray_pipeline, ray_slurm, tune_config)
   tracking.py       # Memory monitoring utilities
   export.py         # Filesystem → static JSON export for dashboard
-  memory.py         # GPU memory management
+  memory.py         # GPU memory management (static, measured, trial-based batch sizing)
   lakehouse.py      # Fire-and-forget sync to S3 lakehouse
 src/                # Layer 3: Domain (models, training, preprocessing; imports config/)
-  models/           # vgae.py, gat.py, dqn.py
+  models/           # vgae.py, gat.py, dqn.py, temporal.py
+  explain.py        # GNNExplainer integration (feature importance analysis)
   training/         # load_dataset(), load_test_scenarios(), graph caching
-  preprocessing/    # Graph construction from CAN CSVs
+  preprocessing/    # Graph construction from CAN CSVs + temporal.py (TemporalGrouper)
 data/
   automotive/       # 6 datasets (DVC-tracked): hcrl_ch, hcrl_sa, set_01-04
   cache/            # Preprocessed graph cache (.pt, .pkl, metadata)
-experimentruns/     # Outputs: best_model.pt, config.json, metrics.json, embeddings.npz, dqn_policy.json
+experimentruns/     # Outputs: best_model.pt, config.json, metrics.json, embeddings.npz, dqn_policy.json, explanations.npz
 scripts/            # Automation (export_dashboard.sh, export_dashboard_slurm.sh, run_tests_slurm.sh, build_test_cache.sh, sweep.sh, generate_sweep.py)
 docs/dashboard/     # GitHub Pages D3.js dashboard (ES modules, config-driven panels)
   js/core/          # BaseChart, Registry, Theme
@@ -149,11 +163,11 @@ These fix real crashes -- do not violate:
   - `pipeline/` → imports `config/` at top level; imports `src/` only inside functions (lazy)
   - `src/` → imports `config/` (constants); never imports from `pipeline/`
 - Config: Pydantic v2 frozen BaseModels + YAML composition + JSON serialization.
-- Sub-configs: `cfg.vgae`, `cfg.gat`, `cfg.dqn`, `cfg.training`, `cfg.fusion` — nested Pydantic models. Always use nested access (`cfg.vgae.latent_dim`), never flat.
+- Sub-configs: `cfg.vgae`, `cfg.gat`, `cfg.dqn`, `cfg.training`, `cfg.fusion`, `cfg.temporal` — nested Pydantic models. Always use nested access (`cfg.vgae.latent_dim`), never flat.
 - Auxiliaries: `cfg.auxiliaries` is a list of `AuxiliaryConfig`. KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
 - Constants: domain/infrastructure constants live in `config/constants.py` (not in PipelineConfig). Hyperparameters live in PipelineConfig.
 - Experiment tracking: W&B (online/offline) for live metrics + S3 lakehouse for structured JSON. `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle; Lightning's `WandbLogger` attaches to the active run. Compute nodes auto-set `WANDB_MODE=offline`.
-- Orchestration: Prefect flows (`pipeline/flows/`) with `dask-jobqueue` SLURMCluster. `train_pipeline()` fans out per-dataset work concurrently via `_dataset_pipeline` sub-flows; `eval_pipeline()` re-runs evaluation only. Each stage task dispatches via subprocess for clean CUDA context. `--local` flag uses local Dask cluster instead of SLURM.
+- Orchestration: Ray (`pipeline/orchestration/`) with `@ray.remote` tasks. `train_pipeline()` fans out per-dataset work concurrently via `dataset_pipeline` remote functions; `eval_pipeline()` re-runs evaluation only. Each stage task dispatches via subprocess for clean CUDA context. `--local` flag uses Ray local mode. HPO via Ray Tune with OptunaSearch + ASHAScheduler.
 - Archive restore: `cli.py` archives previous runs before re-running, and restores the archive if the new run fails.
 - Inference serving: `pipeline/serve.py` provides FastAPI endpoints (`/predict`, `/health`) loading VGAE+GAT+DQN from `experimentruns/`.
 - Dashboard: Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types inherit from it. `PanelManager` reads config → builds nav + panels + controls → lazy-loads data → renders. All chart types registered in `Registry`.
@@ -190,6 +204,8 @@ These fix real crashes -- do not violate:
 | `KD_GAT_GPU_TYPE` | `.env` | SLURM job scripts |
 | `KD_GAT_SCRATCH` | `.env` | Scratch path for temp data |
 | `KD_GAT_PYTHON` | `.env` | Python command in scripts |
+| `KD_GAT_DATA_ROOT` | `.env` | Root for raw data + caches (default: ~/kd-gat-data) |
+| `KD_GAT_CACHE_ROOT` | `.env` | Cache override (default: $KD_GAT_DATA_ROOT/cache) |
 | `WANDB_API_KEY` | `~/.env.local` or `wandb login` | W&B experiment tracking |
 | `WANDB_MODE` | Auto-set on compute nodes | W&B offline/online toggle |
 
@@ -247,7 +263,7 @@ Switch Claude's focus with `/set-mode <mode>`:
 
 | Mode | Focus | Suppressed |
 |------|-------|------------|
-| `mlops` | Pipeline, Prefect, SLURM, W&B, config, debugging | Research, writing |
+| `mlops` | Pipeline, Ray, SLURM, W&B, config, debugging | Research, writing |
 | `research` | OOD generalization, JumpReLU, cascading KD, literature | Pipeline ops, config |
 | `writing` | Paper drafting, documentation, results | Code changes, pipeline |
 | `data` | Ingestion, preprocessing, validation, cache | Research, writing |
@@ -259,7 +275,7 @@ Mode context files live in `.claude/system/modes/`. Switching modes loads the re
 | Skill | Usage | Description |
 |-------|-------|-------------|
 | `/set-mode` | `/set-mode mlops` | Switch session focus mode |
-| `/run-pipeline` | `/run-pipeline hcrl_sa large` | Submit Prefect flow to SLURM |
+| `/run-pipeline` | `/run-pipeline hcrl_sa large` | Submit Ray pipeline to SLURM |
 | `/check-status` | `/check-status hcrl_sa` | Check SLURM queue, checkpoints, W&B |
 | `/run-tests` | `/run-tests` or `/run-tests test_config` | Run pytest suite |
 | `/sync-state` | `/sync-state` | Update STATE.md from current outputs |
@@ -269,8 +285,8 @@ Mode context files live in `.claude/system/modes/`. Switching modes loads the re
 Tracking uses W&B + S3 lakehouse:
 - **W&B**: `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle. Lightning's `WandbLogger` attaches to the active run for per-epoch metrics. Compute nodes auto-set `WANDB_MODE=offline`; sync offline runs via `wandb sync wandb/run-*`.
 - **S3 Lakehouse**: `pipeline/lakehouse.py` writes structured metrics as JSON to `s3://kd-gat/lakehouse/runs/{run_id}.json` via boto3 (fire-and-forget). Uses `KD_GAT_S3_BUCKET` env var (default: `kd-gat`). Queryable via DuckDB: `SELECT * FROM read_json('s3://kd-gat/lakehouse/runs/*.json')`.
-- **Artifacts**: Evaluation stage captures `embeddings.npz` (VGAE z-mean + GAT hidden layers) and `dqn_policy.json` (alpha values by class) — stored in run directories.
-- **Dashboard**: `python -m pipeline.export` scans `experimentruns/` filesystem to generate static JSON (leaderboard, metrics, training curves, KD transfer, datasets, runs, graph_samples, model_sizes, embeddings, dqn_policy); `scripts/export_dashboard.sh` commits + pushes to GitHub Pages + syncs to S3 + DVC push.
+- **Artifacts**: Evaluation stage captures `embeddings.npz` (VGAE z-mean + GAT hidden layers), `dqn_policy.json` (alpha values by class), and optionally `explanations.npz` (GNNExplainer feature importance when `run_explainer=True`) — stored in run directories.
+- **Dashboard**: `python -m pipeline.export` scans `experimentruns/` filesystem to generate static JSON (leaderboard, metrics, training curves, KD transfer, datasets, runs, graph_samples, model_sizes, embeddings, dqn_policy, explanations); `scripts/export_dashboard.sh` commits + pushes to GitHub Pages + syncs to S3 + DVC push.
 
 ## Cross-Repo Context
 
@@ -304,7 +320,8 @@ This project interacts with two other repos. Changes in one may require updates 
 | PyTorch Lightning | https://lightning.ai/docs/pytorch/stable/ |
 | Pydantic v2 | https://docs.pydantic.dev/latest/ |
 | W&B (Weights & Biases) | https://docs.wandb.ai/ |
-| Prefect | https://docs.prefect.io/v3/ |
+| Ray | https://docs.ray.io/en/latest/ |
+| Ray Tune | https://docs.ray.io/en/latest/tune/index.html |
 | OSC Documentation | https://www.osc.edu/resources/technical_support/supercomputers/pitzer |
 | SLURM | https://slurm.schedmd.com/documentation.html |
 | Claude Code | https://docs.anthropic.com/en/docs/claude-code/ |
