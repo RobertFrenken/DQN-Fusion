@@ -153,3 +153,6 @@ class IRSchema:
 
 # Default schema for the CAN bus domain (8 data bytes → 8 features)
 CAN_BUS_SCHEMA = IRSchema(num_features=8)
+
+# Default schema for network flow domain (35 flow features)
+NETWORK_FLOW_SCHEMA = IRSchema(num_features=35)

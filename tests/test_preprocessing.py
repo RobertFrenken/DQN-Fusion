@@ -1,345 +1,320 @@
 """
 Comprehensive test suite for CAN-Graph preprocessing functionality.
 
-Tests cover data loading, graph creation, feature validation,
-and edge case handling to ensure robust preprocessing.
+Tests cover the new modular preprocessing pipeline (Phase 3):
+    - EntityVocabulary (build, encode, persistence)
+    - IRSchema validation
+    - CANBusAdapter (file discovery, raw→IR conversion)
+    - GraphEngine (sliding window graph construction)
+    - GraphDataset (wrapper, stats, consistency validation)
+    - process_dataset (end-to-end pipeline)
 
 Run with: python -m pytest tests/test_preprocessing.py -v
-Or:       python -m unittest tests.test_preprocessing
 """
 
 import unittest
 import numpy as np
+import pandas as pd
 import torch
 
 from config.constants import NODE_FEATURE_COUNT, EDGE_FEATURE_COUNT
-from src.preprocessing.preprocessing import (
-    safe_hex_to_int,
-    apply_dynamic_id_mapping,
-    build_id_mapping_from_normal,
-    dataset_creation_streaming,
-    find_csv_files,
-    graph_creation,
-    GraphDataset,
-)
+from src.preprocessing.vocabulary import EntityVocabulary, _safe_hex_to_int
+from src.preprocessing.schema import IRSchema, CAN_BUS_SCHEMA
+from src.preprocessing.engine import GraphEngine
+from src.preprocessing.dataset import GraphDataset
+from src.preprocessing.adapters.can_bus import CANBusAdapter
+from src.preprocessing.parallel import process_dataset
 from torch_geometric.data import Data
 
 
-class TestPreprocessing(unittest.TestCase):
-    """
-    Comprehensive test suite for preprocessing functionality.
+class TestHexConversion(unittest.TestCase):
+    """Test hex-to-decimal conversion robustness."""
 
-    Tests cover data loading, graph creation, feature validation,
-    and edge case handling to ensure robust preprocessing.
-    """
+    def test_valid_hex_strings(self):
+        self.assertEqual(_safe_hex_to_int("1A"), 26)
+        self.assertEqual(_safe_hex_to_int("FF"), 255)
+        self.assertEqual(_safe_hex_to_int("0"), 0)
+
+    def test_invalid_inputs(self):
+        self.assertIsNone(_safe_hex_to_int("XYZ"))
+        self.assertIsNone(_safe_hex_to_int(""))
+        self.assertIsNone(_safe_hex_to_int(None))
+
+    def test_numeric_inputs(self):
+        self.assertEqual(_safe_hex_to_int(123), 123)
+        self.assertEqual(_safe_hex_to_int(0), 0)
+
+
+class TestEntityVocabulary(unittest.TestCase):
+    """Test EntityVocabulary build, encode, and persistence."""
+
+    def test_build_from_ids(self):
+        vocab = EntityVocabulary.build_from_ids([100, 200, 300])
+        self.assertEqual(len(vocab), 4)  # 3 IDs + OOV
+        self.assertIn("OOV", vocab)
+        self.assertIn(100, vocab)
+
+    def test_encode_known(self):
+        vocab = EntityVocabulary.build_from_ids([10, 20, 30])
+        idx = vocab.encode(10)
+        self.assertEqual(idx, 0)  # sorted: 10=0, 20=1, 30=2
+
+    def test_encode_oov(self):
+        vocab = EntityVocabulary.build_from_ids([10, 20])
+        oov = vocab.oov_index
+        self.assertEqual(vocab.encode(999), oov)
+
+    def test_encode_series(self):
+        vocab = EntityVocabulary.build_from_ids([10, 20, 30])
+        series = pd.Series([10, 20, 999])
+        encoded = vocab.encode_series(series)
+        self.assertEqual(encoded.iloc[0], vocab.encode(10))
+        self.assertEqual(encoded.iloc[2], vocab.oov_index)
+
+    def test_roundtrip_persistence(self):
+        import tempfile
+        vocab = EntityVocabulary.build_from_ids([1, 2, 3])
+        with tempfile.NamedTemporaryFile(suffix=".pkl") as f:
+            vocab.save(f.name)
+            loaded = EntityVocabulary.load(f.name)
+        self.assertEqual(len(loaded), len(vocab))
+        self.assertEqual(loaded.encode(1), vocab.encode(1))
+        self.assertEqual(loaded.oov_index, vocab.oov_index)
+
+    def test_from_legacy_mapping(self):
+        legacy = {100: 0, 200: 1, "OOV": 2}
+        vocab = EntityVocabulary.from_legacy_mapping(legacy)
+        self.assertEqual(vocab.encode(100), 0)
+        self.assertEqual(vocab.oov_index, 2)
+
+    def test_from_legacy_mapping_adds_oov(self):
+        legacy = {100: 0, 200: 1}
+        vocab = EntityVocabulary.from_legacy_mapping(legacy)
+        self.assertIn("OOV", vocab)
+        self.assertEqual(vocab.oov_index, 2)
+
+
+class TestIRSchema(unittest.TestCase):
+    """Test IRSchema validation."""
+
+    def test_can_bus_schema_columns(self):
+        schema = CAN_BUS_SCHEMA
+        cols = schema.columns
+        self.assertEqual(cols[0], "entity_id")
+        self.assertEqual(cols[-1], "label")
+        self.assertEqual(len(cols), 1 + 8 + 3)  # entity + 8 features + src/tgt/label
+
+    def test_validate_valid_df(self):
+        schema = IRSchema(num_features=2)
+        df = pd.DataFrame({
+            "entity_id": [0, 1, 2],
+            "feature_0": [0.1, 0.2, 0.3],
+            "feature_1": [0.4, 0.5, 0.6],
+            "source_id": [0, 1, 0],
+            "target_id": [1, 2, 1],
+            "label": [0, 1, 0],
+        })
+        result = schema.validate(df)
+        self.assertEqual(len(result), 3)
+
+    def test_validate_missing_column(self):
+        schema = IRSchema(num_features=2)
+        df = pd.DataFrame({
+            "entity_id": [0],
+            "feature_0": [0.1],
+            # missing feature_1
+            "source_id": [0],
+            "target_id": [1],
+            "label": [0],
+        })
+        with self.assertRaises(ValueError):
+            schema.validate(df)
+
+    def test_col_indices(self):
+        schema = IRSchema(num_features=8)
+        # entity_id(0) + feature_0..7(1..8) + source_id(9) + target_id(10) + label(11)
+        self.assertEqual(schema.col_source, 9)
+        self.assertEqual(schema.col_target, 10)
+        self.assertEqual(schema.col_label, 11)
+
+
+class TestGraphEngine(unittest.TestCase):
+    """Test GraphEngine graph construction."""
+
+    def _make_ir_df(self, n_rows=200, n_features=8, n_ids=5):
+        """Create a synthetic IR DataFrame for testing."""
+        rng = np.random.RandomState(42)
+        schema = IRSchema(num_features=n_features)
+        ids = list(range(n_ids))
+
+        data = {"entity_id": rng.choice(ids, n_rows)}
+        for i in range(n_features):
+            data[f"feature_{i}"] = rng.rand(n_rows)
+
+        sources = rng.choice(ids, n_rows)
+        targets = np.roll(sources, -1)  # simple temporal adjacency
+        data["source_id"] = sources
+        data["target_id"] = targets
+        data["label"] = rng.choice([0, 1], n_rows, p=[0.9, 0.1])
+
+        return pd.DataFrame(data), schema
+
+    def test_create_graphs_returns_list(self):
+        ir_df, schema = self._make_ir_df()
+        engine = GraphEngine(schema, window_size=50, stride=50)
+        graphs = engine.create_graphs(ir_df)
+        self.assertIsInstance(graphs, list)
+        self.assertGreater(len(graphs), 0)
+
+    def test_graph_structure(self):
+        ir_df, schema = self._make_ir_df()
+        engine = GraphEngine(schema, window_size=50, stride=50)
+        graphs = engine.create_graphs(ir_df)
+
+        for g in graphs[:5]:
+            self.assertIsInstance(g, Data)
+            self.assertIsNotNone(g.x)
+            self.assertIsNotNone(g.edge_index)
+            self.assertIsNotNone(g.edge_attr)
+            self.assertIsNotNone(g.y)
+
+            # Feature dimensions (derived from schema, not hardcoded constant)
+            self.assertEqual(g.x.size(1), engine.node_feature_count)
+            self.assertEqual(g.edge_attr.size(1), EDGE_FEATURE_COUNT)
+
+            # Dtypes
+            self.assertEqual(g.x.dtype, torch.float)
+            self.assertEqual(g.edge_index.dtype, torch.long)
+
+            # No NaN/Inf
+            self.assertFalse(torch.isnan(g.x).any())
+            self.assertFalse(torch.isinf(g.x).any())
+            self.assertFalse(torch.isnan(g.edge_attr).any())
+            self.assertFalse(torch.isinf(g.edge_attr).any())
+
+    def test_window_count(self):
+        ir_df, schema = self._make_ir_df(n_rows=200)
+        engine = GraphEngine(schema, window_size=50, stride=50)
+        graphs = engine.create_graphs(ir_df)
+        expected = max(1, (200 - 50) // 50 + 1)  # = 4
+        self.assertEqual(len(graphs), expected)
+
+
+class TestCANBusAdapter(unittest.TestCase):
+    """Test CAN bus adapter file discovery and conversion."""
 
     @classmethod
     def setUpClass(cls):
-        """Set up test environment."""
-        cls.test_root = r"data/automotive/hcrl_sa"
-        cls.small_window_size = 10  # Smaller for faster testing
-        cls.test_stride = 5
+        cls.test_root = "data/automotive/hcrl_sa"
         import os
         if not os.path.isdir(cls.test_root):
             raise unittest.SkipTest(
                 f"Test data not available at {cls.test_root}"
             )
 
-    def test_id_mapping_creation(self):
-        """Test CAN ID mapping creation and consistency."""
-        print("Testing CAN ID mapping creation...")
+    def test_discover_files(self):
+        adapter = CANBusAdapter()
+        files = adapter.discover_files(self.test_root, "train_")
+        self.assertGreater(len(files), 0)
+        for f in files:
+            self.assertTrue(f.suffix == ".csv")
 
-        # Test normal data mapping
-        id_mapping = build_id_mapping_from_normal(self.test_root)
+    def test_build_vocabulary(self):
+        adapter = CANBusAdapter()
+        files = adapter.discover_files(self.test_root, "train_")
+        vocab = adapter.build_vocabulary(files)
+        self.assertIsInstance(vocab, EntityVocabulary)
+        self.assertGreater(len(vocab), 1)  # more than just OOV
+        self.assertIn("OOV", vocab)
 
-        self.assertIsInstance(id_mapping, dict)
-        self.assertIn('OOV', id_mapping)
-        self.assertGreater(len(id_mapping), 1)  # Should have more than just OOV
+    def test_read_and_convert(self):
+        adapter = CANBusAdapter()
+        files = adapter.discover_files(self.test_root, "train_")
+        if not files:
+            self.skipTest("No CSV files found")
 
-        # Check that all values are integers
-        for key, value in id_mapping.items():
-            self.assertIsInstance(value, int)
-            self.assertGreaterEqual(value, 0)
+        vocab = adapter.build_vocabulary(files)
+        ir_df = adapter.read_and_convert(files[0], vocab)
 
-        print(f"  ID mapping created with {len(id_mapping)} entries")
+        # Check IR schema conformance
+        self.assertEqual(list(ir_df.columns), adapter.schema.columns)
+        self.assertFalse(ir_df.isnull().any().any())
 
-    def test_hex_conversion(self):
-        """Test hex-to-decimal conversion robustness."""
-        print("Testing hex conversion...")
+        # Check feature normalization (bytes should be in [0, 1])
+        for col in [f"feature_{i}" for i in range(8)]:
+            self.assertTrue((ir_df[col] >= 0).all() and (ir_df[col] <= 1).all(),
+                            f"{col} not properly normalized")
 
-        # Test valid hex strings
-        self.assertEqual(safe_hex_to_int("1A"), 26)
-        self.assertEqual(safe_hex_to_int("FF"), 255)
-        self.assertEqual(safe_hex_to_int("0"), 0)
 
-        # Test invalid inputs
-        self.assertIsNone(safe_hex_to_int("XYZ"))
-        self.assertIsNone(safe_hex_to_int(""))
-        self.assertIsNone(safe_hex_to_int(None))
+class TestGraphDataset(unittest.TestCase):
+    """Test GraphDataset wrapper."""
 
-        # Test numeric inputs
-        self.assertEqual(safe_hex_to_int(123), 123)
-        self.assertEqual(safe_hex_to_int(0), 0)
+    def _make_graphs(self, n=10):
+        graphs = []
+        for i in range(n):
+            x = torch.randn(5, NODE_FEATURE_COUNT)
+            edge_index = torch.tensor([[0, 1, 2], [1, 2, 3]], dtype=torch.long)
+            edge_attr = torch.randn(3, EDGE_FEATURE_COUNT)
+            y = torch.tensor(i % 2, dtype=torch.long)
+            graphs.append(Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y))
+        return graphs
 
-        print("  Hex conversion tests passed")
+    def test_basic_ops(self):
+        graphs = self._make_graphs()
+        ds = GraphDataset(graphs)
+        self.assertEqual(len(ds), 10)
+        self.assertIsInstance(ds[0], Data)
 
-    def test_single_file_processing(self):
-        """Test processing of a single CSV file."""
-        print("Testing single file processing...")
+    def test_stats(self):
+        graphs = self._make_graphs()
+        ds = GraphDataset(graphs)
+        stats = ds.get_stats()
+        self.assertEqual(stats["num_graphs"], 10)
+        self.assertIn("avg_nodes", stats)
+        self.assertEqual(stats["normal_graphs"] + stats["attack_graphs"], 10)
 
-        csv_files = find_csv_files(self.test_root, 'train_')
-        if not csv_files:
-            self.skipTest("No CSV files found for testing")
+    def test_inconsistent_features_raises(self):
+        g1 = Data(x=torch.randn(3, 5), edge_index=torch.zeros(2, 1, dtype=torch.long))
+        g2 = Data(x=torch.randn(3, 7), edge_index=torch.zeros(2, 1, dtype=torch.long))
+        with self.assertRaises(ValueError):
+            GraphDataset([g1, g2])
 
-        # Test with first available file
-        test_file = csv_files[0]
-        id_mapping = build_id_mapping_from_normal(self.test_root)
 
-        df = dataset_creation_streaming(test_file, id_mapping=id_mapping)
+class TestEndToEnd(unittest.TestCase):
+    """End-to-end test using real data (skipped if unavailable)."""
 
-        # Validate DataFrame structure
-        expected_columns = ['CAN ID'] + [f'Data{i+1}' for i in range(8)] + ['Source', 'Target', 'label']
-        self.assertEqual(list(df.columns), expected_columns)
+    @classmethod
+    def setUpClass(cls):
+        cls.test_root = "data/automotive/hcrl_sa"
+        import os
+        if not os.path.isdir(cls.test_root):
+            raise unittest.SkipTest(
+                f"Test data not available at {cls.test_root}"
+            )
 
-        # Check normalization
-        for col in [f'Data{i+1}' for i in range(8)]:
-            self.assertTrue(df[col].between(0, 1).all(), f"{col} not properly normalized")
-
-        # Check for missing values
-        self.assertFalse(df.isnull().any().any(), "DataFrame contains NaN values")
-
-        print(f"  Single file processing: {len(df)} rows processed")
-
-    def test_graph_creation_basic(self):
-        """Test basic graph creation functionality."""
-        print("Testing basic graph creation...")
-
-        dataset = graph_creation(
+    def test_process_dataset(self):
+        graphs, vocab_dict = process_dataset(
             self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride
+            split="train_",
+            return_vocab=True,
+            verbose=True,
         )
+        self.assertIsInstance(graphs, list)
+        self.assertGreater(len(graphs), 0)
+        self.assertIsInstance(vocab_dict, dict)
+        self.assertIn("OOV", vocab_dict)
 
-        self.assertIsInstance(dataset, GraphDataset)
-        self.assertGreater(len(dataset), 0)
-
-        print(f"  Created {len(dataset)} graphs")
-
-    def test_graph_structure_validation(self):
-        """Test graph structure and feature validation."""
-        print("Testing graph structure validation...")
-
-        dataset = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride
-        )
-
-        for i, graph in enumerate(dataset):
-            # Basic structure validation
-            self.assertIsInstance(graph, Data)
-            self.assertIsNotNone(graph.x)
-            self.assertIsNotNone(graph.edge_index)
-            self.assertIsNotNone(graph.y)
-
-            # Feature dimension validation
-            self.assertEqual(graph.x.size(1), NODE_FEATURE_COUNT,
-                           f"Graph {i}: incorrect node feature count")
-
-            if graph.edge_attr is not None:
-                self.assertEqual(graph.edge_attr.size(1), EDGE_FEATURE_COUNT,
-                               f"Graph {i}: incorrect edge feature count")
-
-            # Data type validation
-            self.assertEqual(graph.x.dtype, torch.float, f"Graph {i}: incorrect node feature dtype")
-            self.assertEqual(graph.edge_index.dtype, torch.long, f"Graph {i}: incorrect edge index dtype")
-
-            # Value range validation
-            self.assertFalse(torch.isnan(graph.x).any(), f"Graph {i}: NaN in node features")
-            self.assertFalse(torch.isinf(graph.x).any(), f"Graph {i}: Inf in node features")
-
-            # Payload normalization check (columns 1-8)
-            payload = graph.x[:, 1:9]
-            self.assertTrue(torch.all(payload >= 0) and torch.all(payload <= 1),
-                          f"Graph {i}: payload features not normalized to [0,1]")
-
-            # Edge attribute validation
-            if graph.edge_attr is not None:
-                self.assertFalse(torch.isnan(graph.edge_attr).any(),
-                               f"Graph {i}: NaN in edge features")
-                self.assertFalse(torch.isinf(graph.edge_attr).any(),
-                               f"Graph {i}: Inf in edge features")
-
-            # Test only first 10 graphs for speed
-            if i >= 9:
-                break
-
-        print("  Graph structure validation passed")
-
-    def test_optimized_processing(self):
-        """Test optimized processing with streaming."""
-        print("Testing optimized processing...")
-
-        # Test optimized processing
-        dataset = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride
-        )
-
-        self.assertIsInstance(dataset, GraphDataset)
-        self.assertGreater(len(dataset), 0)
-
-        print(f"  Optimized processing created {len(dataset)} graphs")
-
-    def test_dataset_statistics(self):
-        """Test dataset statistics computation."""
-        print("Testing dataset statistics...")
-
-        dataset = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride
-        )
-
-        stats = dataset.get_stats()
-
-        # Validate statistics structure
-        required_keys = ['num_graphs', 'avg_nodes', 'avg_edges', 'normal_graphs', 'attack_graphs']
-        for key in required_keys:
-            self.assertIn(key, stats)
-
-        # Validate statistics values
-        self.assertEqual(stats['num_graphs'], len(dataset))
-        self.assertGreaterEqual(stats['normal_graphs'], 0)
-        self.assertGreaterEqual(stats['attack_graphs'], 0)
-        self.assertEqual(stats['normal_graphs'] + stats['attack_graphs'], stats['num_graphs'])
-
-        print("  Dataset statistics validation passed")
-
-    def test_apply_dynamic_id_mapping_no_expansion(self):
-        """Test that apply_dynamic_id_mapping does NOT expand the mapping for unseen IDs."""
-        import pandas as pd
-
-        id_mapping = {100: 0, 200: 1, 'OOV': 2}
-        original_len = len(id_mapping)
-
-        # DataFrame with known ID (100) and unseen ID (999)
-        df = pd.DataFrame({
-            'CAN ID': [100, 999, 100],
-            'Source': [100, 999, 100],
-            'Target': [999, 100, 999],
-            'label': [0, 0, 0],
-        })
-
-        result_df, result_mapping = apply_dynamic_id_mapping(df, id_mapping)
-
-        # Mapping must not grow
-        self.assertEqual(len(result_mapping), original_len,
-                         "Mapping was expanded — unseen IDs should map to OOV, not get new entries")
-
-        # Unseen ID 999 should be mapped to OOV index (2)
-        oov = id_mapping['OOV']
-        self.assertTrue((result_df['CAN ID'] == oov).sum() == 1,
-                        "Unseen CAN ID was not mapped to OOV")
-        self.assertTrue((result_df['Source'] == oov).sum() == 1,
-                        "Unseen Source was not mapped to OOV")
-        self.assertTrue((result_df['Target'] == oov).sum() == 2,
-                        "Unseen Target was not mapped to OOV")
-
-        # Known ID 100 should map to 0
-        self.assertTrue((result_df['CAN ID'] == 0).sum() == 2)
-
-    def test_edge_cases(self):
-        """Test edge cases and error handling."""
-        print("Testing edge cases...")
-
-        # Test with non-existent directory
-        empty_dataset = graph_creation("/non/existent/path")
-        self.assertEqual(len(empty_dataset), 0)
-
-        # Test with empty ID mapping
-        empty_mapping = {'OOV': 0}
-        dataset = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride,
-            id_mapping=empty_mapping
-        )
-        self.assertIsInstance(dataset, GraphDataset)
-
-        print("  Edge case testing passed")
-
-    def test_full_pipeline_integration(self):
-        """Test complete preprocessing pipeline integration."""
-        print("Testing full pipeline integration...")
-
-        # Test with ID mapping return
-        dataset, id_mapping = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride,
-            return_id_mapping=True
-        )
-
-        self.assertIsInstance(dataset, GraphDataset)
-        self.assertIsInstance(id_mapping, dict)
-        self.assertIn('OOV', id_mapping)
-
-        # Test reusing ID mapping
-        dataset2 = graph_creation(
-            self.test_root,
-            window_size=self.small_window_size,
-            stride=self.test_stride,
-            id_mapping=id_mapping
-        )
-
-        self.assertIsInstance(dataset2, GraphDataset)
-
-        # Print final statistics
-        dataset.print_stats()
-
-        print("  Full pipeline integration test passed")
-
-
-def run_comprehensive_tests():
-    """Run all preprocessing tests with detailed output."""
-    print(f"\n{'='*80}")
-    print("CAN-GRAPH PREPROCESSING COMPREHENSIVE TEST SUITE")
-    print(f"{'='*80}")
-
-    # Create test suite
-    suite = unittest.TestLoader().loadTestsFromTestCase(TestPreprocessing)
-
-    # Run tests with verbose output
-    runner = unittest.TextTestRunner(verbosity=2)
-    result = runner.run(suite)
-
-    # Print summary
-    print(f"\n{'='*80}")
-    print("TEST SUMMARY")
-    print(f"{'='*80}")
-    print(f"Tests run: {result.testsRun}")
-    print(f"Failures: {len(result.failures)}")
-    print(f"Errors: {len(result.errors)}")
-
-    if result.failures:
-        print("\nFAILURES:")
-        for test, traceback in result.failures:
-            print(f"  - {test}: {traceback}")
-
-    if result.errors:
-        print("\nERRORS:")
-        for test, traceback in result.errors:
-            print(f"  - {test}: {traceback}")
-
-    success_rate = (result.testsRun - len(result.failures) - len(result.errors)) / result.testsRun * 100
-    print(f"\nSuccess rate: {success_rate:.1f}%")
-
-    return result.wasSuccessful()
+    def test_graph_quality(self):
+        graphs = process_dataset(self.test_root, split="train_")
+        for g in graphs[:10]:
+            self.assertEqual(g.x.size(1), NODE_FEATURE_COUNT)
+            self.assertEqual(g.edge_attr.size(1), EDGE_FEATURE_COUNT)
+            self.assertFalse(torch.isnan(g.x).any())
+            self.assertFalse(torch.isnan(g.edge_attr).any())
+            # Payload features should be in [0, 1]
+            payload = g.x[:, 1:9]
+            self.assertTrue(torch.all(payload >= 0) and torch.all(payload <= 1))
 
 
 if __name__ == "__main__":
-    # Run comprehensive test suite if called directly
-    success = run_comprehensive_tests()
-    exit(0 if success else 1)
+    unittest.main(verbosity=2)

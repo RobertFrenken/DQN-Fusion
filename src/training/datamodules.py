@@ -225,33 +225,40 @@ def _process_dataset_from_scratch(
     id_mapping_file,
     force_rebuild,
 ):
-    """Process dataset from CSV files."""
+    """Process dataset from CSV files using the new adapter/engine pipeline."""
     logger.info(
         f"Processing dataset: "
         f"{'forced rebuild' if force_rebuild else 'processing from scratch'}..."
     )
     logger.info(f"Dataset path: {dataset_path}")
-    
+
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
 
-    # Use the same file-discovery logic that graph_creation uses internally
-    from src.preprocessing.preprocessing import graph_creation, find_csv_files
+    from src.preprocessing.parallel import process_dataset
+    from src.preprocessing.adapters.can_bus import CANBusAdapter
 
-    csv_files = find_csv_files(str(dataset_path), 'train_')
+    adapter = CANBusAdapter()
+    csv_files = adapter.discover_files(str(dataset_path), "train_")
     logger.info("Found %d CSV files in %s", len(csv_files), dataset_path)
 
     if not csv_files:
         raise FileNotFoundError(f"No train CSV files found in {dataset_path}")
 
     logger.info("Starting graph creation from CSV files...")
-    graphs, id_mapping = graph_creation(
+    graphs, id_mapping = process_dataset(
         dataset_path,
-        'train_',
-        return_id_mapping=True,
+        split="train_",
+        return_vocab=True,
         verbose=True,
     )
-    
+
+    # Unwrap GraphDataset if returned
+    if hasattr(graphs, "data_list"):
+        graphs = graphs.data_list
+    if not isinstance(graphs, list):
+        graphs = list(graphs)
+
     # Save cache atomically
     import pickle
     cache_file.parent.mkdir(parents=True, exist_ok=True)
@@ -312,7 +319,8 @@ def load_test_scenarios(
         Dict mapping scenario name → list of PyG Data objects.
     """
     import pickle
-    from src.preprocessing.preprocessing import graph_creation
+    from src.preprocessing.parallel import process_dataset
+    from src.preprocessing.vocabulary import EntityVocabulary
 
     id_mapping_file = cache_dir_path / "id_mapping.pkl"
     if not id_mapping_file.exists():
@@ -321,6 +329,8 @@ def load_test_scenarios(
 
     with open(id_mapping_file, "rb") as f:
         id_mapping = pickle.load(f)
+
+    vocab = EntityVocabulary.from_legacy_mapping(id_mapping)
 
     if not dataset_path.exists():
         logger.warning("Dataset path %s not found -- skipping test data", dataset_path)
@@ -348,13 +358,13 @@ def load_test_scenarios(
             except Exception as e:
                 logger.warning("Test cache load failed for %s: %s. Rebuilding.", name, e)
 
-        # Build from CSV and cache
+        # Build from CSV using new pipeline
         logger.info("Building test graphs for %s", name)
-        graphs = graph_creation(
+        graphs = process_dataset(
             str(dataset_path),
-            folder_type=name,
-            id_mapping=id_mapping,
-            return_id_mapping=False,
+            split=name,
+            vocab=vocab,
+            return_vocab=False,
         )
         if hasattr(graphs, "data_list"):
             graphs = graphs.data_list

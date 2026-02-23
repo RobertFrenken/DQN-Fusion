@@ -22,7 +22,6 @@ from config.constants import (
     DEFAULT_WINDOW_SIZE,
     DEFAULT_STRIDE,
     EDGE_FEATURE_COUNT,
-    NODE_FEATURE_COUNT,
 )
 from .schema import IRSchema
 
@@ -51,6 +50,7 @@ class GraphEngine:
         self.schema = schema
         self.window_size = window_size
         self.stride = stride
+        self.node_feature_count = schema.num_features + 3  # entity_id + features + count + position
 
     def create_graphs(self, ir_df) -> list[Data]:
         """Transform an IR DataFrame into a list of PyG Data objects.
@@ -252,13 +252,13 @@ class GraphEngine:
         nodes: np.ndarray,
         source: np.ndarray,
     ) -> np.ndarray:
-        """Compute 11-D node features using vectorized operations.
+        """Compute node features using vectorized operations.
 
         Replaces the O(N×W) Python loop with scatter-based aggregation.
 
-        Feature layout (matches legacy ``NODE_FEATURE_COUNT=11``):
-            [0]        entity_id mean (CAN ID)
-            [1:n+1]    mean of continuous features (payload bytes)
+        Feature layout (``num_features + 3`` columns total):
+            [0]        entity_id mean (CAN ID or IP)
+            [1:n+1]    mean of continuous features (payload bytes / flow stats)
             [n+1]      normalized occurrence count
             [n+2]      last temporal position (normalized)
 
@@ -268,8 +268,9 @@ class GraphEngine:
         N = len(nodes)
         W = len(source)
         feat_end = 1 + s.num_features  # columns 0..feat_end (exclusive)
+        node_feat_count = s.num_features + 3  # entity_id + features + count + position
 
-        node_features = np.zeros((N, NODE_FEATURE_COUNT), dtype=np.float32)
+        node_features = np.zeros((N, node_feat_count), dtype=np.float32)
 
         # Map source values to node indices
         node_to_idx = {node: idx for idx, node in enumerate(nodes)}
