@@ -5,11 +5,14 @@ PyTorch Geometric ``Data`` objects via sliding-window graph construction.
 
 The engine knows nothing about CAN buses, network flows, or any other
 domain — it only operates on the standardized column layout.
+
+Phase 3.3: Edge and node feature computation is fully vectorized using
+``np.unique(return_inverse=True)`` + ``np.add.at`` scatter operations,
+replacing the O(E×W) and O(N×W) Python loops.
 """
 from __future__ import annotations
 
 import logging
-from typing import Sequence
 
 import numpy as np
 import torch
@@ -87,9 +90,11 @@ class GraphEngine:
         target = window[:, s.col_target]
         labels = window[:, s.col_label]
 
-        # Unique edges and counts
+        # Unique edges, counts, and inverse mapping for scatter ops
         edges = np.column_stack((source, target))
-        unique_edges, edge_counts = np.unique(edges, axis=0, return_counts=True)
+        unique_edges, edge_inverse, edge_counts = np.unique(
+            edges, axis=0, return_inverse=True, return_counts=True,
+        )
 
         # Node mapping (dense re-indexing)
         nodes = np.unique(np.concatenate((source, target)))
@@ -100,11 +105,11 @@ class GraphEngine:
         ).T
         edge_index = torch.tensor(edge_index, dtype=torch.long)
 
-        # Features
-        edge_features = self._compute_edge_features(
-            window, source, target, unique_edges, edge_counts, nodes, node_to_idx,
+        # Features (vectorized)
+        edge_features = self._compute_edge_features_vectorized(
+            window, source, target, unique_edges, edge_counts, edge_inverse, nodes,
         )
-        node_features = self._compute_node_features(
+        node_features = self._compute_node_features_vectorized(
             window, nodes, source,
         )
 
@@ -115,17 +120,19 @@ class GraphEngine:
 
         return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
 
-    def _compute_edge_features(
+    def _compute_edge_features_vectorized(
         self,
         window: np.ndarray,
         source: np.ndarray,
         target: np.ndarray,
         unique_edges: np.ndarray,
         edge_counts: np.ndarray,
+        edge_inverse: np.ndarray,
         nodes: np.ndarray,
-        node_to_idx: dict,
     ) -> np.ndarray:
-        """Compute 11-D edge features.
+        """Compute 11-D edge features using vectorized operations.
+
+        Replaces the O(E×W) Python loop with scatter-based aggregation.
 
         Feature layout (matches legacy ``EDGE_FEATURE_COUNT=11``):
             [0]  raw count
@@ -140,62 +147,114 @@ class GraphEngine:
             [9]  degree product (src_deg * tgt_deg)
             [10] degree ratio (src_deg / tgt_deg)
         """
-        window_length = len(window)
-        num_edges = len(unique_edges)
-        features = np.zeros((num_edges, EDGE_FEATURE_COUNT), dtype=np.float32)
+        W = len(window)
+        E = len(unique_edges)
+        features = np.zeros((E, EDGE_FEATURE_COUNT), dtype=np.float32)
 
-        # Frequency features (vectorized)
+        # [0-1] Frequency features (already vectorized)
         features[:, 0] = edge_counts
-        features[:, 1] = edge_counts / window_length
+        features[:, 1] = edge_counts / W
 
-        # Pre-compute node degrees
-        all_nodes = np.concatenate([source, target])
-        uniq_nodes = np.unique(all_nodes)
-        n2i = {n: i for i, n in enumerate(uniq_nodes)}
-        node_indices = np.array([n2i[n] for n in all_nodes])
-        degree_counts = np.bincount(node_indices, minlength=len(uniq_nodes))
-        node_degrees = {n: degree_counts[n2i[n]] for n in uniq_nodes}
+        # --- Temporal features via scatter ---
+        # edge_inverse[row] = which unique edge this row belongs to
+        positions = np.arange(W, dtype=np.float64)
 
-        # Reverse edge set for bidirectionality
+        # First and last occurrence per edge group
+        first_pos = np.full(E, W, dtype=np.float64)  # init to max
+        last_pos = np.full(E, -1.0, dtype=np.float64)  # init to min
+        np.minimum.at(first_pos, edge_inverse, positions)
+        np.maximum.at(last_pos, edge_inverse, positions)
+
+        # [5-7] Temporal position features (normalized)
+        valid_mask = edge_counts > 0
+        features[valid_mask, 5] = first_pos[valid_mask] / W
+        features[valid_mask, 6] = last_pos[valid_mask] / W
+        features[valid_mask, 7] = (last_pos[valid_mask] - first_pos[valid_mask]) / W
+
+        # [2-4] Interval statistics: mean, std, regularity
+        # For edges with count > 1, compute intervals between sorted positions
+        multi_mask = edge_counts > 1
+        if np.any(multi_mask):
+            # Sort positions by edge group for interval computation
+            sort_idx = np.lexsort((positions, edge_inverse))
+            sorted_groups = edge_inverse[sort_idx]
+            sorted_positions = positions[sort_idx]
+
+            # Compute intervals: diff between consecutive same-group positions
+            # A pair (i, i+1) belongs to the same group when sorted_groups match
+            same_group = sorted_groups[:-1] == sorted_groups[1:]
+            intervals = np.diff(sorted_positions)
+
+            # Only keep intervals within the same edge group
+            valid_intervals = intervals[same_group]
+            valid_groups = sorted_groups[:-1][same_group]
+
+            if len(valid_intervals) > 0:
+                # Sum and sum-of-squares per edge group for mean/std
+                interval_sum = np.zeros(E, dtype=np.float64)
+                interval_sq_sum = np.zeros(E, dtype=np.float64)
+                interval_count = np.zeros(E, dtype=np.float64)
+
+                np.add.at(interval_sum, valid_groups, valid_intervals)
+                np.add.at(interval_sq_sum, valid_groups, valid_intervals ** 2)
+                np.add.at(interval_count, valid_groups, 1.0)
+
+                has_intervals = interval_count > 0
+                mean_interval = np.zeros(E, dtype=np.float64)
+                std_interval = np.zeros(E, dtype=np.float64)
+
+                mean_interval[has_intervals] = (
+                    interval_sum[has_intervals] / interval_count[has_intervals]
+                )
+                # Variance = E[X^2] - E[X]^2, then sqrt for std
+                variance = np.zeros(E, dtype=np.float64)
+                variance[has_intervals] = (
+                    interval_sq_sum[has_intervals] / interval_count[has_intervals]
+                    - mean_interval[has_intervals] ** 2
+                )
+                # Clamp negative variance from float precision
+                variance = np.maximum(variance, 0.0)
+                std_interval[has_intervals] = np.sqrt(variance[has_intervals])
+
+                features[has_intervals, 2] = mean_interval[has_intervals]
+                features[has_intervals, 3] = std_interval[has_intervals]
+                # Regularity: 1/(1+std), with std=0 → regularity=1
+                reg = np.ones(E, dtype=np.float64)
+                nonzero_std = std_interval > 0
+                reg[nonzero_std] = 1.0 / (1.0 + std_interval[nonzero_std])
+                features[multi_mask, 4] = reg[multi_mask]
+
+        # [8] Bidirectionality: check if reverse edge exists
+        # Build set of (src, tgt) tuples for reverse lookup
         edge_set = set(map(tuple, unique_edges))
+        features[:, 8] = np.array(
+            [float((tgt, src) in edge_set) for src, tgt in unique_edges],
+            dtype=np.float32,
+        )
 
-        positions = np.arange(window_length)
-
-        for i, (src, tgt) in enumerate(unique_edges):
-            edge_mask = (source == src) & (target == tgt)
-            edge_positions = positions[edge_mask]
-
-            n_occ = len(edge_positions)
-            if n_occ > 1:
-                intervals = np.diff(edge_positions)
-                avg_interval = intervals.mean()
-                std_interval = intervals.std()
-                features[i, 2] = avg_interval
-                features[i, 3] = std_interval
-                features[i, 4] = 1.0 / (1.0 + std_interval) if std_interval > 0 else 1.0
-
-            if n_occ > 0:
-                first_occ = edge_positions[0] / window_length
-                last_occ = edge_positions[-1] / window_length
-                features[i, 5] = first_occ
-                features[i, 6] = last_occ
-                features[i, 7] = last_occ - first_occ
-
-            features[i, 8] = float((tgt, src) in edge_set)
-            src_deg = node_degrees.get(src, 0)
-            tgt_deg = node_degrees.get(tgt, 0)
-            features[i, 9] = src_deg * tgt_deg
-            features[i, 10] = src_deg / max(tgt_deg, 1e-8)
+        # [9-10] Degree features
+        all_nodes_arr = np.concatenate([source, target])
+        _, node_inv = np.unique(all_nodes_arr, return_inverse=True)
+        degree = np.bincount(node_inv)
+        # Map unique_edges src/tgt to node indices for degree lookup
+        all_uniq = np.unique(all_nodes_arr)
+        n2i = {n: i for i, n in enumerate(all_uniq)}
+        src_deg = np.array([degree[n2i[s]] for s, _ in unique_edges], dtype=np.float32)
+        tgt_deg = np.array([degree[n2i[t]] for _, t in unique_edges], dtype=np.float32)
+        features[:, 9] = src_deg * tgt_deg
+        features[:, 10] = src_deg / np.maximum(tgt_deg, 1e-8)
 
         return features
 
-    def _compute_node_features(
+    def _compute_node_features_vectorized(
         self,
         window: np.ndarray,
         nodes: np.ndarray,
         source: np.ndarray,
     ) -> np.ndarray:
-        """Compute 11-D node features.
+        """Compute 11-D node features using vectorized operations.
+
+        Replaces the O(N×W) Python loop with scatter-based aggregation.
 
         Feature layout (matches legacy ``NODE_FEATURE_COUNT=11``):
             [0]        entity_id mean (CAN ID)
@@ -206,35 +265,53 @@ class GraphEngine:
         Where n = schema.num_features.
         """
         s = self.schema
-        num_nodes = len(nodes)
-        window_length = len(source)
-        positions = np.arange(window_length)
+        N = len(nodes)
+        W = len(source)
+        feat_end = 1 + s.num_features  # columns 0..feat_end (exclusive)
 
-        node_features = np.zeros((num_nodes, NODE_FEATURE_COUNT), dtype=np.float32)
-        occurrence_counts = np.zeros(num_nodes, dtype=np.float32)
+        node_features = np.zeros((N, NODE_FEATURE_COUNT), dtype=np.float32)
 
-        # entity_id is column 0, features are columns 1..num_features
-        feat_end = 1 + s.num_features  # exclusive
+        # Map source values to node indices
+        node_to_idx = {node: idx for idx, node in enumerate(nodes)}
+        source_node_idx = np.array([node_to_idx[s] for s in source], dtype=np.int64)
 
-        for i, node in enumerate(nodes):
-            node_mask = source == node
-            node_data = window[node_mask]
+        # --- Scatter-sum for feature means ---
+        # Sum entity_id + continuous features per node
+        feature_sums = np.zeros((N, feat_end), dtype=np.float64)
+        occurrence_counts = np.zeros(N, dtype=np.float64)
 
-            if len(node_data) > 0:
-                # entity_id + continuous features
-                node_features[i, :feat_end] = node_data[:, :feat_end].mean(axis=0)
-                occurrence_counts[i] = len(node_data)
-                node_positions = positions[node_mask]
-                node_features[i, -1] = node_positions[-1] / max(window_length - 1, 1)
-            else:
-                # Nodes that only appear as targets
-                node_features[i, 0] = node
+        # Scatter: add each row's features to the corresponding node
+        row_features = window[:, :feat_end].astype(np.float64)
+        for col in range(feat_end):
+            np.add.at(feature_sums[:, col], source_node_idx, row_features[:, col])
+        np.add.at(occurrence_counts, source_node_idx, 1.0)
 
-        # Normalize occurrence counts to [0, 1]
+        # Compute means where count > 0
+        has_data = occurrence_counts > 0
+        for col in range(feat_end):
+            node_features[has_data, col] = (
+                feature_sums[has_data, col] / occurrence_counts[has_data]
+            )
+
+        # For target-only nodes (no source occurrences), set entity_id directly
+        target_only = ~has_data
+        if np.any(target_only):
+            node_features[target_only, 0] = nodes[target_only]
+
+        # --- Last temporal position per node (vectorized) ---
+        positions = np.arange(W, dtype=np.float64)
+        last_pos = np.full(N, -1.0, dtype=np.float64)
+        np.maximum.at(last_pos, source_node_idx, positions)
+        has_pos = last_pos >= 0
+        node_features[has_pos, -1] = last_pos[has_pos] / max(W - 1, 1)
+
+        # --- Normalized occurrence counts ---
         c_min, c_max = occurrence_counts.min(), occurrence_counts.max()
         if c_max > c_min:
-            node_features[:, -2] = (occurrence_counts - c_min) / (c_max - c_min)
+            node_features[:, -2] = (
+                (occurrence_counts - c_min) / (c_max - c_min)
+            ).astype(np.float32)
         else:
-            node_features[:, -2] = occurrence_counts
+            node_features[:, -2] = occurrence_counts.astype(np.float32)
 
         return node_features
