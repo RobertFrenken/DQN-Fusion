@@ -18,6 +18,8 @@ class VGAEArchitecture(BaseModel, frozen=True):
     heads: int = Field(4, ge=1)
     embedding_dim: int = Field(32, ge=1)
     dropout: float = Field(0.15, ge=0, le=1)
+    conv_type: Literal["gat", "gatv2", "transformer"] = "gat"
+    edge_dim: int = Field(11, ge=1)
 
 
 class GATArchitecture(BaseModel, frozen=True):
@@ -27,6 +29,9 @@ class GATArchitecture(BaseModel, frozen=True):
     dropout: float = Field(0.2, ge=0, le=1)
     embedding_dim: int = Field(16, ge=1)
     fc_layers: int = Field(3, ge=1)
+    conv_type: Literal["gat", "gatv2", "transformer"] = "gat"
+    edge_dim: int = Field(11, ge=1)
+    pool_aggrs: tuple[str, ...] = ("mean",)
 
 
 class DQNArchitecture(BaseModel, frozen=True):
@@ -90,6 +95,8 @@ class TrainingConfig(BaseModel, frozen=True):
     curriculum_memory_multiplier: float = 1.0
     log_teacher_student_comparison: bool = True
     dynamic_batching: bool = True
+    profile: bool = False
+    profile_steps: int = 5
 
 
 class FusionConfig(BaseModel, frozen=True):

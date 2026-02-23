@@ -307,7 +307,8 @@ def _run_vgae_inference(vgae, data, device, capture_embeddings=False):
             g = g.clone().to(device)
             batch_idx = (g.batch if hasattr(g, "batch") and g.batch is not None
                          else torch.zeros(g.x.size(0), dtype=torch.long, device=device))
-            cont, canid_logits, z_mean, z_logstd, _ = vgae(g.x, g.edge_index, batch_idx)
+            edge_attr = getattr(g, 'edge_attr', None)
+            cont, canid_logits, z_mean, z_logstd, _ = vgae(g.x, g.edge_index, batch_idx, edge_attr=edge_attr)
             err = F.mse_loss(cont, g.x[:, 1:]).item()
             errors.append(err)
             labels.append(graph_label(g))

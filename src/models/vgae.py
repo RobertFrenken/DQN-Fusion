@@ -1,8 +1,18 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATConv
+from torch_geometric.nn import GATConv, GATv2Conv, TransformerConv
 from torch.utils.checkpoint import checkpoint
+
+
+def _make_conv(conv_type: str, in_dim: int, out_dim: int, heads: int, edge_dim: int | None = None, **kwargs):
+    """Factory for graph attention convolution layers."""
+    if conv_type == "transformer":
+        return TransformerConv(in_dim, out_dim, heads=heads, edge_dim=edge_dim, concat=True, **kwargs)
+    elif conv_type == "gatv2":
+        return GATv2Conv(in_dim, out_dim, heads=heads, edge_dim=edge_dim, concat=True, **kwargs)
+    else:
+        return GATConv(in_dim, out_dim, heads=heads, concat=True, **kwargs)
 
 class GraphAutoencoderNeighborhood(nn.Module):
     """
@@ -32,7 +42,7 @@ class GraphAutoencoderNeighborhood(nn.Module):
     def __init__(self, num_ids, in_channels, hidden_dims=None, latent_dim=32,
                  encoder_heads=4, decoder_heads=4,
                  embedding_dim=8, dropout=0.35, batch_norm=True, mlp_hidden=None,
-                 use_checkpointing=False):
+                 use_checkpointing=False, conv_type="gat", edge_dim=None):
         super().__init__()
         # ID embedding: expect real torch.nn.Embedding to be available in test env
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
@@ -40,6 +50,9 @@ class GraphAutoencoderNeighborhood(nn.Module):
         self.dropout_rate = dropout
         self.batch_norm = batch_norm
         self.use_checkpointing = use_checkpointing
+        self.conv_type = conv_type
+        self._uses_edge_attr = conv_type in ("transformer", "gatv2")
+        self._edge_dim = edge_dim if self._uses_edge_attr else None
 
         # Hidden dims schedule: interpret list; if last equals latent_dim assume the
         # list includes latent entry and use hidden_dims[:-1] as encoder targets.
@@ -68,7 +81,9 @@ class GraphAutoencoderNeighborhood(nn.Module):
             else:
                 heads = 1
                 out_per_head = target_dim
-            self.encoder_layers.append(GATConv(in_dim, out_per_head, heads=heads))
+            self.encoder_layers.append(_make_conv(
+                conv_type, in_dim, out_per_head, heads=heads, edge_dim=self._edge_dim,
+            ))
             if self.batch_norm:
                 self.encoder_bns.append(nn.BatchNorm1d(target_dim))
             in_dim = target_dim
@@ -97,7 +112,9 @@ class GraphAutoencoderNeighborhood(nn.Module):
                 heads = 1
                 out_per_head = target_dim if not is_last else (in_channels - 1)
 
-            self.decoder_layers.append(GATConv(in_dim, out_per_head, heads=heads))
+            self.decoder_layers.append(_make_conv(
+                conv_type, in_dim, out_per_head, heads=heads, edge_dim=self._edge_dim,
+            ))
             if (not is_last) and self.batch_norm:
                 self.decoder_bns.append(nn.BatchNorm1d((out_per_head * heads)))
             # next in_dim for following layer
@@ -123,7 +140,7 @@ class GraphAutoencoderNeighborhood(nn.Module):
         self.latent_dim = latent_dim
 
 
-    def encode(self, x, edge_index):
+    def encode(self, x, edge_index, edge_attr=None):
         # Use the embedding's forward interface (works for real Embedding and SimpleEmbedding)
         id_emb = self.id_embedding(x[:, 0].long())
         other_feats = x[:, 1:]
@@ -131,13 +148,21 @@ class GraphAutoencoderNeighborhood(nn.Module):
         # Apply encoder layers; handle optional batchnorm safely
         for i, conv in enumerate(self.encoder_layers):
             if self.use_checkpointing and x.requires_grad:
-                # Checkpoint the conv + activation
                 # IMPORTANT: Use default args to capture conv and edge_index by value,
                 # not by reference. Otherwise, the lambda captures the loop variable
                 # which will have changed by the time the backward pass recomputes.
-                x = checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei), x, use_reentrant=False)
+                if edge_attr is not None:
+                    x = checkpoint(
+                        lambda x_in, c=conv, ei=edge_index, ea=edge_attr: c(x_in, ei, ea),
+                        x, use_reentrant=False,
+                    )
+                else:
+                    x = checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei), x, use_reentrant=False)
             else:
-                x = conv(x, edge_index)
+                if edge_attr is not None:
+                    x = conv(x, edge_index, edge_attr)
+                else:
+                    x = conv(x, edge_index)
             if self.batch_norm:
                 bn = self.encoder_bns[i]
                 x = self.dropout(F.relu(bn(x)))
@@ -151,7 +176,7 @@ class GraphAutoencoderNeighborhood(nn.Module):
         kl_loss = -0.5 * torch.mean(1 + logvar - mu.pow(2) - logvar.exp())
         return z, kl_loss
 
-    def decode_node(self, z, edge_index):
+    def decode_node(self, z, edge_index, edge_attr=None):
         x = z
 
         # Runtime shape validation
@@ -172,13 +197,19 @@ class GraphAutoencoderNeighborhood(nn.Module):
         for i, conv in enumerate(self.decoder_layers):
             if i < len(self.decoder_layers) - 1:
                 if self.use_checkpointing and x.requires_grad:
-                    # Checkpoint the conv operation
-                    # IMPORTANT: Use default args to capture conv and edge_index by value,
-                    # not by reference. Otherwise, the lambda captures the loop variable
-                    # which will have changed by the time the backward pass recomputes.
-                    x = checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei), x, use_reentrant=False)
+                    # IMPORTANT: Use default args to capture conv and edge_index by value
+                    if edge_attr is not None:
+                        x = checkpoint(
+                            lambda x_in, c=conv, ei=edge_index, ea=edge_attr: c(x_in, ei, ea),
+                            x, use_reentrant=False,
+                        )
+                    else:
+                        x = checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei), x, use_reentrant=False)
                 else:
-                    x = conv(x, edge_index)
+                    if edge_attr is not None:
+                        x = conv(x, edge_index, edge_attr)
+                    else:
+                        x = conv(x, edge_index)
                 if self.batch_norm:
                     bn = self.decoder_bns[i]
                     x = self.dropout(F.relu(bn(x)))
@@ -186,10 +217,18 @@ class GraphAutoencoderNeighborhood(nn.Module):
                     x = self.dropout(F.relu(x))
             else:
                 if self.use_checkpointing and x.requires_grad:
-                    # Same fix: capture conv by value using default argument
-                    x = torch.sigmoid(checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei), x, use_reentrant=False))
+                    if edge_attr is not None:
+                        x = torch.sigmoid(checkpoint(
+                            lambda x_in, c=conv, ei=edge_index, ea=edge_attr: c(x_in, ei, ea),
+                            x, use_reentrant=False,
+                        ))
+                    else:
+                        x = torch.sigmoid(checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei), x, use_reentrant=False))
                 else:
-                    x = torch.sigmoid(conv(x, edge_index))
+                    if edge_attr is not None:
+                        x = torch.sigmoid(conv(x, edge_index, edge_attr))
+                    else:
+                        x = torch.sigmoid(conv(x, edge_index))
         cont_out = x  # shape: [num_nodes, in_channels-1]
         canid_logits = self.canid_classifier(z)
 
@@ -237,25 +276,30 @@ class GraphAutoencoderNeighborhood(nn.Module):
     @classmethod
     def from_config(cls, cfg, num_ids: int, in_ch: int) -> "GraphAutoencoderNeighborhood":
         """Construct from a PipelineConfig."""
+        conv_type = cfg.vgae.conv_type
         return cls(
             num_ids=num_ids, in_channels=in_ch,
             hidden_dims=list(cfg.vgae.hidden_dims), latent_dim=cfg.vgae.latent_dim,
             encoder_heads=cfg.vgae.heads, embedding_dim=cfg.vgae.embedding_dim,
             dropout=cfg.vgae.dropout,
+            conv_type=conv_type,
+            edge_dim=cfg.vgae.edge_dim if conv_type in ("transformer", "gatv2") else None,
         )
 
-    def forward(self, x, edge_index, batch):
+    def forward(self, x, edge_index, batch, edge_attr=None):
         """Forward pass through the GraphAutoencoderNeighborhood.
-        
+
         Args:
             x (torch.Tensor): Node features with shape [num_nodes, in_channels].
             edge_index (torch.Tensor): Edge indices with shape [2, num_edges].
             batch (torch.Tensor): Batch assignment vector.
-            
+            edge_attr (torch.Tensor, optional): Edge features for TransformerConv/GATv2Conv.
+
         Returns:
             tuple: (continuous_output, canid_logits, neighbor_logits, latent_embeddings, kl_loss).
         """
-        z, kl_loss = self.encode(x, edge_index)
-        cont_out, canid_logits = self.decode_node(z, edge_index)
+        ea = edge_attr if self._uses_edge_attr else None
+        z, kl_loss = self.encode(x, edge_index, edge_attr=ea)
+        cont_out, canid_logits = self.decode_node(z, edge_index, edge_attr=ea)
         neighbor_logits = self.decode_neighborhood(z)
         return cont_out, canid_logits, neighbor_logits, z, kl_loss

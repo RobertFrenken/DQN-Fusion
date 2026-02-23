@@ -80,6 +80,59 @@ class MemoryMonitorCallback(pl.Callback):
 
 
 # ---------------------------------------------------------------------------
+# Profiler callback
+# ---------------------------------------------------------------------------
+
+class ProfilerCallback(pl.Callback):
+    """PyTorch Profiler callback that captures CPU/GPU traces for TensorBoard.
+
+    Writes Chrome-format traces to ``output_dir`` that can be loaded via
+    ``tensorboard --logdir <output_dir>`` with the PyTorch Profiler plugin.
+    """
+
+    def __init__(
+        self,
+        output_dir: str,
+        wait_steps: int = 1,
+        warmup_steps: int = 1,
+        active_steps: int = 5,
+    ):
+        super().__init__()
+        self.output_dir = output_dir
+        self.wait_steps = wait_steps
+        self.warmup_steps = warmup_steps
+        self.active_steps = active_steps
+        self._profiler = None
+
+    def on_train_start(self, trainer, pl_module):
+        from torch.profiler import profile, schedule, tensorboard_trace_handler
+
+        Path(self.output_dir).mkdir(parents=True, exist_ok=True)
+        self._profiler = profile(
+            schedule=schedule(
+                wait=self.wait_steps,
+                warmup=self.warmup_steps,
+                active=self.active_steps,
+            ),
+            on_trace_ready=tensorboard_trace_handler(self.output_dir),
+            record_shapes=True,
+            with_stack=True,
+        )
+        self._profiler.__enter__()
+        log.info("Profiler started — traces will be saved to %s", self.output_dir)
+
+    def on_train_batch_end(self, trainer, pl_module, outputs, batch, batch_idx):
+        if self._profiler is not None:
+            self._profiler.step()
+
+    def on_train_end(self, trainer, pl_module):
+        if self._profiler is not None:
+            self._profiler.__exit__(None, None, None)
+            log.info("Profiler stopped — traces saved to %s", self.output_dir)
+            self._profiler = None
+
+
+# ---------------------------------------------------------------------------
 # Data loading
 # ---------------------------------------------------------------------------
 
@@ -547,6 +600,30 @@ def make_trainer(
 
     rid = run_id_str or _run_id(cfg, stage)
 
+    callbacks = [
+        ModelCheckpoint(
+            dirpath=str(out), filename="best_model",
+            monitor=t.monitor_metric, mode=t.monitor_mode,
+            save_top_k=t.save_top_k,
+        ),
+        EarlyStopping(
+            monitor=t.monitor_metric, patience=t.patience,
+            mode=t.monitor_mode,
+        ),
+        MemoryMonitorCallback(
+            log_every_n_epochs=t.test_every_n_epochs,
+            predicted_peak_mb=predicted_peak_mb,
+            run_id=rid,
+        ),
+    ]
+
+    if t.profile:
+        profiler_dir = str(out / "profiler_traces")
+        callbacks.append(ProfilerCallback(
+            output_dir=profiler_dir,
+            active_steps=t.profile_steps,
+        ))
+
     return pl.Trainer(
         default_root_dir=str(out),
         max_epochs=t.max_epochs,
@@ -555,22 +632,7 @@ def make_trainer(
         precision=t.precision,
         gradient_clip_val=t.gradient_clip,
         accumulate_grad_batches=t.accumulate_grad_batches,
-        callbacks=[
-            ModelCheckpoint(
-                dirpath=str(out), filename="best_model",
-                monitor=t.monitor_metric, mode=t.monitor_mode,
-                save_top_k=t.save_top_k,
-            ),
-            EarlyStopping(
-                monitor=t.monitor_metric, patience=t.patience,
-                mode=t.monitor_mode,
-            ),
-            MemoryMonitorCallback(
-                log_every_n_epochs=t.test_every_n_epochs,
-                predicted_peak_mb=predicted_peak_mb,
-                run_id=rid,
-            ),
-        ],
+        callbacks=callbacks,
         logger=_make_loggers(cfg, stage, out, rid),
         log_every_n_steps=t.log_every_n_steps,
         enable_progress_bar=True,

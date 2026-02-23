@@ -179,7 +179,8 @@ def _score_difficulty(vgae_model, graphs, device, chunk_size: int = 500) -> list
                 g = g.clone().to(device)
                 batch_idx = (g.batch if hasattr(g, "batch") and g.batch is not None
                              else torch.zeros(g.x.size(0), dtype=torch.long, device=device))
-                cont, canid_logits, _, _, _ = vgae_model(g.x, g.edge_index, batch_idx)
+                edge_attr = getattr(g, 'edge_attr', None)
+                cont, canid_logits, _, _, _ = vgae_model(g.x, g.edge_index, batch_idx, edge_attr=edge_attr)
                 recon = F.mse_loss(cont, g.x[:, 1:]).item()
                 canid = F.cross_entropy(canid_logits, g.x[:, 0].long()).item()
                 scores.append(recon + 0.1 * canid)

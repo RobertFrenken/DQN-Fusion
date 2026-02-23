@@ -11,7 +11,6 @@ from typing import Protocol, runtime_checkable
 
 import torch
 import torch.nn.functional as F
-from torch_geometric.nn import global_mean_pool
 
 
 @runtime_checkable
@@ -59,7 +58,8 @@ class VGAEFusionExtractor:
         batch_idx: torch.Tensor,
         device: torch.device,
     ) -> torch.Tensor:
-        cont, canid_logits, nbr_logits, z, _ = model(graph.x, graph.edge_index, batch_idx)
+        edge_attr = getattr(graph, 'edge_attr', None) if getattr(model, '_uses_edge_attr', False) else None
+        cont, canid_logits, nbr_logits, z, _ = model(graph.x, graph.edge_index, batch_idx, edge_attr=edge_attr)
         recon_err = F.mse_loss(cont, graph.x[:, 1:], reduction="none").mean().item()
         canid_err = F.cross_entropy(canid_logits, graph.x[:, 0].long()).item()
         nbr_targets = model.create_neighborhood_targets(graph.x, graph.edge_index, batch_idx)
@@ -103,7 +103,7 @@ class GATFusionExtractor:
     ) -> torch.Tensor:
         xs = model(graph, return_intermediate=True)
         jk_out = model.jk(xs)
-        pooled = global_mean_pool(jk_out, batch_idx)
+        pooled = model._pool(jk_out, batch_idx)
         emb_mean = pooled.mean().item()
         emb_std = pooled.std().item() if pooled.numel() > 1 else 0.0
         emb_max, emb_min = pooled.max().item(), pooled.min().item()

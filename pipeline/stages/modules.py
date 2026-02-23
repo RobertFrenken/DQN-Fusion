@@ -38,6 +38,7 @@ class VGAEModule(pl.LightningModule):
         from src.models.vgae import GraphAutoencoderNeighborhood
 
         self.cfg = cfg
+        conv_type = cfg.vgae.conv_type
         self.model = GraphAutoencoderNeighborhood(
             num_ids=num_ids,
             in_channels=in_channels,
@@ -47,13 +48,16 @@ class VGAEModule(pl.LightningModule):
             embedding_dim=cfg.vgae.embedding_dim,
             dropout=cfg.vgae.dropout,
             use_checkpointing=cfg.training.gradient_checkpointing,
+            conv_type=conv_type,
+            edge_dim=cfg.vgae.edge_dim if conv_type in ("transformer", "gatv2") else None,
         )
         self.teacher = teacher
         self.projection = projection
         self._teacher_on_cpu = False
 
     def forward(self, batch):
-        return self.model(batch.x, batch.edge_index, batch.batch)
+        edge_attr = getattr(batch, 'edge_attr', None)
+        return self.model(batch.x, batch.edge_index, batch.batch, edge_attr=edge_attr)
 
     def _task_loss(self, batch):
         cont_out, canid_logits, nbr_logits, z, kl_loss = self(batch)
@@ -77,7 +81,8 @@ class VGAEModule(pl.LightningModule):
             with torch.no_grad():
                 batch_idx = batch.batch if batch.batch is not None else \
                     torch.zeros(batch.x.size(0), dtype=torch.long, device=batch.x.device)
-                t_cont, _, _, t_z, _ = self.teacher(batch.x, batch.edge_index, batch_idx)
+                t_edge_attr = getattr(batch, 'edge_attr', None)
+                t_cont, _, _, t_z, _ = self.teacher(batch.x, batch.edge_index, batch_idx, edge_attr=t_edge_attr)
 
             if self.cfg.training.offload_teacher_to_cpu:
                 self.teacher.to('cpu')
