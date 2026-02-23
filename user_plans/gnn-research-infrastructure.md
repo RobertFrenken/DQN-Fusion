@@ -245,6 +245,43 @@ Once Ray is working:
 3. Replace Prefect's block-based configuration with Ray's `RunConfig` or plain YAML/dataclass configs
 4. If there are scheduled data ingestion flows (cron-style), either convert to simple cron + Python script or keep Prefect solely for that narrow use case
 
+### Prefect Removal Checklist
+
+Once Ray migration is validated (Tasks 1–3 working), execute this cleanup:
+
+**Files to delete:**
+
+- `pipeline/flows/train_flow.py`
+- `pipeline/flows/eval_flow.py`
+- `pipeline/flows/slurm_config.py`
+- `pipeline/flows/` directory (if empty after above)
+
+**Dependencies to remove from `pyproject.toml`:**
+
+- `prefect`
+- `prefect-dask`
+- `dask-jobqueue`
+
+Then `uv sync` to clean the lockfile.
+
+**CLAUDE.md references to update:**
+
+- Key Commands section: remove `python -m pipeline.cli flow` examples, replace with Ray-based launch
+- Architecture Decisions → Orchestration bullet: replace Prefect/Dask description with Ray Core + `ray symmetric-run`
+- Skills table: update `/run-pipeline` skill to use Ray instead of Prefect
+- Session Modes: remove "Prefect" from `mlops` mode description
+
+**What replaces each Prefect capability:**
+
+| Prefect Feature | Ray Replacement |
+|----------------|-----------------|
+| `@flow` / `@task` decorators | `@ray.remote` tasks + DAG via `ObjectRef` dependencies |
+| Retry / failure handling | Ray fault tolerance (task-level `max_retries`, actor restart) |
+| SLURM dispatch via `dask-jobqueue` | `ray symmetric-run` + SLURM `sbatch` bootstrap |
+| Flow composition (`_dataset_pipeline` sub-flows) | Ray DAG — chain `ObjectRef` outputs as inputs |
+| `--local` flag (local Dask cluster) | `ray.init()` with no args (local mode) |
+| Prefect UI / run history | W&B dashboard (already in use) + Ray Dashboard (`ray dashboard`) |
+
 ---
 
 ## Part 2: Graph Batch Size Investigation
