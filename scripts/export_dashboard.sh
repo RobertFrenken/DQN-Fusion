@@ -14,7 +14,7 @@
 #   bash scripts/export_dashboard.sh --dry-run        # export only (no S3 sync)
 set -euo pipefail
 
-PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
+PROJECT_ROOT="/users/PAS2022/rf15/KD-GAT"
 DASHBOARD_DATA="docs/dashboard/data"
 S3_BUCKET="${KD_GAT_S3_BUCKET:-kd-gat}"
 
@@ -35,7 +35,7 @@ cd "$PROJECT_ROOT"
 
 # --- Ensure Python env is available ---
 if [[ -z "${VIRTUAL_ENV:-}" ]]; then
-    source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate
+    source ~/KD-GAT/.venv/bin/activate
 fi
 
 # --- Export experiment data → JSON ---

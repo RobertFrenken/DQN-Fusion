@@ -5,8 +5,8 @@ set -euo pipefail
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
-VENV="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT/.venv"
+PROJECT_ROOT="/users/PAS2022/rf15/KD-GAT"
+VENV="/users/PAS2022/rf15/KD-GAT/.venv"
 SLURM_ACCOUNT="PAS3209"
 JUPYTER="$VENV/bin/jupyter"
 

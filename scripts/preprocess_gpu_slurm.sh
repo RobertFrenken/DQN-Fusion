@@ -19,7 +19,7 @@
 #   sbatch scripts/preprocess_gpu_slurm.sh set_01 set_02 set_03
 set -euo pipefail
 
-PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
+PROJECT_ROOT="/users/PAS2022/rf15/KD-GAT"
 cd "$PROJECT_ROOT"
 mkdir -p slurm_logs
 

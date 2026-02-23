@@ -294,7 +294,7 @@ This project interacts with two other repos. Changes in one may require updates 
 
 | Repo | Location | Role |
 |------|----------|------|
-| **KD-GAT** (this) | `~/CAN-Graph-Test/KD-GAT` | ML research project — source of tested version pins |
+| **KD-GAT** (this) | `~/KD-GAT` | ML research project — source of tested version pins |
 | **dotfiles** | `~/dotfiles` | Shell config, aliases, `~/.env.local` secret management |
 | **lab-setup-guide** | `~/lab-setup-guide` | MSL lab onboarding docs — canonical OSC procedures |
 

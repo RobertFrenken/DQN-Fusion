@@ -25,7 +25,7 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
+PROJECT_ROOT="/users/PAS2022/rf15/KD-GAT"
 cd "$PROJECT_ROOT"
 mkdir -p slurm_logs
 

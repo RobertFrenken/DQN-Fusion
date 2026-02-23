@@ -23,7 +23,7 @@
 
 set -euo pipefail
 
-PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
+PROJECT_ROOT="/users/PAS2022/rf15/KD-GAT"
 cd "$PROJECT_ROOT"
 mkdir -p slurm_logs
 
@@ -56,7 +56,7 @@ if [[ "${KD_GAT_USE_RAPIDS:-}" == "1" ]]; then
     echo "=== RAPIDS environment active ==="
     python -c "import cuml; import cudf; print('RAPIDS OK')"
 else
-    source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate
+    source ~/KD-GAT/.venv/bin/activate
 fi
 
 # Run the export + S3 sync

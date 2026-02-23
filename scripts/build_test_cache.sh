@@ -20,7 +20,7 @@ for ds in $DATASETS; do
       --job-name="test-cache-${ds}" \
       --output="$PROJECT_DIR/slurm_logs/%j-test-cache-${ds}.out" \
       --error="$PROJECT_DIR/slurm_logs/%j-test-cache-${ds}.err" \
-      --wrap="source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate && cd $PROJECT_DIR && python -c \"
+      --wrap="source ~/KD-GAT/.venv/bin/activate && cd $PROJECT_DIR && python -c \"
 from src.training.datamodules import load_test_scenarios
 from pathlib import Path
 import logging
