@@ -22,7 +22,7 @@ from config.constants import (
     PREPROCESSING_VERSION,
 )
 import config.constants as constants
-from src.preprocessing.preprocessing import GraphDataset
+from src.preprocessing.dataset import GraphDataset
 
 logger = logging.getLogger(__name__)
 
