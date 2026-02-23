@@ -1,41 +1,49 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATConv, JumpingKnowledge, global_mean_pool
+from torch_geometric.nn import GATConv, GATv2Conv, TransformerConv, JumpingKnowledge, global_mean_pool
+from torch_geometric.nn.aggr import MultiAggregation
 from torch.utils.checkpoint import checkpoint
 
 
+def _make_conv(conv_type: str, in_dim: int, out_dim: int, heads: int, edge_dim: int | None = None, **kwargs):
+    """Factory for graph attention convolution layers."""
+    if conv_type == "transformer":
+        return TransformerConv(in_dim, out_dim, heads=heads, edge_dim=edge_dim, concat=True, **kwargs)
+    elif conv_type == "gatv2":
+        return GATv2Conv(in_dim, out_dim, heads=heads, edge_dim=edge_dim, concat=True, **kwargs)
+    else:
+        return GATConv(in_dim, out_dim, heads=heads, concat=True, **kwargs)
+
+
 class GATWithJK(nn.Module):
-    """Graph Attention Network with Jumping Knowledge connections."""
-    
+    """Graph Attention Network with Jumping Knowledge connections.
+
+    Supports GATConv (default), GATv2Conv, and TransformerConv via conv_type.
+    TransformerConv natively uses edge_attr, enabling the 11-D edge features
+    (frequency, temporal intervals, bidirectionality, degree products) that
+    GATConv ignores.
+    """
+
     def __init__(self, num_ids, in_channels, hidden_channels, out_channels,
                  num_layers=3, heads=4, dropout=0.2, num_fc_layers=3, embedding_dim=8,
-                 use_checkpointing=False):
-        """Initialize GATWithJK model.
-
-        Args:
-            num_ids (int): Number of unique CAN IDs for embedding.
-            in_channels (int): Number of input channels.
-            hidden_channels (int): Number of hidden channels.
-            out_channels (int): Number of output channels.
-            num_layers (int, optional): Number of GAT layers. Defaults to 3.
-            heads (int, optional): Number of attention heads. Defaults to 4.
-            dropout (float, optional): Dropout rate. Defaults to 0.2.
-            num_fc_layers (int, optional): Number of fully connected layers. Defaults to 3.
-            embedding_dim (int, optional): Dimension of ID embeddings. Defaults to 8.
-            use_checkpointing (bool, optional): Enable gradient checkpointing for memory efficiency. Defaults to False.
-        """
+                 use_checkpointing=False, conv_type="gat", edge_dim=None,
+                 pool_aggrs=("mean",)):
         super().__init__()
         self.id_embedding = nn.Embedding(num_ids, embedding_dim)
         self.dropout = dropout
         self.use_checkpointing = use_checkpointing
+        self.conv_type = conv_type
+        self._uses_edge_attr = conv_type in ("transformer", "gatv2")
 
         # GAT layers
         self.convs = nn.ModuleList()
         for i in range(num_layers):
             in_dim = embedding_dim + (in_channels - 1) if i == 0 else hidden_channels * heads
-            self.convs.append(GATConv(in_dim, hidden_channels, heads=heads, concat=True))
-
+            self.convs.append(_make_conv(
+                conv_type, in_dim, hidden_channels, heads=heads,
+                edge_dim=edge_dim if self._uses_edge_attr else None,
+            ))
 
         self.jk = JumpingKnowledge(
             mode="cat",
@@ -43,10 +51,17 @@ class GATWithJK(nn.Module):
             num_layers=num_layers
         )
 
+        # Pooling
+        jk_out_dim = hidden_channels * heads * num_layers
+        if len(pool_aggrs) > 1:
+            self.pool = MultiAggregation(list(pool_aggrs))
+            fc_input_dim = jk_out_dim * len(pool_aggrs)
+        else:
+            self.pool = None  # use global_mean_pool
+            fc_input_dim = jk_out_dim
+
         # Fully connected layers
         self.fc_layers = nn.ModuleList()
-        fc_input_dim = hidden_channels * heads * num_layers
-        
         for _ in range(num_fc_layers - 1):
             self.fc_layers.append(nn.Linear(fc_input_dim, fc_input_dim))
             self.fc_layers.append(nn.ReLU())
@@ -63,24 +78,20 @@ class GATWithJK(nn.Module):
             dropout=cfg.gat.dropout,
             num_fc_layers=cfg.gat.fc_layers,
             embedding_dim=cfg.gat.embedding_dim,
+            conv_type=cfg.gat.conv_type,
+            edge_dim=cfg.gat.edge_dim if cfg.gat.conv_type in ("transformer", "gatv2") else None,
+            pool_aggrs=cfg.gat.pool_aggrs,
         )
 
+    def _pool(self, x, batch):
+        if self.pool is not None:
+            return self.pool(x, batch)
+        return global_mean_pool(x, batch)
+
     def forward(self, data, return_intermediate=False, return_attention_weights=False, return_embedding=False):
-        """Forward pass through the GATWithJK model.
-
-        Args:
-            data (torch_geometric.data.Data): Input graph data.
-            return_intermediate (bool, optional): Whether to return intermediate representations. Defaults to False.
-            return_attention_weights (bool, optional): Whether to return per-layer attention weights. Defaults to False.
-            return_embedding (bool, optional): Whether to return (logits, graph_embedding) where embedding
-                is the JK+pooled representation before FC layers. Defaults to False.
-
-        Returns:
-            torch.Tensor: Output predictions, or list of intermediate representations if return_intermediate=True,
-                or (xs, attention_weights) if return_attention_weights=True,
-                or (logits, embedding) if return_embedding=True.
-        """
         x, edge_index, batch = data.x, data.edge_index, data.batch
+        edge_attr = getattr(data, 'edge_attr', None) if self._uses_edge_attr else None
+
         # x shape: [num_nodes, in_channels], where x[:,0] is CAN ID index
         id_emb = self.id_embedding(x[:, 0].long())  # [num_nodes, embedding_dim]
         other_feats = x[:, 1:]  # [num_nodes, in_channels-1]
@@ -90,17 +101,27 @@ class GATWithJK(nn.Module):
 
         xs = []
         for conv in self.convs:
-            if return_attention_weights:
+            if return_attention_weights and self.conv_type == "gat":
                 x, (ei, alpha) = conv(x, edge_index, return_attention_weights=True)
                 x = x.relu()
                 attention_weights.append(alpha.detach().cpu())
             elif self.use_checkpointing and x.requires_grad:
-                # IMPORTANT: Use default args to capture conv and edge_index by value,
-                # not by reference. Otherwise, the lambda captures the loop variable
-                # which will have changed by the time the backward pass recomputes.
-                x = checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei).relu(), x, use_reentrant=False)
+                # IMPORTANT: Use default args to capture conv and edge_index by value
+                if edge_attr is not None:
+                    x = checkpoint(
+                        lambda x_in, c=conv, ei=edge_index, ea=edge_attr: c(x_in, ei, ea).relu(),
+                        x, use_reentrant=False,
+                    )
+                else:
+                    x = checkpoint(
+                        lambda x_in, c=conv, ei=edge_index: c(x_in, ei).relu(),
+                        x, use_reentrant=False,
+                    )
             else:
-                x = conv(x, edge_index).relu()
+                if edge_attr is not None:
+                    x = conv(x, edge_index, edge_attr).relu()
+                else:
+                    x = conv(x, edge_index).relu()
             x = F.dropout(x, p=self.dropout, training=self.training)
             xs.append(x)
         if return_attention_weights:
@@ -108,7 +129,7 @@ class GATWithJK(nn.Module):
         if return_intermediate:
             return xs
         x = self.jk(xs)
-        x = global_mean_pool(x, batch)
+        x = self._pool(x, batch)
         if return_embedding:
             emb = x.clone()
             for layer in self.fc_layers:
@@ -117,4 +138,3 @@ class GATWithJK(nn.Module):
         for layer in self.fc_layers:
             x = layer(x)
         return x
-

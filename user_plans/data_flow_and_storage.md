@@ -20,3 +20,29 @@ could write at a time, causing lockout. Snakemake had trouble handling this, whi
 with prefect's slurm declaration headers. This is a good start, but after more research we will be
 moving to the Ray ecosystem.
 
+- I think what might be the best of both worlds is to store data and the database on my home directory
+in rf15. Here I have 500GB of potential storage. The issue is that I am the only one who can read and
+write to this storage. I have asked my advisor to increase the project storage to 1 TB on PAS1266.
+This way when my undergraduate students finally get onboarded, they can also read and permissively
+write to my data lake. I might need to add some permissions to the data lake so others with project
+access can't change it by accident.
+
+- After reading osc documentation, it also seems prudent to utilize the scratch space, as it has
+much faster read and write speeds for jobs. I will need to develop a process of long term storage
+in the "core" spot (first home then project), and each ML training job will write the needed data
+to scratch, will train and write its outputs (model weights, training metrics, etc) on scratch, and
+then cleanup can be to transfer those files from scratch to the data lake.
+- One note is that I also have configured wandb cloud for real time analysis and quick dashboards
+of my training progress. I will need to research if I can gain that benefit of keeping data
+on osc and allowing some sort of link to the wandb web browser, or if I just stream tracking metrics
+to their cloud in addition to writing to my data lake. I am fine with either decision.
+- The next note is handling any training errors during runs. This can include poor code and logic,
+or if I hit some slurm error like OOM, walltime, etc. How do half jobs get handled in the data lake
+and on wandb?
+
+- Finally, I want there to many "plug ins" or connections to the datalake. This can include post-hoc
+analysis of training metrics, playground instances of pulling and prototyping models and visuals,
+and a connection to my front facing webpage of my results. The website is currently a static site,
+but I think I will commit to either using react or hugging face platform for smoother and more dynamic
+pipeline and allow for interactive queries on the app client side.
+

@@ -40,6 +40,7 @@ from .paths import (
     benchmark_path_str,
     log_path_str,
     done_path_str,
+    lakehouse_dir,
 )
 from .constants import (
     PREPROCESSING_VERSION,

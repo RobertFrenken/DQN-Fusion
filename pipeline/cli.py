@@ -38,7 +38,7 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "stage", choices=list(STAGES.keys()) + ["flow"],
-        help="Training stage to run, or 'flow' to run Prefect pipeline",
+        help="Training stage to run, or 'flow' to run full pipeline via Ray",
     )
 
     # Config source
@@ -70,7 +70,7 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--eval-only", action="store_true", default=False,
                     help="(flow) Re-run evaluation only, skip training")
     p.add_argument("--local", action="store_true", default=False,
-                    help="(flow) Use local Dask cluster instead of SLURM")
+                    help="(flow) Use Ray local mode instead of cluster")
 
     # Nested overrides via dot-path: --training.lr 0.001, --vgae.latent-dim 16
     p.add_argument("--override", "-O", nargs=2, action="append", default=[],
@@ -105,7 +105,7 @@ def _parse_dot_overrides(pairs: list[list[str]]) -> dict:
 
 
 def _run_flow(args: argparse.Namespace, log: logging.Logger) -> None:
-    """Dispatch Prefect flow (train or eval-only).
+    """Dispatch pipeline flow via Ray (default) or Prefect (migration period).
 
     --scale filters to a single variant (large, small_kd, small_nokd).
     Without --scale, all variants run.  The argparse default "large" is
@@ -123,19 +123,14 @@ def _run_flow(args: argparse.Namespace, log: logging.Logger) -> None:
     if "--scale" not in sys.argv:
         scale = None
 
-    flow_kwargs = {}
-    if not args.local:
-        from .flows.slurm_config import make_dask_runner
-        flow_kwargs["task_runner"] = make_dask_runner()
+    from .orchestration.ray_pipeline import train_pipeline, eval_pipeline
 
     if args.eval_only:
-        from .flows.eval_flow import eval_pipeline
-        log.info("Starting Prefect evaluation flow (datasets=%s, scale=%s)", datasets, scale)
-        eval_pipeline.with_options(**flow_kwargs)(datasets=datasets, scale=scale)
+        log.info("Starting Ray evaluation flow (datasets=%s, scale=%s)", datasets, scale)
+        eval_pipeline(datasets=datasets, scale=scale, local=args.local)
     else:
-        from .flows.train_flow import train_pipeline
-        log.info("Starting Prefect training flow (datasets=%s, scale=%s)", datasets, scale)
-        train_pipeline.with_options(**flow_kwargs)(datasets=datasets, scale=scale)
+        log.info("Starting Ray training flow (datasets=%s, scale=%s)", datasets, scale)
+        train_pipeline(datasets=datasets, scale=scale, local=args.local)
 
 
 def _init_wandb(cfg: PipelineConfig, stage: str, run_name: str):
@@ -185,8 +180,9 @@ def _wandb_log_metrics(result: dict) -> None:
 def _sync_lakehouse(
     cfg: PipelineConfig, stage: str, run_name: str,
     result: object = None, success: bool = True,
+    failure_reason: str | None = None,
 ) -> None:
-    """Fire-and-forget sync to S3 lakehouse."""
+    """Fire-and-forget sync to local lakehouse + S3."""
     try:
         from .lakehouse import sync_to_lakehouse
         sync_to_lakehouse(
@@ -198,6 +194,7 @@ def _sync_lakehouse(
             has_kd=cfg.has_kd,
             metrics=result if isinstance(result, dict) else None,
             success=success,
+            failure_reason=failure_reason,
         )
     except Exception as e:
         logging.getLogger("pipeline").debug("Lakehouse sync skipped: %s", e)
@@ -318,7 +315,7 @@ def main(argv: list[str] | None = None) -> None:
                 shutil.rmtree(sdir, ignore_errors=True)
             archive.rename(sdir)
             log.warning("Restored archive after failure: %s", sdir)
-        _sync_lakehouse(cfg, args.stage, run_name, None, success=False)
+        _sync_lakehouse(cfg, args.stage, run_name, None, success=False, failure_reason=str(e))
         log.error("Run failed: %s", str(e))
         raise
 

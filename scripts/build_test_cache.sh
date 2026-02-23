@@ -16,7 +16,7 @@ fi
 
 for ds in $DATASETS; do
     sbatch --account=PAS3209 --partition=cpu \
-      --time=240 --mem=64G --cpus-per-task=8 \
+      --time=240 --mem=85G --cpus-per-task=8 \
       --job-name="test-cache-${ds}" \
       --output="$PROJECT_DIR/slurm_logs/%j-test-cache-${ds}.out" \
       --error="$PROJECT_DIR/slurm_logs/%j-test-cache-${ds}.err" \

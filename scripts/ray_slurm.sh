@@ -1,0 +1,82 @@
+#!/usr/bin/env bash
+#SBATCH --account=PAS3209
+#SBATCH --partition=gpu
+#SBATCH --gres=gpu:v100:1
+#SBATCH --nodes=1
+#SBATCH --ntasks=1
+#SBATCH --cpus-per-task=8
+#SBATCH --mem=85G
+#SBATCH --time=08:00:00
+#SBATCH --job-name=kd-gat-ray
+#SBATCH --output=slurm_logs/ray_%j.out
+#SBATCH --error=slurm_logs/ray_%j.err
+
+# Ray-based pipeline execution on SLURM.
+#
+# For single-node (default):
+#   sbatch scripts/ray_slurm.sh flow --dataset hcrl_sa
+#   sbatch scripts/ray_slurm.sh autoencoder --model vgae --scale large --dataset hcrl_sa
+#
+# For multi-node (pass extra #SBATCH --nodes=N):
+#   sbatch --nodes=2 scripts/ray_slurm.sh flow --dataset hcrl_sa
+#
+# The script uses `ray start` on single-node jobs and `ray symmetric-run`
+# for multi-node (Ray 2.49+).
+
+set -euo pipefail
+
+PROJECT_ROOT="/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT"
+cd "$PROJECT_ROOT"
+mkdir -p slurm_logs
+
+# --- Environment ---
+module load python/3.12
+source .venv/bin/activate
+
+# Source project env vars
+set -a
+source .env
+set +a
+
+# Stage data to fast storage
+source scripts/stage_data.sh --cache
+
+echo "=== Ray Pipeline ==="
+echo "Job ID:    ${SLURM_JOB_ID}"
+echo "Nodes:     ${SLURM_NNODES:-1}"
+echo "GPUs:      ${SLURM_GPUS_ON_NODE:-1}"
+echo "Python:    $(which python)"
+echo "Ray:       $(python -c 'import ray; print(ray.__version__)')"
+echo ""
+
+# --- Launch ---
+ENTRYPOINT_ARGS=("$@")
+
+if [[ "${SLURM_NNODES:-1}" -gt 1 ]]; then
+    # Multi-node: use ray symmetric-run (Ray 2.49+)
+    # Each node starts a Ray worker; the first node becomes the head.
+    ray symmetric-run \
+        --num-nodes="${SLURM_NNODES}" \
+        -- python -m pipeline.cli "${ENTRYPOINT_ARGS[@]}"
+else
+    # Single-node: start Ray locally, run entrypoint directly
+    python -m pipeline.cli "${ENTRYPOINT_ARGS[@]}"
+fi
+
+EXIT_CODE=$?
+
+# --- Post-job ---
+# Sync offline W&B runs
+if command -v wandb &>/dev/null; then
+    echo "Syncing offline W&B runs..."
+    wandb sync wandb/run-* 2>/dev/null || true
+fi
+
+# Report orphaned/failed runs (informational only)
+echo "Checking for orphaned runs..."
+bash scripts/cleanup_orphans.sh --dry-run || true
+
+# GPU utilization report
+source scripts/job_epilog.sh
+
+exit $EXIT_CODE

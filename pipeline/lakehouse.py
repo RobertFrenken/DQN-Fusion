@@ -1,14 +1,19 @@
-"""Sync structured experiment results to S3 lakehouse.
+"""Sync structured experiment results to local lakehouse + S3.
 
-Writes run metadata + metrics as JSON to S3, one file per run.
-Non-blocking, fire-and-forget — failures are logged but never crash
-the training pipeline.
+Writes run metadata + metrics as JSON, one file per run.
+Local write is primary (always succeeds on NFS); S3 is secondary
+(fire-and-forget). Failures are logged but never crash the training pipeline.
 
 Configuration:
+    KD_GAT_DATA_ROOT — local lakehouse root (see config.paths.lakehouse_dir)
     KD_GAT_S3_BUCKET — S3 bucket name (default: "kd-gat")
     AWS credentials via ~/.aws/credentials (standard boto3 chain)
 
 Downstream consumption:
+    # Local (no credentials needed):
+    duckdb -c "SELECT * FROM read_json('$KD_GAT_DATA_ROOT/lakehouse/runs/*.json')"
+
+    # S3:
     duckdb -c "SELECT * FROM read_json('s3://kd-gat/lakehouse/runs/*.json')"
 """
 from __future__ import annotations
@@ -18,10 +23,55 @@ import logging
 import os
 from datetime import datetime, timezone
 
+from config.paths import lakehouse_dir
+
 log = logging.getLogger(__name__)
 
 _S3_BUCKET = os.environ.get("KD_GAT_S3_BUCKET", "kd-gat")
 _LAKEHOUSE_PREFIX = "lakehouse/runs"
+
+
+def _write_local(payload: dict, run_id: str) -> bool:
+    """Write payload JSON to local lakehouse directory (fire-and-forget)."""
+    try:
+        dest = lakehouse_dir()
+        dest.mkdir(parents=True, exist_ok=True)
+        # Flatten run_id (may contain '/') to a safe filename
+        filename = run_id.replace("/", "_") + ".json"
+        (dest / filename).write_text(json.dumps(payload, default=str), encoding="utf-8")
+        log.info("Lakehouse local write OK: %s", dest / filename)
+        return True
+    except Exception as e:
+        log.warning("Lakehouse local write failed for %s: %s", run_id, e)
+        return False
+
+
+def _write_s3(payload: dict, run_id: str) -> bool:
+    """Write payload JSON to S3 lakehouse (fire-and-forget)."""
+    try:
+        import boto3
+        from botocore.exceptions import BotoCoreError, ClientError
+    except ImportError:
+        log.debug("boto3 not installed — S3 lakehouse sync skipped")
+        return False
+
+    try:
+        s3 = boto3.client("s3")
+        key = f"{_LAKEHOUSE_PREFIX}/{run_id}.json"
+        s3.put_object(
+            Bucket=_S3_BUCKET,
+            Key=key,
+            Body=json.dumps(payload, default=str),
+            ContentType="application/json",
+        )
+        log.info("Lakehouse S3 sync OK: s3://%s/%s", _S3_BUCKET, key)
+        return True
+    except (BotoCoreError, ClientError) as e:
+        log.warning("Lakehouse S3 sync failed for %s: %s", run_id, e)
+    except Exception as e:
+        log.warning("Lakehouse S3 sync error for %s: %s", run_id, e)
+
+    return False
 
 
 def sync_to_lakehouse(
@@ -33,8 +83,9 @@ def sync_to_lakehouse(
     has_kd: bool,
     metrics: dict | None = None,
     success: bool = True,
+    failure_reason: str | None = None,
 ) -> bool:
-    """Send run results to S3 lakehouse. Returns True on success.
+    """Send run results to local lakehouse + S3. Returns True if either succeeded.
 
     This function is intentionally fire-and-forget: it catches all
     exceptions and logs warnings instead of raising.  Training must
@@ -64,28 +115,13 @@ def sync_to_lakehouse(
         "timestamp": datetime.now(timezone.utc).isoformat(),
         **flat_metrics,
     }
+    if failure_reason is not None:
+        payload["failure_reason"] = failure_reason
 
-    try:
-        import boto3
-        from botocore.exceptions import BotoCoreError, ClientError
-    except ImportError:
-        log.debug("boto3 not installed — lakehouse sync skipped")
-        return False
+    # Local write first (always succeeds on NFS)
+    local_ok = _write_local(payload, run_id)
 
-    try:
-        s3 = boto3.client("s3")
-        key = f"{_LAKEHOUSE_PREFIX}/{run_id}.json"
-        s3.put_object(
-            Bucket=_S3_BUCKET,
-            Key=key,
-            Body=json.dumps(payload, default=str),
-            ContentType="application/json",
-        )
-        log.info("Lakehouse sync OK: s3://%s/%s", _S3_BUCKET, key)
-        return True
-    except (BotoCoreError, ClientError) as e:
-        log.warning("Lakehouse sync failed for %s: %s", run_id, e)
-    except Exception as e:
-        log.warning("Lakehouse sync error for %s: %s", run_id, e)
+    # S3 write second (fire-and-forget)
+    s3_ok = _write_s3(payload, run_id)
 
-    return False
+    return local_ok or s3_ok
