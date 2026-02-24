@@ -55,6 +55,11 @@ bash scripts/export_dashboard.sh --no-push    # Export + commit only
 bash scripts/export_dashboard.sh --dry-run    # Export only (no git)
 sbatch scripts/export_dashboard_slurm.sh      # Heavy exports via SLURM (cpu partition, 16GB)
 
+# Build analytics DuckDB (materialized view over all experiment data)
+python -m pipeline.build_analytics              # Full rebuild (~1s)
+python -m pipeline.build_analytics --dry-run    # Show what would be built
+duckdb data/lakehouse/analytics.duckdb          # Interactive queries
+
 # Run tests — ALWAYS submit to SLURM, never on login node
 bash scripts/run_tests_slurm.sh                         # all tests
 bash scripts/run_tests_slurm.sh -k "test_full_pipeline"  # specific test
@@ -282,9 +287,10 @@ Mode context files live in `.claude/system/modes/`. Switching modes loads the re
 
 ## Experiment Tracking
 
-Tracking uses W&B + S3 lakehouse:
+Tracking uses W&B + S3 lakehouse + analytics DuckDB:
 - **W&B**: `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle. Lightning's `WandbLogger` attaches to the active run for per-epoch metrics. Compute nodes auto-set `WANDB_MODE=offline`; sync offline runs via `wandb sync wandb/run-*`.
-- **S3 Lakehouse**: `pipeline/lakehouse.py` writes structured metrics as JSON to `s3://kd-gat/lakehouse/runs/{run_id}.json` via boto3 (fire-and-forget). Uses `KD_GAT_S3_BUCKET` env var (default: `kd-gat`). Queryable via DuckDB: `SELECT * FROM read_json('s3://kd-gat/lakehouse/runs/*.json')`.
+- **Local Lakehouse**: `pipeline/lakehouse.py` writes per-run JSON to `data/lakehouse/runs/` (NFS, canonical). S3 sync is fire-and-forget backup to `s3://kd-gat/lakehouse/runs/`. NFS wins if they disagree.
+- **Analytics DuckDB**: `pipeline/build_analytics.py` materializes `data/lakehouse/analytics.duckdb` from lakehouse JSON + `experimentruns/` filesystem. Tables: `runs`, `metrics`, `datasets`, `configs`. Replaces `data/project.db` (deprecated).
 - **Artifacts**: Evaluation stage captures `embeddings.npz` (VGAE z-mean + GAT hidden layers), `dqn_policy.json` (alpha values by class), and optionally `explanations.npz` (GNNExplainer feature importance when `run_explainer=True`) — stored in run directories.
 - **Dashboard**: `python -m pipeline.export` scans `experimentruns/` filesystem to generate static JSON (leaderboard, metrics, training curves, KD transfer, datasets, runs, graph_samples, model_sizes, embeddings, dqn_policy, explanations); `scripts/export_dashboard.sh` commits + pushes to GitHub Pages + syncs to S3 + DVC push.
 
