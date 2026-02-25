@@ -130,7 +130,7 @@ docs/dashboard/     # GitHub Pages D3.js dashboard (ES modules, config-driven pa
   js/app.js         # Slim entry point
   data/             # Static JSON exports from pipeline
 docs-site/          # Astro 5 + Svelte 5 interactive research paper site
-  src/components/   # D3Chart.svelte (generic, all chart types), FigureIsland.astro, D3Scatter.svelte (legacy)
+  src/components/   # D3Chart.svelte (generic D3), PlotFigure.svelte (Observable Plot), FigureIsland.astro, D3Scatter.svelte (legacy)
   src/components/figures/  # Interactive figure islands (EmbeddingsFigure, TrainingCurvesFigure, RocCurvesFigure)
   src/config/       # figures.ts (paper figure registry), shared.ts (ChartType, LayoutWidth)
   src/content.config.ts  # Astro Content Collections (Zod schemas for catalog JSON)
@@ -139,11 +139,14 @@ docs-site/          # Astro 5 + Svelte 5 interactive research paper site
   src/lib/d3/       # All 11 D3 chart classes + BaseChart + Theme + ThemeLight
   src/lib/data.ts   # Typed fetch helpers for per-run data (envelope unwrapping)
   src/lib/resource.svelte.ts  # Reactive fetch-on-state-change for Svelte 5
-  src/pages/        # index.astro, test-figure.mdx, showcase.astro
+  src/pages/        # index.astro, showcase.astro, test-figure.mdx
   scripts/sync-data.sh  # Sync dashboard data → src/data/ + public/data/ symlink
   public/data/      # Symlink → docs/dashboard/data/ (runtime fetch for per-run data)
   astro.config.mjs  # Astro config (svelte + mdx + remark-math + rehype-katex)
-  package.json      # Node.js dependencies (astro, svelte, d3, remark-math, rehype-katex)
+  package.json      # Node.js dependencies (astro, svelte, d3, @observablehq/plot, remark-math, rehype-katex)
+notebooks/          # Deno Jupyter notebooks for prototyping plots
+  deno.json         # Deno config (imports: @observablehq/plot, d3, canvas)
+  deno_plot_template.ipynb  # Observable Plot prototyping template
 ```
 
 ## Config System
@@ -194,7 +197,7 @@ These fix real crashes -- do not violate:
 - Orchestration: Ray (`pipeline/orchestration/`) with `@ray.remote` tasks. `train_pipeline()` fans out per-dataset work concurrently via `dataset_pipeline` remote functions; `eval_pipeline()` re-runs evaluation only. Each stage task dispatches via subprocess for clean CUDA context. `--local` flag uses Ray local mode. HPO via Ray Tune with OptunaSearch + ASHAScheduler.
 - Archive restore: `cli.py` archives previous runs before re-running, and restores the archive if the new run fails.
 - Inference serving: `pipeline/serve.py` provides FastAPI endpoints (`/predict`, `/health`) loading VGAE+GAT+DQN from `experimentruns/`.
-- **Docs site (Astro + Svelte)**: Astro 5 static site with Svelte 5 islands for interactive figures. Architecture: `figures.ts` registry → `FigureIsland.astro` (layout/caption) → `D3Chart.svelte` (generic, `import.meta.glob` registry) → `BaseChart` → chart class. All 11 D3 chart types adapted with `import * as d3 from 'd3'`. Hybrid data pipeline: Content Collections with Zod schemas for catalog data (build-time), client-side fetch for per-run data (runtime). CSS Grid layout (Distill-inspired: `.l-body`/`.l-wide`/`.l-full`/`.l-margin`). KaTeX for math (server-side via remark-math + rehype-katex). Interactive figures (embeddings, training curves, ROC) use Svelte 5 runes for state + `resource.svelte.ts` for reactive fetch. Run `scripts/sync-data.sh` after `pipeline/export.py` to update site data. Deploy target TBD (Cloudflare Pages).
+- **Docs site (Astro + Svelte)**: Astro 5 static site with Svelte 5 islands for interactive figures. Dual renderer architecture: `figures.ts` registry (with `renderer: 'plot' | 'd3'` per figure) → `FigureIsland.astro` (layout/caption) → either `PlotFigure.svelte` (Observable Plot) or `D3Chart.svelte` (D3, `import.meta.glob` registry → `BaseChart` → chart class). All 11 D3 chart types adapted with `import * as d3 from 'd3'`. Hybrid data pipeline: Content Collections with Zod schemas for catalog data (build-time), client-side fetch for per-run data (runtime). CSS Grid layout (Distill-inspired: `.l-body`/`.l-wide`/`.l-full`/`.l-margin`). KaTeX for math (server-side via remark-math + rehype-katex). Interactive figures (embeddings, training curves, ROC) use Svelte 5 runes for state + `resource.svelte.ts` for reactive fetch. Deno Jupyter notebooks (`notebooks/deno_plot_template.ipynb`) for prototyping Observable Plot figures. Run `scripts/sync-data.sh` after `pipeline/export.py` to update site data. Deploy target TBD (Cloudflare Pages).
 - Dashboard: Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types inherit from it. `PanelManager` reads config → builds nav + panels + controls → lazy-loads data → renders. All chart types registered in `Registry`.
 - Dashboard data: `export.py` scans `experimentruns/` filesystem for `config.json` and `metrics.json` files. No database dependency. Artifacts (`embeddings.npz`, `dqn_policy.json`, etc.) are read directly from run directories. `--skip-heavy` runs light exports (~2s, safe on login node); `--only-heavy` runs CPU-intensive exports (UMAP, attention, graph samples) via SLURM. Dashboard JS fetches from `s3://kd-gat/dashboard/` with `data/` fallback for local dev.
 - Dataset catalog: `config/datasets.yaml` — single place to register new datasets.
@@ -283,24 +286,10 @@ PyTorch version ←→ PyG extension wheels (torch-scatter, torch-sparse, torch-
 - **`[tool.uv] find-links`** for PyG: Use `[[tool.uv.index]]` with `format = "flat"` and `explicit = true` instead. `find-links` doesn't support the `explicit` flag, so non-PyG packages may accidentally resolve from the flat index.
 - **OSC CUDA modules** (cuda/12.6, cudnn/8.x): Not needed when torch comes from PyPI (nvidia-* pip packages bundle everything). Only load modules for RAPIDS or custom CUDA code.
 
-## Session Modes
-
-Switch Claude's focus with `/set-mode <mode>`:
-
-| Mode | Focus | Suppressed |
-|------|-------|------------|
-| `mlops` | Pipeline, Ray, SLURM, W&B, config, debugging | Research, writing |
-| `research` | OOD generalization, JumpReLU, cascading KD, literature | Pipeline ops, config |
-| `writing` | Paper drafting, documentation, results | Code changes, pipeline |
-| `data` | Ingestion, preprocessing, validation, cache | Research, writing |
-
-Mode context files live in `.claude/system/modes/`. Switching modes loads the relevant context into the conversation.
-
 ## Skills
 
 | Skill | Usage | Description |
 |-------|-------|-------------|
-| `/set-mode` | `/set-mode mlops` | Switch session focus mode |
 | `/run-pipeline` | `/run-pipeline hcrl_sa large` | Submit Ray pipeline to SLURM |
 | `/check-status` | `/check-status hcrl_sa` | Check SLURM queue, checkpoints, W&B |
 | `/run-tests` | `/run-tests` or `/run-tests test_config` | Run pytest suite |
@@ -363,6 +352,5 @@ This project interacts with two other repos. Changes in one may require updates 
 - `.claude/system/PROJECT_OVERVIEW.md` -- Full architecture, models, memory optimization
 - `.claude/system/CONVENTIONS.md` -- Code style, iteration hygiene, git rules
 - `.claude/system/STATE.md` -- Current session state (updated each session)
-- `.claude/system/modes/` -- Mode-specific context files (mlops, research, writing, data)
 - `docs/user_guides/` -- Terminal setup, pipeline guides
 - `docs/dashboard/` -- D3.js dashboard (GitHub Pages)

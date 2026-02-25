@@ -1,6 +1,6 @@
 # Current State
 
-**Date**: 2026-02-23
+**Date**: 2026-02-24
 **Branch**: `main`
 
 ## Ecosystem Status
@@ -34,7 +34,7 @@
 
 | Component | Impact |
 |-----------|--------|
-| **CI/CD** | No automated testing or deployment. GitHub Actions needed. |
+| **CI/CD** | GitHub Actions CI added (docs-site-build job). No automated testing or full deployment yet. |
 | **gnn-rapids conda env** | Setup script exists but env not yet created. Run `bash scripts/setup_rapids_env.sh` on a GPU node. |
 | **RAPIDS Phase 2** | Vectorized `safe_hex_to_int()` (currently falls back to CPU under cudf.pandas due to `.apply()` with Python control flow). |
 
@@ -75,6 +75,11 @@ All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
 
 ## Recently Completed
 
+- **Docs-site Observable Plot** (2026-02-24):
+  - PlotFigure.svelte with dual renderer architecture (`renderer: 'plot' | 'd3'` in figure registry)
+  - Deno Jupyter notebook workflow (`notebooks/deno_plot_template.ipynb`) for prototyping plots
+  - Showcase page (`src/pages/showcase.astro`), site now 3 pages (index, showcase, test-figure)
+  - Build: 7.13s, `docs-site/dist/` is a build artifact (~288 MB, in `.gitignore`, do not commit)
 - **Phase 5: Advanced Enhancements** (2026-02-23):
   - 5.1 GNNExplainer integration (`src/explain.py`, evaluation wiring, export, dashboard panel)
   - 5.4 Trial-based batch size auto-tuning (binary search in `pipeline/memory.py`)
