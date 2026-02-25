@@ -1,7 +1,7 @@
 ---
 /**
  * FigureIsland: Resolves a figure from the registry, applies layout width,
- * and renders a D3Chart island with caption.
+ * and renders either a PlotFigure or D3Chart island with caption.
  *
  * Usage in MDX:
  *   <FigureIsland figureId="fig-kd-transfer" data={myData} />
@@ -11,6 +11,7 @@
  */
 import { getFigure } from '../config/figures';
 import D3Chart from './D3Chart.svelte';
+import PlotFigure from './PlotFigure.svelte';
 
 interface Props {
   figureId: string;
@@ -24,17 +25,28 @@ const fig = getFigure(figureId);
 const mergedOptions = { ...fig.defaultOptions, ...options };
 const layoutClass = `l-${fig.layout}`;
 const chartHeight = height ?? (fig.defaultOptions.height as number | undefined) ?? 400;
+const usePlot = fig.renderer === 'plot';
 ---
 
 <div class={layoutClass}>
   <figure>
-    <D3Chart
-      client:only="svelte"
-      chartType={fig.chartType}
-      data={data}
-      options={mergedOptions}
-      height={chartHeight}
-    />
+    {usePlot ? (
+      <PlotFigure
+        client:only="svelte"
+        data={data}
+        marks={fig.plotMarks ?? []}
+        options={fig.plotOptions ?? {}}
+        height={chartHeight}
+      />
+    ) : (
+      <D3Chart
+        client:only="svelte"
+        chartType={fig.chartType}
+        data={data}
+        options={mergedOptions}
+        height={chartHeight}
+      />
+    )}
     <figcaption>
       <strong>Figure {fig.number}.</strong> {fig.caption}
     </figcaption>

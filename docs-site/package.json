@@ -11,6 +11,7 @@
   "dependencies": {
     "@astrojs/mdx": "^4.0",
     "@astrojs/svelte": "^7.0",
+    "@observablehq/plot": "^0.6.17",
     "astro": "^5.3",
     "d3": "^7.9",
     "rehype-katex": "^7.0.1",

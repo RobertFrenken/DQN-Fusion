@@ -96,3 +96,7 @@ docs/dashboard/data/**/*.json
 docs-site/node_modules/
 docs-site/dist/
 docs-site/.astro/
+
+# ===== DENO NOTEBOOKS =====
+notebooks/node_modules/
+notebooks/deno.lock

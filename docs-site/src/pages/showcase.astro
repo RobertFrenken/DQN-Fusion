@@ -1,6 +1,7 @@
 ---
 import ArticleLayout from '../layouts/ArticleLayout.astro';
 import FigureIsland from '../components/FigureIsland.astro';
+import PlotFigure from '../components/PlotFigure.svelte';
 import D3Chart from '../components/D3Chart.svelte';
 import EmbeddingsFigure from '../components/figures/EmbeddingsFigure.svelte';
 import TrainingCurvesFigure from '../components/figures/TrainingCurvesFigure.svelte';
@@ -16,6 +17,11 @@ const kdTransferData = kdTransferEntries
 
 const modelSizesEntries = await getCollection('modelSizes');
 const modelSizesData = modelSizesEntries.map(e => e.data);
+
+const leaderboardEntries = await getCollection('leaderboard');
+const leaderboardData = leaderboardEntries
+  .filter(e => e.data.metric_name === 'f1')
+  .map(e => e.data);
 ---
 
 <ArticleLayout title="Figure Showcase — KD-GAT">
@@ -32,6 +38,7 @@ const modelSizesData = modelSizesEntries.map(e => e.data);
         <tr>
           <th>#</th>
           <th>ID</th>
+          <th>Renderer</th>
           <th>Chart Type</th>
           <th>Layout</th>
           <th>Data Source</th>
@@ -43,6 +50,11 @@ const modelSizesData = modelSizesEntries.map(e => e.data);
           <tr>
             <td>{fig.number}</td>
             <td><code>{fig.id}</code></td>
+            <td>
+              <span class={`badge ${fig.renderer === 'plot' ? 'badge-purple' : 'badge-orange'}`}>
+                {fig.renderer}
+              </span>
+            </td>
             <td>{fig.chartType}</td>
             <td><code>.l-{fig.layout}</code></td>
             <td>
@@ -62,14 +74,53 @@ const modelSizesData = modelSizesEntries.map(e => e.data);
 
   <hr />
 
-  <!-- Static figures (from content collections) -->
-  <h2>Static Figures</h2>
+  <!-- Observable Plot figures (declarative, one-liner) -->
+  <h2>Observable Plot Figures</h2>
+  <p>
+    These figures use <a href="https://observablehq.com/plot/">Observable Plot</a> —
+    declarative, one-liner charts instead of imperative D3 classes.
+    Each mark config is ~5 lines of JSON in the figure registry.
+  </p>
 
   <FigureIsland figureId="fig-kd-transfer" data={kdTransferData} height={420} />
 
   <FigureIsland figureId="fig-model-sizes" data={modelSizesData} height={350} />
 
-  <!-- Runtime-fetched figure (graph structure) -->
+  <!-- Extra Plot demo: leaderboard dot plot (not a registered figure, just showing flexibility) -->
+  <div class="l-wide">
+    <figure>
+      <PlotFigure
+        client:only="svelte"
+        data={leaderboardData}
+        marks={[
+          { type: 'dot', x: 'best_value', y: 'dataset', fill: 'model_type', tip: true, r: 5 },
+          { type: 'ruleX', data: [0.5], stroke: '#ccc', strokeDasharray: '4,4' },
+        ]}
+        options={{
+          grid: true,
+          x: { label: 'F1 Score', domain: [0, 1] },
+          y: { label: 'Dataset' },
+          color: { legend: true },
+          marginLeft: 80,
+        }}
+        height={300}
+      />
+      <figcaption>
+        <strong>Bonus.</strong> Leaderboard F1 scores by dataset and model type.
+        This chart is a one-liner Observable Plot call — no D3 class needed.
+      </figcaption>
+    </figure>
+  </div>
+
+  <hr />
+
+  <!-- D3 figures (force graph) -->
+  <h2>D3 Figures</h2>
+  <p>
+    Complex visualizations that need low-level control (force-directed graphs,
+    custom animations) still use the D3 chart classes.
+  </p>
+
   <div class="l-wide">
     <figure>
       <D3Chart
@@ -169,5 +220,15 @@ const modelSizesData = modelSizesEntries.map(e => e.data);
   .badge-gray {
     background: #f1f5f9;
     color: #475569;
+  }
+
+  .badge-purple {
+    background: #f3e8ff;
+    color: #6b21a8;
+  }
+
+  .badge-orange {
+    background: #fff7ed;
+    color: #c2410c;
   }
 </style>
