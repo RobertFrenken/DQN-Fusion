@@ -27,7 +27,21 @@ Enforced by `tests/test_layer_boundaries.py`:
 - **Subprocess dispatch**: Each stage runs as `subprocess.run()` for clean CUDA context. Overhead (~3-5s) is negligible vs training time (minutes-hours). CUDA contexts (~300-500 MB) are not reclaimable without process restart.
 - **Per-stage granularity**: Finer (per-epoch) has massive scheduling overhead; coarser (per-variant) loses ability to re-run single stages.
 - **Checkpoint passing**: Filesystem paths, not Ray object store (subprocesses can't access object store; checkpoints are small; path-based is debuggable).
+- **Concurrent variants**: `small_nokd_pipeline` launches concurrently with `large_pipeline` (no teacher checkpoint dependency). On single-GPU, Ray serializes GPU tasks automatically; on multi-GPU, enables true parallelism.
+- **No Ray Data**: Datasets fit in memory and PyG's heterogeneous graph `Data` objects are incompatible with Ray Data's Arrow-based tabular format.
 - Archive restore: `cli.py` archives previous runs before re-running, restores on failure.
+- **Benchmark mode**: Set `KD_GAT_BENCHMARK=1` to log per-stage spawn overhead, execution time, inter-stage gaps, and GPU utilization to JSONL. See `scripts/benchmark_orchestration.sh`.
+
+### Orchestration Design Rationale (2026-02-25)
+
+The subprocess-per-stage dispatch pattern is intentional, not legacy debt. It was evaluated against five alternatives and kept for these reasons:
+
+1. **CUDA context isolation** — Each stage gets a fresh CUDA context. In-process execution accumulates 300-500 MB of unreclaimable GPU memory per model, losing ~1.5 GB across a full pipeline. Subprocess overhead (~3-5s) is <0.1% of typical pipeline wall time.
+2. **Fault isolation** — A segfault in one stage doesn't crash the Ray orchestrator or other in-flight tasks.
+3. **Stage-level restartability** — Each stage produces a filesystem checkpoint. Failed stages can be re-run individually without replaying the entire variant.
+4. **Debuggability** — Filesystem checkpoint paths are inspectable, copyable, and survive Ray restarts. Object store references are ephemeral.
+
+Full decision document: `~/plans/orchestration-redesign-decision.md`
 
 ## Inference Serving
 
@@ -37,7 +51,7 @@ Enforced by `tests/test_layer_boundaries.py`:
 
 Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types. `PanelManager` reads config → builds nav + panels + controls. All chart types registered in `Registry`.
 
-Dashboard data: `export.py` scans `experimentruns/` filesystem. `--skip-heavy` runs light exports (~2s, login node safe). Dashboard JS fetches from `s3://kd-gat/dashboard/` with `data/` fallback.
+Dashboard data: `export.py` exports leaderboard, runs, metrics, training curves, datasets, KD transfer, and model sizes (~2s, login node safe). Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/`. Dashboard JS fetches from `s3://kd-gat/dashboard/` with `data/` fallback.
 
 ## General Principles
 

@@ -93,10 +93,10 @@ docs/dashboard/data/**/*.json
 *.pdf
 *.svg
 
-# ===== DOCS SITE (ASTRO) =====
-docs-site/node_modules/
-docs-site/dist/
-docs-site/.astro/
+# ===== QUARTO REPORTS =====
+reports/_site/
+reports/_output/
+reports/.quarto/
 
 # ===== DENO NOTEBOOKS =====
 notebooks/node_modules/

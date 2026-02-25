@@ -1,14 +1,8 @@
-"""Sync structured experiment results to datalake (Parquet) + S3 (JSON backup).
+"""Sync structured experiment results to datalake (Parquet).
 
-Primary write: append to data/datalake/*.parquet via DuckDB INSERT INTO.
-Secondary write: JSON to S3 (fire-and-forget backup, will be deprecated).
+Write path: append to data/datalake/*.parquet via DuckDB INSERT INTO.
 
 Failures are logged but never crash the training pipeline.
-
-Configuration:
-    KD_GAT_DATA_ROOT — local data root (see config.paths)
-    KD_GAT_S3_BUCKET — S3 bucket name (default: "kd-gat")
-    AWS credentials via ~/.aws/credentials (standard boto3 chain)
 
 Downstream consumption:
     duckdb -c "SELECT * FROM 'data/datalake/runs.parquet'"
@@ -16,18 +10,12 @@ Downstream consumption:
 """
 from __future__ import annotations
 
-import json
 import logging
-import os
 from datetime import datetime, timezone
 from pathlib import Path
 
-from config.paths import lakehouse_dir
-
 log = logging.getLogger(__name__)
 
-_S3_BUCKET = os.environ.get("KD_GAT_S3_BUCKET", "kd-gat")
-_LAKEHOUSE_PREFIX = "lakehouse/runs"
 _DATALAKE_ROOT = Path("data/datalake")
 
 # Core metrics to extract from nested metrics.json
@@ -154,52 +142,6 @@ def register_artifacts(run_id: str, run_dir: Path) -> bool:
 
 
 # ---------------------------------------------------------------------------
-# Legacy JSON writes (S3 backup — will be deprecated)
-# ---------------------------------------------------------------------------
-
-def _write_local_json(payload: dict, run_id: str) -> bool:
-    """Write payload JSON to local lakehouse directory (fire-and-forget)."""
-    try:
-        dest = lakehouse_dir()
-        dest.mkdir(parents=True, exist_ok=True)
-        filename = run_id.replace("/", "_") + ".json"
-        (dest / filename).write_text(json.dumps(payload, default=str), encoding="utf-8")
-        log.info("Lakehouse local JSON write OK: %s", dest / filename)
-        return True
-    except Exception as e:
-        log.warning("Lakehouse local JSON write failed for %s: %s", run_id, e)
-        return False
-
-
-def _write_s3(payload: dict, run_id: str) -> bool:
-    """Write payload JSON to S3 lakehouse (fire-and-forget)."""
-    try:
-        import boto3
-        from botocore.exceptions import BotoCoreError, ClientError
-    except ImportError:
-        log.debug("boto3 not installed — S3 lakehouse sync skipped")
-        return False
-
-    try:
-        s3 = boto3.client("s3")
-        key = f"{_LAKEHOUSE_PREFIX}/{run_id}.json"
-        s3.put_object(
-            Bucket=_S3_BUCKET,
-            Key=key,
-            Body=json.dumps(payload, default=str),
-            ContentType="application/json",
-        )
-        log.info("Lakehouse S3 sync OK: s3://%s/%s", _S3_BUCKET, key)
-        return True
-    except (BotoCoreError, ClientError) as e:
-        log.warning("Lakehouse S3 sync failed for %s: %s", run_id, e)
-    except Exception as e:
-        log.warning("Lakehouse S3 sync error for %s: %s", run_id, e)
-
-    return False
-
-
-# ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
@@ -214,49 +156,13 @@ def sync_to_lakehouse(
     success: bool = True,
     failure_reason: str | None = None,
 ) -> bool:
-    """Send run results to datalake (Parquet) + S3 (JSON). Returns True if any succeeded.
+    """Append run results to datalake (Parquet). Returns True on success.
 
     This function is intentionally fire-and-forget: it catches all
     exceptions and logs warnings instead of raising.  Training must
     never fail because of a lakehouse sync issue.
     """
-    # Flatten core metrics for legacy JSON payload
-    flat_metrics: dict[str, float] = {}
-    if metrics:
-        for model_key, model_data in metrics.items():
-            if model_key == "test":
-                continue
-            if isinstance(model_data, dict) and "core" in model_data:
-                for k, v in model_data["core"].items():
-                    if isinstance(v, (int, float)):
-                        flat_metrics[f"{model_key}_{k}"] = v
-            elif isinstance(model_data, (int, float)):
-                flat_metrics[model_key] = model_data
-
-    payload = {
-        "run_id": run_id,
-        "dataset": dataset,
-        "model_type": model_type,
-        "scale": scale,
-        "stage": stage,
-        "has_kd": has_kd,
-        "success": success,
-        "timestamp": datetime.now(timezone.utc).isoformat(),
-        **flat_metrics,
-    }
-    if failure_reason is not None:
-        payload["failure_reason"] = failure_reason
-
-    # Primary: Parquet datalake
-    parquet_ok = _append_to_datalake(
+    return _append_to_datalake(
         run_id, dataset, model_type, scale, stage, has_kd,
         metrics, success, failure_reason,
     )
-
-    # Secondary: local JSON (legacy)
-    local_ok = _write_local_json(payload, run_id)
-
-    # Tertiary: S3 JSON (fire-and-forget backup)
-    s3_ok = _write_s3(payload, run_id)
-
-    return parquet_ok or local_ok or s3_ok

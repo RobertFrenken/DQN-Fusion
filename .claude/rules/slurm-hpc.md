@@ -2,8 +2,8 @@
 
 ## Environment
 
-- **Cluster**: OSC (Ohio Supercomputer Center), RHEL 9, SLURM
-- **GPU**: V100 (account PAS3209, gpu partition)
+- **Cluster**: OSC Pitzer (Ohio Supercomputer Center), RHEL 9, SLURM
+- **GPU**: 2x V100 per node, ~362 GB RAM (account PAS3209, gpu partition)
 - **Python**: 3.12 via `module load python/3.12`, uv venv `.venv/`
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
@@ -21,7 +21,7 @@
 
 **Safe on login node:**
 - Import checks: `python -c "from module import func; print('OK')"`
-- Light exports: `python -m pipeline.export --skip-heavy`
+- Exports: `python -m pipeline.export`
 - DuckDB rebuild: `python -m pipeline.build_analytics`
 - Node.js: `npm install`, `npm run build`
 - Git, DVC, W&B sync, ruff
@@ -29,5 +29,4 @@
 **Must go through SLURM:**
 - `python -m pipeline.cli <any stage>` — all training/evaluation
 - `python -m pytest` — test suite
-- `python -m pipeline.export --only-heavy` — UMAP, attention, graph samples
 - Any script that imports and runs models

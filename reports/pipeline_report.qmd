@@ -2,6 +2,8 @@
 title: "KD-GAT Pipeline Report"
 author: "Auto-generated"
 date: today
+execute:
+  enabled: false
 format:
   html:
     code-fold: true

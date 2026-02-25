@@ -66,6 +66,13 @@ fi
 EXIT_CODE=$?
 
 # --- Post-job ---
+# Sync datalake Parquet to S3 (backup)
+if [[ -d data/datalake ]] && command -v aws &>/dev/null; then
+    echo "Syncing datalake to S3..."
+    aws s3 sync data/datalake/ "s3://${KD_GAT_S3_BUCKET:-kd-gat}/datalake/" \
+        --exclude "analytics.duckdb" 2>/dev/null || true
+fi
+
 # Sync offline W&B runs
 if command -v wandb &>/dev/null; then
     echo "Syncing offline W&B runs..."

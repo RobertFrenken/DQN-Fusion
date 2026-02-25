@@ -1,0 +1,445 @@
+---
+title: "KD-GAT Experiment Dashboard"
+format:
+  dashboard:
+    orientation: rows
+    theme:
+      - cosmo
+      - custom.scss
+    nav-buttons: [github]
+---
+
+```{ojs}
+//| output: false
+
+// --- Mosaic vgplot + DuckDB-WASM init ---
+vg = {
+  const mod = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.11.1/+esm");
+  await mod.coordinator().databaseConnector(mod.wasmConnector());
+  return mod;
+}
+
+// --- Load all Parquet tables ---
+async function loadTable(name, attachment) {
+  const url = await attachment.url();
+  await vg.coordinator().exec(vg.loadParquet(name, url));
+}
+
+await loadTable("metrics", FileAttachment("data/metrics.parquet"));
+await loadTable("runs", FileAttachment("data/runs.parquet"));
+await loadTable("training_curves", FileAttachment("data/training_curves.parquet"));
+await loadTable("recon_errors", FileAttachment("data/recon_errors.parquet"));
+await loadTable("attention_weights", FileAttachment("data/attention_weights.parquet"));
+await loadTable("dqn_policy", FileAttachment("data/dqn_policy.parquet"));
+await loadTable("cka_similarity", FileAttachment("data/cka_similarity.parquet"));
+await loadTable("embeddings", FileAttachment("data/embeddings.parquet"));
+
+// --- Static JSON data ---
+datasets_json = FileAttachment("data/datasets.json").json()
+kd_transfer_json = FileAttachment("data/kd_transfer.json").json()
+model_sizes_json = FileAttachment("data/model_sizes.json").json()
+```
+
+# Overview
+
+## Row {height=35%}
+
+```{ojs}
+//| title: "F1 Scores by Dataset and Model"
+vg.plot(
+  vg.dot(
+    vg.from("metrics"),
+    {
+      x: vg.sql`split_part(run_id, '/', 1)`,
+      y: "f1",
+      fill: "model",
+      r: 7,
+      opacity: 0.8
+    }
+  ),
+  {
+    width: 680,
+    height: 260,
+    color: { legend: true, domain: ["gat", "vgae", "fusion"], range: ["#3fb950", "#58a6ff", "#bc8cff"] },
+    x: { label: "Dataset", tickRotate: -30 },
+    y: { label: "F1 Score", domain: [0.5, 1.01] },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+```{ojs}
+//| title: "Model Parameter Counts"
+{
+  const data = model_sizes_json.data;
+  return Plot.plot({
+    width: 400,
+    height: 260,
+    marginLeft: 80,
+    x: { label: "Parameters (millions)" },
+    y: { label: null },
+    color: { legend: true, domain: ["large", "small"], range: ["#58a6ff", "#79c0ff"] },
+    marks: [
+      Plot.barX(data, {
+        y: d => `${d.model_type} (${d.scale})`,
+        x: "param_count_M",
+        fill: "scale",
+        sort: { y: "-x" }
+      }),
+      Plot.text(data, {
+        y: d => `${d.model_type} (${d.scale})`,
+        x: "param_count_M",
+        text: d => `${d.param_count_M}M`,
+        dx: 5,
+        textAnchor: "start",
+        fontSize: 11
+      }),
+      Plot.ruleX([0])
+    ]
+  });
+}
+```
+
+## Row {height=65%}
+
+```{ojs}
+//| title: "Training Curves"
+
+viewof selectedRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM training_curves ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.lineY(
+    vg.from("training_curves", {
+      filterBy: vg.sql`run_id = '${selectedRun}'`
+    }),
+    { x: "epoch", y: "value", stroke: "metric_name" }
+  ),
+  {
+    width: 680,
+    height: 350,
+    color: { legend: true },
+    x: { label: "Epoch" },
+    y: { label: "Value" },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+```{ojs}
+//| title: "VGAE Reconstruction Errors"
+
+viewof selectedReconRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM recon_errors ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.rectY(
+    vg.from("recon_errors", {
+      filterBy: vg.sql`run_id = '${selectedReconRun}'`
+    }),
+    vg.binX({ y: "count" }, { x: "error", fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END` })
+  ),
+  {
+    width: 680,
+    height: 350,
+    color: { legend: true, domain: ["normal", "attack"], range: ["#3fb950", "#f85149"] },
+    x: { label: "Reconstruction Error" },
+    y: { label: "Count" },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+# GAT & DQN
+
+## Row {height=50%}
+
+```{ojs}
+//| title: "GAT Attention Weights by Layer"
+
+viewof selectedAttRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM attention_weights ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.cell(
+    vg.from("attention_weights", {
+      filterBy: vg.sql`run_id = '${selectedAttRun}'`
+    }),
+    {
+      x: vg.sql`'Head ' || head`,
+      y: vg.sql`'Layer ' || layer`,
+      fill: "mean_alpha",
+      inset: 0.5
+    }
+  ),
+  {
+    width: 500,
+    height: 280,
+    color: { scheme: "blues", legend: true, label: "Mean Attention" },
+    x: { label: "Attention Head" },
+    y: { label: "GAT Layer" },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+```{ojs}
+//| title: "DQN Fusion Policy (Alpha Distribution)"
+
+viewof selectedPolicyRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM dqn_policy ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.rectY(
+    vg.from("dqn_policy", {
+      filterBy: vg.sql`run_id = '${selectedPolicyRun}'`
+    }),
+    vg.binX({ y: "count" }, { x: "alpha" })
+  ),
+  {
+    width: 500,
+    height: 280,
+    color: { scheme: "oranges" },
+    x: { label: "Alpha (GAT weight in fusion)" },
+    y: { label: "Count" },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+## Row {height=50%}
+
+```{ojs}
+//| title: "F1 vs AUC by Model"
+vg.plot(
+  vg.dot(
+    vg.from("metrics"),
+    {
+      x: "auc",
+      y: "f1",
+      fill: "model",
+      stroke: "model",
+      r: 6,
+      opacity: 0.7
+    }
+  ),
+  {
+    width: 500,
+    height: 320,
+    color: { legend: true, domain: ["gat", "vgae", "fusion"], range: ["#3fb950", "#58a6ff", "#bc8cff"] },
+    x: { label: "AUC", domain: [0.8, 1.01] },
+    y: { label: "F1 Score", domain: [0.5, 1.01] },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+```{ojs}
+//| title: "Runs by Dataset"
+{
+  const result = await vg.coordinator().query(
+    vg.sql`
+      SELECT split_part(run_id, '/', 1) AS dataset,
+             model_type,
+             COUNT(*) AS n
+      FROM runs
+      GROUP BY 1, 2
+      ORDER BY 1, 2
+    `
+  );
+  const data = Array.from(result);
+  return Plot.plot({
+    width: 500,
+    height: 320,
+    marginLeft: 60,
+    x: { label: "Number of Runs" },
+    y: { label: null },
+    color: { legend: true, domain: ["vgae", "gat", "dqn", "eval"], range: ["#58a6ff", "#3fb950", "#d29922", "#bc8cff"] },
+    marks: [
+      Plot.barX(data, Plot.stackX({
+        y: "dataset",
+        x: "n",
+        fill: "model_type",
+        sort: { y: "-x" }
+      })),
+      Plot.ruleX([0])
+    ]
+  });
+}
+```
+
+# Knowledge Distillation
+
+## Row {height=50%}
+
+```{ojs}
+//| title: "KD Transfer: Teacher vs Student F1"
+{
+  const data = kd_transfer_json.data.filter(d => d.metric_name === "f1");
+  return Plot.plot({
+    width: 600,
+    height: 320,
+    x: { label: "Teacher F1 (Large)", domain: [0.5, 1.01] },
+    y: { label: "Student F1 (Small + KD)", domain: [0.5, 1.01] },
+    color: { legend: true },
+    marks: [
+      Plot.line([[0.5, 0.5], [1, 1]], { stroke: "#8b949e", strokeDasharray: "4,4", strokeWidth: 1 }),
+      Plot.dot(data, {
+        x: "teacher_value",
+        y: "student_value",
+        fill: "dataset",
+        stroke: "dataset",
+        r: 7,
+        tip: true,
+        title: d => `${d.dataset} / ${d.model_type}\nTeacher: ${d.teacher_value.toFixed(4)}\nStudent: ${d.student_value.toFixed(4)}`
+      }),
+      Plot.text(data, {
+        x: "teacher_value",
+        y: "student_value",
+        text: d => d.model_type.slice(0, 3),
+        dy: -12,
+        fontSize: 10
+      })
+    ]
+  });
+}
+```
+
+```{ojs}
+//| title: "CKA Similarity (Teacher-Student Layer Alignment)"
+
+viewof selectedCkaRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM cka_similarity ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.cell(
+    vg.from("cka_similarity", {
+      filterBy: vg.sql`run_id = '${selectedCkaRun}'`
+    }),
+    {
+      x: "student_layer",
+      y: "teacher_layer",
+      fill: "similarity",
+      inset: 0.5
+    }
+  ),
+  {
+    width: 400,
+    height: 300,
+    color: { scheme: "viridis", legend: true, label: "CKA Similarity" },
+    x: { label: "Student Layer" },
+    y: { label: "Teacher Layer" },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+## Row {height=50%}
+
+```{ojs}
+//| title: "UMAP Embeddings (VGAE)"
+
+viewof selectedEmbRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM embeddings WHERE model = 'vgae' ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.dot(
+    vg.from("embeddings", {
+      filterBy: vg.sql`run_id = '${selectedEmbRun}' AND model = 'vgae'`
+    }),
+    {
+      x: "x",
+      y: "y",
+      fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+      r: 2,
+      opacity: 0.5
+    }
+  ),
+  {
+    width: 600,
+    height: 350,
+    color: { legend: true, domain: ["normal", "attack"], range: ["#3fb950", "#f85149"] },
+    x: { label: "UMAP 1", axis: null },
+    y: { label: "UMAP 2", axis: null },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+```{ojs}
+//| title: "UMAP Embeddings (GAT)"
+vg.plot(
+  vg.dot(
+    vg.from("embeddings", {
+      filterBy: vg.sql`run_id = '${selectedEmbRun}' AND model = 'gat'`
+    }),
+    {
+      x: "x",
+      y: "y",
+      fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+      r: 2,
+      opacity: 0.5
+    }
+  ),
+  {
+    width: 600,
+    height: 350,
+    color: { legend: true, domain: ["normal", "attack"], range: ["#3fb950", "#f85149"] },
+    x: { label: "UMAP 1", axis: null },
+    y: { label: "UMAP 2", axis: null },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+# Datasets
+
+## Row
+
+```{ojs}
+//| title: "Dataset Catalog"
+{
+  const data = datasets_json.data;
+  return Inputs.table(data, {
+    columns: ["name", "domain", "protocol", "source", "description"],
+    header: {
+      name: "Dataset",
+      domain: "Domain",
+      protocol: "Protocol",
+      source: "Source",
+      description: "Description"
+    },
+    width: { name: 100, domain: 100, protocol: 80, source: 120, description: 300 }
+  });
+}
+```

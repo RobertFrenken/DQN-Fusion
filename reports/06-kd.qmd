@@ -1,0 +1,21 @@
+---
+title: "Knowledge Distillation"
+---
+
+## Transfer Learning {#sec-kd}
+
+::: {.callout-note}
+Stub --- content and figures to be added in Phase 2--3.
+:::
+
+## KD Transfer Effectiveness {#sec-kd-transfer}
+
+<!-- fig-kd-transfer: vg.dot scatter (student vs teacher) -->
+
+## Model Sizes {#sec-model-sizes}
+
+<!-- fig-model-sizes: Observable Plot.barY (static JSON) -->
+
+## CKA Similarity {#sec-cka-similarity}
+
+<!-- fig-cka-similarity: vg.cell heatmap -->

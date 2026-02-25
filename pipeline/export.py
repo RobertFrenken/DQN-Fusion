@@ -14,13 +14,8 @@ import argparse
 import csv
 import json
 import logging
-import random
-import shutil
-from concurrent.futures import ProcessPoolExecutor, as_completed
 from datetime import datetime, timezone
 from pathlib import Path
-
-import numpy as np
 
 log = logging.getLogger(__name__)
 
@@ -159,7 +154,7 @@ def _load_eval_metrics(run_dir: Path) -> dict | None:
 
 
 # ---------------------------------------------------------------------------
-# Export functions (DB-free: read from filesystem)
+# Export functions
 # ---------------------------------------------------------------------------
 
 _MODEL_KEYS = ("gat", "vgae", "fusion")
@@ -205,7 +200,6 @@ def export_runs(output_dir: Path) -> Path:
     """All runs with status."""
     rows = []
     for run in _scan_runs():
-        # Derive timestamps from filesystem mtimes as fallback
         started_at = None
         completed_at = None
         cfg_path = run["dir"] / "config.json"
@@ -332,7 +326,6 @@ def export_kd_transfer(output_dir: Path) -> Path:
     target_metrics = {"f1", "accuracy", "auc"}
     rows = []
 
-    # Group evaluation runs by dataset
     eval_runs: dict[str, list[dict]] = {}
     for run in _scan_runs():
         if run["stage"] != "evaluation":
@@ -340,7 +333,6 @@ def export_kd_transfer(output_dir: Path) -> Path:
         eval_runs.setdefault(run["dataset"], []).append(run)
 
     for ds, runs in eval_runs.items():
-        # Find teacher (large, no KD) and student (small, KD) runs
         teachers = [r for r in runs if r["scale"] == "large" and not r["has_kd"]]
         students = [r for r in runs if r["scale"] == "small" and r["has_kd"]]
 
@@ -395,7 +387,6 @@ def export_training_curves(output_dir: Path) -> Path:
             if not run_dir.is_dir():
                 continue
 
-            # Find Lightning CSV log
             csv_logs = list(run_dir.glob("csv_logs/*/metrics.csv")) + \
                        list(run_dir.glob("lightning_logs/*/metrics.csv"))
             if not csv_logs:
@@ -439,74 +430,6 @@ def export_training_curves(output_dir: Path) -> Path:
     return curves_dir
 
 
-# ---------------------------------------------------------------------------
-# Filesystem-only exports (unchanged from original)
-# ---------------------------------------------------------------------------
-
-def export_graph_samples(output_dir: Path) -> Path:
-    """Export a few cached PyG graphs per dataset as D3-compatible JSON."""
-    import torch
-
-    cache_root = Path("data/cache")
-    samples: list[dict] = []
-
-    for ds_dir in sorted(cache_root.iterdir()):
-        if not ds_dir.is_dir() or ds_dir.name.endswith(".dvc"):
-            continue
-        graphs_path = ds_dir / "processed_graphs.pt"
-        if not graphs_path.exists():
-            continue
-
-        try:
-            graphs = torch.load(graphs_path, map_location="cpu", weights_only=False)
-        except Exception as e:
-            log.warning("Could not load graphs from %s: %s", graphs_path, e)
-            continue
-
-        rng = random.Random(42)
-        normal_idx = [i for i, g in enumerate(graphs)
-                      if hasattr(g, 'y') and g.y is not None and int(g.y.item()) == 0]
-        attack_idx = [i for i, g in enumerate(graphs)
-                      if hasattr(g, 'y') and g.y is not None and int(g.y.item()) == 1]
-        selected_indices = set()
-        selected = []
-        if normal_idx:
-            selected.append(graphs[normal_idx[0]])
-            selected_indices.add(normal_idx[0])
-        if attack_idx:
-            selected.append(graphs[attack_idx[0]])
-            selected_indices.add(attack_idx[0])
-        remaining = [i for i in range(len(graphs)) if i not in selected_indices]
-        if remaining and len(selected) < 3:
-            selected.append(graphs[rng.choice(remaining)])
-        for idx, g in enumerate(selected):
-            edge_index = g.edge_index.tolist()
-            num_nodes = g.x.size(0) if hasattr(g, "x") else g.num_nodes
-            nodes = []
-            for nid in range(num_nodes):
-                node = {"id": nid}
-                if hasattr(g, "x"):
-                    node["features"] = g.x[nid].tolist()
-                nodes.append(node)
-            links = [
-                {"source": edge_index[0][i], "target": edge_index[1][i]}
-                for i in range(len(edge_index[0]))
-            ]
-            label = int(g.y.item()) if hasattr(g, "y") and g.y is not None else None
-            samples.append({
-                "dataset": ds_dir.name,
-                "sample_idx": idx,
-                "label": label,
-                "nodes": nodes,
-                "links": links,
-            })
-
-    out = output_dir / "graph_samples.json"
-    out.write_text(json.dumps(_versioned_envelope(samples), indent=2))
-    log.info("Exported %d graph samples → %s", len(samples), out)
-    return out
-
-
 def export_model_sizes(output_dir: Path) -> Path:
     """Export parameter counts per model_type x scale from config resolution."""
     from config import resolve
@@ -541,580 +464,369 @@ def export_model_sizes(output_dir: Path) -> Path:
     return out
 
 
-EMBEDDING_MAX_SAMPLES = 2000
+# ---------------------------------------------------------------------------
+# Artifact Parquet exports (for Quarto dashboard / DuckDB-WASM)
+# ---------------------------------------------------------------------------
+
+_ARTIFACTS_DIR = _DATALAKE_ROOT / "artifacts"
 
 
-def _stratified_sample(coords_2d, labels, errors, max_samples: int):
-    """Stratified sampling to preserve class distribution."""
-    n = len(coords_2d)
-    if n <= max_samples:
-        return coords_2d, labels, errors, False
+def export_embeddings_parquet() -> Path | None:
+    """Export UMAP-reduced embeddings from all eval runs to a single Parquet.
 
-    unique_labels = np.unique(labels[:n]) if len(labels) >= n else np.array([0])
-    indices = []
-    for label in unique_labels:
-        label_mask = labels[:n] == label if len(labels) >= n else np.ones(n, dtype=bool)
-        label_indices = np.where(label_mask)[0]
-        n_samples = max(1, int(max_samples * len(label_indices) / n))
-        rng = np.random.default_rng(42)
-        sampled = rng.choice(label_indices, size=min(n_samples, len(label_indices)), replace=False)
-        indices.extend(sampled)
-
-    indices = sorted(indices)[:max_samples]
-    return (
-        coords_2d[indices],
-        labels[indices] if len(labels) >= n else labels,
-        errors[indices] if len(errors) >= n else errors,
-        True,
-    )
-
-
-def _process_embedding_run(
-    npz_path: Path,
-    run_id: str,
-    embed_dir: Path,
-    methods: tuple[str, ...],
-    max_samples: int,
-) -> list[str]:
-    """Process a single embedding run — pickle-safe (no closures).
-
-    Returns list of exported filenames.
+    Reduces high-dim embeddings to 2D via UMAP for scatter plots.
+    Output: artifacts/embeddings.parquet with columns:
+        run_id, model (vgae|gat), x, y, label
     """
-    data = np.load(npz_path, allow_pickle=True)
-    exported: list[str] = []
+    import numpy as np
 
-    for model_key in ("vgae_z", "gat_emb"):
-        if model_key not in data:
-            continue
-        embeddings = data[model_key]
-        model_name = model_key.split("_")[0]
-        labels = data.get(f"{model_name}_labels", np.array([]))
-        errors = data.get(f"{model_name}_errors", np.array([]))
-
-        if embeddings.shape[0] < 3:
-            continue
-
-        total_original = embeddings.shape[0]
-        embeddings, labels, errors, was_sampled = _stratified_sample(
-            embeddings, labels, errors, max_samples
-        )
-
-        for method in methods:
-            try:
-                coords_2d = _reduce_embeddings(embeddings, method)
-            except Exception:
-                continue
-
-            records = []
-            for i in range(len(coords_2d)):
-                rec = {
-                    "dim0": float(coords_2d[i, 0]),
-                    "dim1": float(coords_2d[i, 1]),
-                }
-                if i < len(labels):
-                    rec["label"] = int(labels[i])
-                if i < len(errors):
-                    rec["error"] = float(errors[i])
-                records.append(rec)
-
-            metadata = {
-                "n_points": len(records),
-                "sampled": was_sampled,
-                "total_original": total_original,
-            }
-
-            fname = f"{run_id}_{model_name}_{method}.json"
-            envelope = _versioned_envelope(records)
-            envelope["metadata"] = metadata
-            (embed_dir / fname).write_text(json.dumps(envelope, indent=2))
-            exported.append(fname)
-
-    return exported
-
-
-def export_embeddings(
-    output_dir: Path,
-    *,
-    methods: tuple[str, ...] = ("umap",),
-    workers: int = 1,
-) -> Path:
-    """Export dimensionality-reduced embeddings from evaluation runs."""
-    embed_dir = output_dir / "embeddings"
-    embed_dir.mkdir(parents=True, exist_ok=True)
-
-    exported_files: list[str] = []
-
-    if not EXPERIMENT_ROOT.is_dir():
-        index_path = embed_dir / "index.json"
-        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
-        log.info("No experimentruns directory — wrote empty embeddings index")
-        return embed_dir
-
-    # Collect all (npz_path, run_id) pairs
-    jobs: list[tuple[Path, str]] = []
-    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
-        if not ds_dir.is_dir():
-            continue
-        for run_dir in sorted(ds_dir.iterdir()):
-            if not run_dir.is_dir():
-                continue
-            npz_path = run_dir / "embeddings.npz"
-            if not npz_path.exists():
-                continue
-            run_id = f"{ds_dir.name}_{run_dir.name}"
-            jobs.append((npz_path, run_id))
-
-    if workers > 1 and len(jobs) > 1:
-        with ProcessPoolExecutor(max_workers=workers) as pool:
-            futures = {
-                pool.submit(
-                    _process_embedding_run, npz_path, run_id,
-                    embed_dir, methods, EMBEDDING_MAX_SAMPLES,
-                ): run_id
-                for npz_path, run_id in jobs
-            }
-            for future in as_completed(futures):
-                try:
-                    exported_files.extend(future.result())
-                except Exception as e:
-                    log.warning("Embedding export failed for %s: %s",
-                                futures[future], e)
-    else:
-        for npz_path, run_id in jobs:
-            try:
-                exported_files.extend(
-                    _process_embedding_run(
-                        npz_path, run_id, embed_dir, methods,
-                        EMBEDDING_MAX_SAMPLES,
-                    )
-                )
-            except Exception as e:
-                log.warning("Embedding export failed for %s: %s", run_id, e)
-
-    index_path = embed_dir / "index.json"
-    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
-
-    log.info("Exported %d embedding projections → %s", len(exported_files), embed_dir)
-    return embed_dir
-
-
-def _reduce_embeddings(embeddings, method: str):
-    """Reduce high-dimensional embeddings to 2D.
-
-    Applies PCA pre-reduction to 50 dimensions when input dimensionality
-    exceeds 50 — standard practice that makes UMAP/PyMDE tractable on
-    high-dimensional latent spaces (e.g. 2049-D VGAE z-vectors).
-
-    Uses cuML (GPU) when available, falls back to sklearn/umap-learn (CPU).
-    """
     try:
-        from cuml.decomposition import PCA
-        from cuml.manifold import UMAP as CumlUMAP
-        _CUML = True
+        from umap import UMAP
     except ImportError:
-        from sklearn.decomposition import PCA
-        _CUML = False
+        log.warning("umap-learn not installed; skipping embeddings export")
+        return None
 
-    PCA_TARGET = 50
-    if embeddings.shape[1] > PCA_TARGET:
-        n_components = min(PCA_TARGET, embeddings.shape[0] - 1)
-        embeddings = PCA(n_components=n_components, random_state=42).fit_transform(embeddings)
+    import pyarrow as pa
+    import pyarrow.parquet as pq
 
-    if method == "umap":
-        if _CUML:
-            reducer = CumlUMAP(n_components=2, random_state=42)
-        else:
-            import umap
-            reducer = umap.UMAP(n_components=2, random_state=42)
-        return reducer.fit_transform(embeddings)
-    elif method == "tsne":
-        if _CUML:
-            from cuml.manifold import TSNE
-        else:
-            from sklearn.manifold import TSNE
-        reducer = TSNE(n_components=2, random_state=42)
-        return reducer.fit_transform(embeddings)
-    elif method == "pymde":
-        import pymde
-        import torch
-        data_t = torch.tensor(embeddings, dtype=torch.float32)
-        mde = pymde.preserve_neighbors(data_t, embedding_dim=2)
-        return mde.embed().numpy()
-    else:
-        raise ValueError(f"Unknown reduction method: {method}")
-
-
-def export_dqn_policy(output_dir: Path) -> Path:
-    """Export DQN alpha distributions from evaluation runs."""
-    policy_dir = output_dir / "dqn_policy"
-    policy_dir.mkdir(parents=True, exist_ok=True)
-
-    count = 0
-    exported_files: list[str] = []
-
-    if not EXPERIMENT_ROOT.is_dir():
-        index_path = policy_dir / "index.json"
-        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
-        return policy_dir
-
-    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
-        if not ds_dir.is_dir():
+    rows: list[dict] = []
+    for run in _scan_runs():
+        if run["stage"] != "evaluation":
             continue
-        for run_dir in sorted(ds_dir.iterdir()):
-            if not run_dir.is_dir():
-                continue
-            policy_path = run_dir / "dqn_policy.json"
-            if not policy_path.exists():
-                continue
-
-            run_id = f"{ds_dir.name}_{run_dir.name}"
-            fname = f"{run_id}.json"
-            shutil.copy2(policy_path, policy_dir / fname)
-            exported_files.append(fname)
-            count += 1
-
-    index_path = policy_dir / "index.json"
-    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
-
-    log.info("Exported %d DQN policy files → %s", count, policy_dir)
-    return policy_dir
-
-
-def export_roc_curves(output_dir: Path) -> Path:
-    """Export ROC/PR curve arrays from evaluation metrics.json files."""
-    curves_dir = output_dir / "roc_curves"
-    curves_dir.mkdir(parents=True, exist_ok=True)
-
-    count = 0
-    exported_files: list[str] = []
-
-    if not EXPERIMENT_ROOT.is_dir():
-        index_path = curves_dir / "index.json"
-        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
-        return curves_dir
-
-    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
-        if not ds_dir.is_dir():
+        emb_path = run["dir"] / "embeddings.npz"
+        if not emb_path.exists():
             continue
-        for run_dir in sorted(ds_dir.iterdir()):
-            if not run_dir.is_dir():
+
+        data = np.load(emb_path)
+        for prefix, model_name in [("vgae_z", "vgae"), ("gat_emb", "gat")]:
+            if prefix not in data:
                 continue
-            mp = run_dir / "metrics.json"
-            if not mp.exists():
-                continue
-
-            metrics = json.loads(mp.read_text())
-            run_id = f"{ds_dir.name}_{run_dir.name}"
-
-            for model_key in _MODEL_KEYS:
-                model_metrics = metrics.get(model_key, {})
-                additional = model_metrics.get("additional", {})
-                roc = additional.get("roc_curve")
-                pr = additional.get("pr_curve")
-                if not roc and not pr:
-                    continue
-                curve_data = {"model": model_key}
-                if roc:
-                    curve_data["roc_curve"] = roc
-                    curve_data["auc"] = model_metrics.get("core", {}).get("auc")
-                if pr:
-                    curve_data["pr_curve"] = pr
-                    curve_data["pr_auc"] = additional.get("pr_auc")
-
-                fname = f"{run_id}_{model_key}.json"
-                (curves_dir / fname).write_text(json.dumps(_versioned_envelope(curve_data), indent=2))
-                exported_files.append(fname)
-                count += 1
-
-    index_path = curves_dir / "index.json"
-    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
-    log.info("Exported %d ROC/PR curve files → %s", count, curves_dir)
-    return curves_dir
-
-
-def export_attention(output_dir: Path) -> Path:
-    """Export GAT attention weights from evaluation runs as D3-friendly JSON."""
-    attn_dir = output_dir / "attention"
-    attn_dir.mkdir(parents=True, exist_ok=True)
-
-    count = 0
-    exported_files: list[str] = []
-
-    if not EXPERIMENT_ROOT.is_dir():
-        index_path = attn_dir / "index.json"
-        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
-        return attn_dir
-
-    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
-        if not ds_dir.is_dir():
-            continue
-        for run_dir in sorted(ds_dir.iterdir()):
-            if not run_dir.is_dir():
-                continue
-            npz_path = run_dir / "attention_weights.npz"
-            if not npz_path.exists():
+            embeddings = data[prefix]
+            labels = data.get(f"{model_name}_labels", data.get("vgae_labels"))
+            if labels is None:
                 continue
 
-            data = np.load(npz_path, allow_pickle=True)
-            n_samples = int(data["n_samples"])
-            run_id = f"{ds_dir.name}_{run_dir.name}"
+            # Subsample for browser performance (max 2000 points per model per run)
+            n = len(embeddings)
+            if n > 2000:
+                idx = np.random.default_rng(42).choice(n, 2000, replace=False)
+                embeddings = embeddings[idx]
+                labels = labels[idx]
 
-            samples = []
-            for i in range(n_samples):
-                prefix = f"sample_{i}"
-                graph_idx = int(data[f"{prefix}_graph_idx"])
-                label = int(data[f"{prefix}_label"])
-                edge_index = data[f"{prefix}_edge_index"].tolist()
-                node_features = data[f"{prefix}_node_features"].tolist()
+            reducer = UMAP(n_components=2, random_state=42, n_neighbors=15)
+            xy = reducer.fit_transform(embeddings)
 
-                layers = []
-                layer_idx = 0
-                while f"{prefix}_layer_{layer_idx}_alpha" in data:
-                    alpha = data[f"{prefix}_layer_{layer_idx}_alpha"]
-                    layers.append({
-                        "alpha_mean": alpha.mean(axis=-1).tolist() if alpha.ndim > 1 else alpha.tolist(),
-                        "n_heads": int(alpha.shape[-1]) if alpha.ndim > 1 else 1,
-                    })
-                    layer_idx += 1
-
-                samples.append({
-                    "graph_idx": graph_idx,
-                    "label": label,
-                    "edge_index": edge_index,
-                    "node_features": node_features,
-                    "layers": layers,
+            for i in range(len(xy)):
+                rows.append({
+                    "run_id": run["run_id"],
+                    "model": model_name,
+                    "x": float(xy[i, 0]),
+                    "y": float(xy[i, 1]),
+                    "label": int(labels[i]),
                 })
 
-            fname = f"{run_id}.json"
-            (attn_dir / fname).write_text(json.dumps(_versioned_envelope(samples), indent=2))
-            exported_files.append(fname)
-            count += 1
+    if not rows:
+        return None
 
-    index_path = attn_dir / "index.json"
-    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
-    log.info("Exported %d attention files → %s", count, attn_dir)
-    return attn_dir
+    _ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    table = pa.Table.from_pylist(rows)
+    out = _ARTIFACTS_DIR / "embeddings.parquet"
+    pq.write_table(table, out)
+    log.info("Exported %d embedding points → %s", len(rows), out)
+    return out
 
 
-def export_recon_errors(output_dir: Path) -> Path:
-    """Export VGAE reconstruction errors from evaluation embeddings.npz files."""
-    recon_dir = output_dir / "recon_errors"
-    recon_dir.mkdir(parents=True, exist_ok=True)
+def export_attention_parquet() -> Path | None:
+    """Export attention weight summaries from all eval runs to Parquet.
 
-    count = 0
-    exported_files: list[str] = []
+    For each sample, computes mean attention per layer across heads.
+    Output: artifacts/attention_weights.parquet with columns:
+        run_id, sample_idx, label, layer, head, mean_alpha
+    """
+    import numpy as np
+    import pyarrow as pa
+    import pyarrow.parquet as pq
 
-    if not EXPERIMENT_ROOT.is_dir():
-        index_path = recon_dir / "index.json"
-        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
-        return recon_dir
-
-    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
-        if not ds_dir.is_dir():
+    rows: list[dict] = []
+    for run in _scan_runs():
+        if run["stage"] != "evaluation":
             continue
-        for run_dir in sorted(ds_dir.iterdir()):
-            if not run_dir.is_dir():
-                continue
-            npz_path = run_dir / "embeddings.npz"
-            if not npz_path.exists():
-                continue
-
-            data = np.load(npz_path, allow_pickle=True)
-            if "vgae_errors" not in data:
-                continue
-
-            errors = data["vgae_errors"].tolist()
-            labels = data["vgae_labels"].tolist() if "vgae_labels" in data else []
-
-            threshold = None
-            mp = run_dir / "metrics.json"
-            if mp.exists():
-                metrics = json.loads(mp.read_text())
-                threshold = metrics.get("vgae", {}).get("core", {}).get("optimal_threshold")
-
-            recon_data = {
-                "errors": errors,
-                "labels": labels,
-                "optimal_threshold": threshold,
-            }
-
-            run_id = f"{ds_dir.name}_{run_dir.name}"
-            fname = f"{run_id}.json"
-            (recon_dir / fname).write_text(json.dumps(_versioned_envelope(recon_data), indent=2))
-            exported_files.append(fname)
-            count += 1
-
-    index_path = recon_dir / "index.json"
-    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
-    log.info("Exported %d recon error files → %s", count, recon_dir)
-    return recon_dir
-
-
-def export_explanations(output_dir: Path) -> Path:
-    """Export GNNExplainer feature importance from evaluation runs."""
-    explain_dir = output_dir / "explanations"
-    explain_dir.mkdir(parents=True, exist_ok=True)
-
-    count = 0
-    exported_files: list[str] = []
-
-    if not EXPERIMENT_ROOT.is_dir():
-        index_path = explain_dir / "index.json"
-        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
-        return explain_dir
-
-    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
-        if not ds_dir.is_dir():
+        att_path = run["dir"] / "attention_weights.npz"
+        if not att_path.exists():
             continue
-        for run_dir in sorted(ds_dir.iterdir()):
-            if not run_dir.is_dir():
-                continue
-            npz_path = run_dir / "explanations.npz"
-            if not npz_path.exists():
-                continue
 
-            data = np.load(npz_path, allow_pickle=True)
-            run_id = f"{ds_dir.name}_{run_dir.name}"
+        data = np.load(att_path)
+        n_samples = int(data.get("n_samples", 0))
+        # Limit to first 10 samples per run for dashboard
+        for si in range(min(n_samples, 10)):
+            label = int(data.get(f"sample_{si}_label", -1))
+            for layer in range(3):
+                key = f"sample_{si}_layer_{layer}_alpha"
+                if key not in data:
+                    continue
+                alpha = data[key]  # (n_edges, n_heads)
+                # Mean attention per head across edges
+                head_means = alpha.mean(axis=0)  # (n_heads,)
+                for head_idx, val in enumerate(head_means):
+                    rows.append({
+                        "run_id": run["run_id"],
+                        "sample_idx": si,
+                        "label": label,
+                        "layer": layer,
+                        "head": head_idx,
+                        "mean_alpha": float(val),
+                    })
 
-            records = []
-            graph_indices = data.get("graph_indices", np.array([]))
-            labels = data.get("labels", np.array([]))
-            predictions = data.get("predictions", np.array([]))
-            node_masks = data.get("node_masks", np.array([]))
-            edge_masks = data.get("edge_masks", np.array([]))
+    if not rows:
+        return None
 
-            for i in range(len(graph_indices)):
-                rec: dict = {
-                    "graph_idx": int(graph_indices[i]),
-                    "label": int(labels[i]),
-                    "prediction": int(predictions[i]),
-                }
-                if i < len(node_masks) and node_masks[i] is not None:
-                    nm = node_masks[i]
-                    # Top-k important features (mean across nodes)
-                    if nm.ndim == 2:
-                        feat_importance = nm.mean(axis=0).tolist()
-                        top_k = sorted(range(len(feat_importance)),
-                                       key=lambda j: feat_importance[j], reverse=True)[:5]
-                        rec["feature_importance"] = feat_importance
-                        rec["top_features"] = top_k
-                if i < len(edge_masks) and edge_masks[i] is not None:
-                    em = edge_masks[i]
-                    rec["edge_mask_mean"] = float(em.mean())
-                    rec["edge_mask_std"] = float(em.std())
-                records.append(rec)
-
-            fname = f"{run_id}.json"
-            (explain_dir / fname).write_text(
-                json.dumps(_versioned_envelope(records), indent=2)
-            )
-            exported_files.append(fname)
-            count += 1
-
-    index_path = explain_dir / "index.json"
-    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
-    log.info("Exported %d explanation files → %s", count, explain_dir)
-    return explain_dir
+    _ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    table = pa.Table.from_pylist(rows)
+    out = _ARTIFACTS_DIR / "attention_weights.parquet"
+    pq.write_table(table, out)
+    log.info("Exported %d attention rows → %s", len(rows), out)
+    return out
 
 
-def export_cka(output_dir: Path) -> Path:
-    """Export CKA matrices from KD evaluation runs."""
-    cka_dir = output_dir / "cka"
-    cka_dir.mkdir(parents=True, exist_ok=True)
+def export_recon_errors_parquet() -> Path | None:
+    """Export VGAE reconstruction errors from embeddings.npz files.
 
-    count = 0
-    exported_files: list[str] = []
+    Output: artifacts/recon_errors.parquet with columns:
+        run_id, error, label
+    """
+    import numpy as np
+    import pyarrow as pa
+    import pyarrow.parquet as pq
 
-    if not EXPERIMENT_ROOT.is_dir():
-        index_path = cka_dir / "index.json"
-        index_path.write_text(json.dumps(_versioned_envelope([]), indent=2))
-        return cka_dir
-
-    for ds_dir in sorted(EXPERIMENT_ROOT.iterdir()):
-        if not ds_dir.is_dir():
+    rows: list[dict] = []
+    for run in _scan_runs():
+        if run["stage"] != "evaluation":
             continue
-        for run_dir in sorted(ds_dir.iterdir()):
-            if not run_dir.is_dir():
-                continue
-            cka_path = run_dir / "cka_matrix.json"
-            if not cka_path.exists():
-                continue
+        emb_path = run["dir"] / "embeddings.npz"
+        if not emb_path.exists():
+            continue
 
-            run_id = f"{ds_dir.name}_{run_dir.name}"
-            fname = f"{run_id}.json"
-            shutil.copy2(cka_path, cka_dir / fname)
-            exported_files.append(fname)
-            count += 1
+        data = np.load(emb_path)
+        if "vgae_errors" not in data:
+            continue
 
-    index_path = cka_dir / "index.json"
-    index_path.write_text(json.dumps(_versioned_envelope(sorted(exported_files)), indent=2))
-    log.info("Exported %d CKA matrices → %s", count, cka_dir)
-    return cka_dir
+        errors = data["vgae_errors"]
+        labels = data.get("vgae_labels")
+        if labels is None:
+            continue
+
+        for i in range(len(errors)):
+            rows.append({
+                "run_id": run["run_id"],
+                "error": float(errors[i]),
+                "label": int(labels[i]),
+            })
+
+    if not rows:
+        return None
+
+    _ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    table = pa.Table.from_pylist(rows)
+    out = _ARTIFACTS_DIR / "recon_errors.parquet"
+    pq.write_table(table, out)
+    log.info("Exported %d recon error rows → %s", len(rows), out)
+    return out
+
+
+def export_dqn_policy_parquet() -> Path | None:
+    """Export DQN alpha policies from all eval runs to Parquet.
+
+    Output: artifacts/dqn_policy.parquet with columns:
+        run_id, dataset, scale, has_kd, action_idx, alpha
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    rows: list[dict] = []
+    for run in _scan_runs():
+        if run["stage"] != "evaluation":
+            continue
+        policy_path = run["dir"] / "dqn_policy.json"
+        if not policy_path.exists():
+            continue
+
+        try:
+            policy = json.loads(policy_path.read_text())
+        except Exception:
+            continue
+
+        alphas = policy.get("alphas", [])
+        for idx, alpha in enumerate(alphas):
+            rows.append({
+                "run_id": run["run_id"],
+                "dataset": run["dataset"],
+                "scale": run["scale"],
+                "has_kd": 1 if run["has_kd"] else 0,
+                "action_idx": idx,
+                "alpha": float(alpha),
+            })
+
+    if not rows:
+        return None
+
+    _ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    table = pa.Table.from_pylist(rows)
+    out = _ARTIFACTS_DIR / "dqn_policy.parquet"
+    pq.write_table(table, out)
+    log.info("Exported %d DQN policy rows → %s", len(rows), out)
+    return out
+
+
+def export_cka_parquet() -> Path | None:
+    """Export CKA similarity matrices from KD eval runs to Parquet.
+
+    Output: artifacts/cka_similarity.parquet with columns:
+        run_id, dataset, teacher_layer, student_layer, similarity
+    """
+    import pyarrow as pa
+    import pyarrow.parquet as pq
+
+    rows: list[dict] = []
+    for run in _scan_runs():
+        if run["stage"] != "evaluation":
+            continue
+        cka_path = run["dir"] / "cka_matrix.json"
+        if not cka_path.exists():
+            continue
+
+        try:
+            cka = json.loads(cka_path.read_text())
+        except Exception:
+            continue
+
+        matrix = cka.get("matrix", [])
+        teacher_layers = cka.get("teacher_layers", [])
+        student_layers = cka.get("student_layers", [])
+
+        for ti, t_layer in enumerate(teacher_layers):
+            for si, s_layer in enumerate(student_layers):
+                if ti < len(matrix) and si < len(matrix[ti]):
+                    rows.append({
+                        "run_id": run["run_id"],
+                        "dataset": run["dataset"],
+                        "teacher_layer": t_layer,
+                        "student_layer": s_layer,
+                        "similarity": float(matrix[ti][si]),
+                    })
+
+    if not rows:
+        return None
+
+    _ARTIFACTS_DIR.mkdir(parents=True, exist_ok=True)
+    table = pa.Table.from_pylist(rows)
+    out = _ARTIFACTS_DIR / "cka_similarity.parquet"
+    pq.write_table(table, out)
+    log.info("Exported %d CKA rows → %s", len(rows), out)
+    return out
+
+
+def export_artifacts_parquet() -> list[Path]:
+    """Run all artifact Parquet exports. Returns list of created files."""
+    results = []
+    for fn in [
+        export_recon_errors_parquet,
+        export_attention_parquet,
+        export_dqn_policy_parquet,
+        export_cka_parquet,
+    ]:
+        try:
+            path = fn()
+            if path:
+                results.append(path)
+        except Exception as e:
+            log.warning("%s failed: %s", fn.__name__, e)
+
+    # Embeddings export needs umap-learn and is slow; run separately
+    try:
+        path = export_embeddings_parquet()
+        if path:
+            results.append(path)
+    except Exception as e:
+        log.warning("export_embeddings_parquet failed: %s", e)
+
+    return results
+
+
+def export_data_for_reports(reports_data_dir: Path | None = None) -> None:
+    """Copy datalake Parquet + artifact Parquet to reports/data/ for Quarto.
+
+    This is the bridge between the pipeline datalake and the Quarto site.
+    FileAttachment in OJS cells loads from reports/data/.
+    """
+    import shutil
+
+    if reports_data_dir is None:
+        reports_data_dir = Path("reports/data")
+    reports_data_dir.mkdir(parents=True, exist_ok=True)
+
+    # Core datalake files
+    for name in ["metrics.parquet", "runs.parquet", "datasets.parquet"]:
+        src = _DATALAKE_ROOT / name
+        if src.exists():
+            shutil.copy2(src, reports_data_dir / name)
+            log.info("Copied %s → reports/data/", name)
+
+    # Training curves: merge all into a single file for easy DuckDB-WASM loading
+    tc_dir = _DATALAKE_ROOT / "training_curves"
+    if tc_dir.is_dir():
+        import pyarrow.parquet as pq
+        import pyarrow as pa
+
+        tables = []
+        for f in sorted(tc_dir.glob("*.parquet")):
+            tables.append(pq.read_table(f))
+        if tables:
+            merged = pa.concat_tables(tables)
+            out = reports_data_dir / "training_curves.parquet"
+            pq.write_table(merged, out)
+            log.info("Merged %d training curve files → %s", len(tables), out)
+
+    # Artifact Parquet files
+    if _ARTIFACTS_DIR.is_dir():
+        for f in _ARTIFACTS_DIR.glob("*.parquet"):
+            shutil.copy2(f, reports_data_dir / f.name)
+            log.info("Copied artifact %s → reports/data/", f.name)
 
 
 # ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
-HEAVY_EXPORTS = {"embeddings", "graph_samples", "recon_errors", "attention", "explanations"}
-
-
-def export_all(
-    output_dir: Path,
-    *,
-    skip_heavy: bool = False,
-    only_heavy: bool = False,
-    methods: tuple[str, ...] = ("umap",),
-    workers: int = 1,
-) -> None:
-    """Run all exports.
-
-    Args:
-        skip_heavy: Skip CPU-intensive exports (embeddings, graph_samples,
-                    recon_errors, attention). Fast exports finish in seconds.
-        only_heavy: Run only the CPU-intensive exports.
-        methods: Dimensionality reduction methods for embeddings.
-        workers: Number of parallel workers for embedding export.
-    """
+def export_all(output_dir: Path, *, include_reports: bool = False) -> None:
+    """Run all exports."""
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    artifact_exports = [
-        ("graph_samples", lambda d: export_graph_samples(d)),
-        ("model_sizes", lambda d: export_model_sizes(d)),
-        ("embeddings", lambda d: export_embeddings(d, methods=methods, workers=workers)),
-        ("dqn_policy", lambda d: export_dqn_policy(d)),
-        ("roc_curves", lambda d: export_roc_curves(d)),
-        ("attention", lambda d: export_attention(d)),
-        ("recon_errors", lambda d: export_recon_errors(d)),
-        ("cka", lambda d: export_cka(d)),
-        ("explanations", lambda d: export_explanations(d)),
-    ]
+    lb = export_leaderboard(output_dir)
+    runs = export_runs(output_dir)
+    export_metrics(output_dir)
+    ds = export_datasets(output_dir)
+    kd = export_kd_transfer(output_dir)
+    export_training_curves(output_dir)
+    export_metric_catalog(output_dir)
 
-    if not only_heavy:
-        lb = export_leaderboard(output_dir)
-        runs = export_runs(output_dir)
-        export_metrics(output_dir)
-        ds = export_datasets(output_dir)
-        kd = export_kd_transfer(output_dir)
-        export_training_curves(output_dir)
-        export_metric_catalog(output_dir)
+    for name, path in [
+        ("leaderboard", lb), ("runs", runs), ("datasets", ds), ("kd_transfer", kd),
+    ]:
+        if path.stat().st_size < 10:
+            log.warning("EMPTY EXPORT: %s (%s)", name, path)
 
-        for name, path in [
-            ("leaderboard", lb), ("runs", runs), ("datasets", ds), ("kd_transfer", kd),
-        ]:
-            if path.stat().st_size < 10:
-                log.warning("EMPTY EXPORT: %s (%s)", name, path)
+    try:
+        export_model_sizes(output_dir)
+    except Exception as e:
+        log.warning("Export model_sizes failed (non-fatal): %s", e)
 
-    for name, func in artifact_exports:
-        if skip_heavy and name in HEAVY_EXPORTS:
-            log.info("Skipping heavy export: %s", name)
-            continue
-        if only_heavy and name not in HEAVY_EXPORTS:
-            continue
-        try:
-            func(output_dir)
-        except Exception as e:
-            log.warning("Export %s failed (non-fatal): %s", name, e)
+    # Artifact Parquet exports (skip embeddings by default — needs umap-learn)
+    artifact_files = export_artifacts_parquet()
+    log.info("Exported %d artifact Parquet files", len(artifact_files))
+
+    # Optionally copy everything to reports/data/ for Quarto
+    if include_reports:
+        export_data_for_reports()
 
     log.info("All exports complete → %s", output_dir)
 
@@ -1128,22 +840,9 @@ def main(argv: list[str] | None = None) -> None:
         "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
     )
-    group = parser.add_mutually_exclusive_group()
-    group.add_argument(
-        "--skip-heavy", action="store_true",
-        help="Skip CPU-intensive exports (embeddings, graph_samples, recon_errors, attention)",
-    )
-    group.add_argument(
-        "--only-heavy", action="store_true",
-        help="Run only CPU-intensive exports",
-    )
     parser.add_argument(
-        "--methods", type=str, default="umap",
-        help="Comma-separated dimensionality reduction methods (default: umap)",
-    )
-    parser.add_argument(
-        "--workers", type=int, default=1,
-        help="Parallel workers for embedding export (default: 1)",
+        "--reports", action="store_true",
+        help="Also copy Parquet data to reports/data/ for Quarto site",
     )
     args = parser.parse_args(argv)
 
@@ -1152,14 +851,7 @@ def main(argv: list[str] | None = None) -> None:
         format="%(asctime)s  %(name)-20s  %(levelname)-7s  %(message)s",
     )
 
-    methods = tuple(m.strip() for m in args.methods.split(","))
-    export_all(
-        args.output_dir,
-        skip_heavy=args.skip_heavy,
-        only_heavy=args.only_heavy,
-        methods=methods,
-        workers=args.workers,
-    )
+    export_all(args.output_dir, include_reports=args.reports)
 
 
 if __name__ == "__main__":

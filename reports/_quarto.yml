@@ -1,13 +1,64 @@
 project:
-  type: default
-  output-dir: _output
+  type: website
+  output-dir: _site
+  render:
+    - "*.qmd"
+    - "!workflow.rst"
+  resources:
+    - "data/**"
+
+website:
+  title: "KD-GAT"
+  navbar:
+    left:
+      - text: "Dashboard"
+        href: dashboard.qmd
+      - text: "Paper"
+        menu:
+          - text: "Introduction"
+            href: index.qmd
+          - text: "Background"
+            href: 02-background.qmd
+          - text: "VGAE"
+            href: 03-vgae.qmd
+          - text: "GAT"
+            href: 04-gat.qmd
+          - text: "DQN"
+            href: 05-dqn.qmd
+          - text: "Knowledge Distillation"
+            href: 06-kd.qmd
+          - text: "Evaluation"
+            href: 07-evaluation.qmd
+          - text: "Appendix"
+            href: appendix.qmd
+      - text: "Slides"
+        href: slides.qmd
+    right:
+      - icon: github
+        href: https://github.com/buckeyeguy/KD-GAT
+
+bibliography: references.bib
 
 format:
   html:
-    theme: cosmo
+    theme:
+      - cosmo
+      - custom.scss
     toc: true
     code-fold: true
-  pdf:
+    fig-responsive: true
+    reference-location: margin
+  typst:
     documentclass: article
-    geometry:
-      - margin=1in
+    papersize: us-letter
+    margin:
+      x: 1in
+      y: 1in
+    columns: 1
+    toc: true
+  revealjs:
+    theme: dark
+    width: 1600
+    height: 900
+    slide-number: true
+    code-fold: true

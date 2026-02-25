@@ -1,0 +1,15 @@
+---
+title: "Evaluation"
+---
+
+## Experimental Setup {#sec-evaluation}
+
+::: {.callout-note}
+Stub --- content and figures to be added in Phase 2--3.
+:::
+
+## Embedding Visualization {#sec-embeddings}
+
+<!-- fig-embeddings: vg.dot UMAP scatter -->
+
+## Results Summary {#sec-results}

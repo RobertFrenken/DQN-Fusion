@@ -236,7 +236,7 @@ flowchart LR
 
 ```
 /users/PAS2022/rf15/                           <- NFS home (permanent)
-  CAN-Graph-Test/KD-GAT/                       <- Git repo root
+  KD-GAT/                                      <- Git repo root
     config/                                    <- Layer 1: declarative config
     pipeline/                                  <- Layer 2: orchestration
     src/                                       <- Layer 3: domain (models, training)
@@ -245,6 +245,14 @@ flowchart LR
         hcrl_ch/, hcrl_sa/, set_01-04/
       cache/                                   <- Preprocessed graphs (DVC-tracked)
         {dataset}/processed_graphs.pt
+      datalake/                                <- Parquet structured storage
+        runs.parquet                           <- Run-level metadata
+        metrics.parquet                        <- Per-run per-model metrics
+        configs.parquet                        <- Key hyperparams + full config JSON
+        artifacts.parquet                      <- Manifest: run_id → file path, type, size
+        datasets.parquet                       <- Dataset catalog with cache stats
+        training_curves/{run_id}.parquet       <- Per-epoch metrics from Lightning CSV logs
+        analytics.duckdb                       <- Views over Parquet (rebuildable)
     experimentruns/                            <- All training outputs
       {dataset}/
         vgae_large_autoencoder/
@@ -257,6 +265,7 @@ flowchart LR
     docs/dashboard/                            <- GitHub Pages site
       data/                                    <- Static JSON (exported)
       js/                                      <- D3.js ES modules
+    docs-site/                                 <- Astro 5 + Svelte 5 research paper site
     scripts/                                   <- SLURM job scripts
     wandb/                                     <- Offline W&B runs (.gitignored)
     .dvc/                                      <- DVC config

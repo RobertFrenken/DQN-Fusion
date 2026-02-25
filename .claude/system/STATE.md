@@ -1,6 +1,6 @@
 # Current State
 
-**Date**: 2026-02-24
+**Date**: 2026-02-25
 **Branch**: `main`
 
 ## Ecosystem Status
@@ -11,13 +11,12 @@
 |-----------|---------|
 | **Config system** | Pydantic v2 frozen models + YAML composition. `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`. 6 datasets in `config/datasets.yaml`. |
 | **Training pipeline** | All 72 runs complete (6 datasets × 12 configs: 3 stages × {large, small, small+KD}). CLI: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>` |
-| **Ray orchestration** | `train_pipeline()` and `eval_pipeline()` via Ray remote tasks + SLURM. `--local` flag for Ray local mode. |
-| **SLURM integration** | GPU (V100, PAS3209) + CPU partitions configured. |
+| **Ray orchestration** | `train_pipeline()` and `eval_pipeline()` via Ray remote tasks + SLURM. `--local` flag for Ray local mode. Subprocess-per-stage dispatch (intentional — CUDA context isolation). `small_nokd` runs concurrently with `large`. Benchmark mode via `KD_GAT_BENCHMARK=1`. |
+| **SLURM integration** | Pitzer cluster. GPU (2x V100 per node, 362GB RAM, PAS3209) + CPU partitions. |
 | **Graph caching** | All 6 datasets cached with test scenarios (`processed_graphs.pt` + `test_*.pt`). DynamicBatchSampler for variable-size graphs. |
 | **DVC tracking** | Raw data + cache tracked. S3 remote + local scratch remote configured. |
-| **Export pipeline** | 16 exporters with `--skip-heavy`/`--only-heavy` split. Light exports ~2s on login node; heavy exports (UMAP/attention/graph samples) via SLURM. Now supports t-SNE method. |
-| **Datalake** | Parquet-based structured storage in `data/datalake/` (runs, metrics, configs, artifacts, training curves). DuckDB analytics views. |
-| **S3 lakehouse** | Legacy per-run JSON sync to `s3://kd-gat/lakehouse/runs/` (deprecated, will be removed). |
+| **Export pipeline** | 8 lightweight exporters (~2s, login node safe): leaderboard, runs, metrics, metric catalog, datasets, KD transfer, training curves, model sizes. Heavy analysis (UMAP, attention, CKA, etc.) moved to notebooks. |
+| **Datalake** | Parquet-based structured storage in `data/datalake/` (runs, metrics, configs, artifacts, training curves). DuckDB analytics views. S3 backup via `aws s3 sync` in SLURM epilog. |
 | **S3 dashboard data** | Public read + CORS configured on `s3://kd-gat/dashboard/`. Dashboard JS fetches from S3 with `data/` fallback for local dev. |
 | **Dashboard** | Live at https://robertfrenken.github.io/DQN-Fusion/. D3.js v7 ES modules, 27 panels, config-driven via `panelConfig.js`. |
 | **Test suite** | 108 tests (88 passed, 20 skipped). All passing on CPU fallback after RAPIDS integration. |
@@ -76,6 +75,11 @@ All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
 
 ## Recently Completed
 
+- **Pipeline evolution plan complete** (2026-02-25):
+  - WS1 (Prefect cleanup): All stale Prefect/Dask/Snakemake references removed. `.snakemake/` deleted.
+  - WS2 (Orchestration research): Decision document at `~/plans/orchestration-redesign-decision.md`. Concurrent `small_nokd` variant refactored. Benchmark instrumentation added. R1 benchmark submitted (job 44398773). R2 pending R1 results.
+  - WS3 (Datalake consolidation): All 6 phases complete — migration script, Parquet writes, analytics views, export integration, CLI registration, documentation.
+  - Cleanup: ECOSYSTEM.md Diagram 5 fixed (path + datalake). 5 stale git stashes dropped. `.claude/settings.local.json` cleaned.
 - **Docs-site Observable Plot** (2026-02-24):
   - PlotFigure.svelte with dual renderer architecture (`renderer: 'plot' | 'd3'` in figure registry)
   - Deno Jupyter notebook workflow (`notebooks/deno_plot_template.ipynb`) for prototyping plots
@@ -100,7 +104,7 @@ Raw CAN CSVs (6 datasets, 10.8 GB, DVC)
     → Training Pipeline (VGAE → GAT → DQN, large + small + small-KD)
       → Evaluation (metrics + embeddings + attention + policy)
         → W&B (77 online) | Datalake (Parquet) | experimentruns/ (72 on disk)
-          → Export Pipeline (16 exporters, --skip-heavy/--only-heavy, GPU via RAPIDS)
+          → Export Pipeline (8 lightweight exporters, login node safe)
             → S3 Dashboard Bucket (s3://kd-gat/dashboard/)
               → GitHub Pages Dashboard (27 panels, D3.js v7)
 ```

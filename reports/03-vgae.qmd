@@ -1,0 +1,17 @@
+---
+title: "VGAE: Variational Graph Autoencoder"
+---
+
+## Architecture {#sec-vgae}
+
+::: {.callout-note}
+Stub --- content and figures to be added in Phase 2--3.
+:::
+
+## Graph Structure Visualization {#sec-graph-structure}
+
+<!-- fig-graph-structure: D3 ForceGraph via _ojs/force-graph.js -->
+
+## Reconstruction Errors {#sec-recon-errors}
+
+<!-- fig-recon-errors: vg.rectY + vg.binX histogram -->

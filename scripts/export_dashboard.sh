@@ -1,16 +1,9 @@
 #!/usr/bin/env bash
 # Export experiment data → dashboard JSON and sync to S3.
-# Dashboard data is served from S3, not committed to git.
-#
-# Fast exports (leaderboard, runs, metrics, etc.) run on login node in ~2s.
-# Heavy exports (embeddings, graph_samples, attention, recon_errors) should
-# be submitted to SLURM via: sbatch scripts/export_dashboard_slurm.sh --only-heavy
+# All exports are lightweight (~2s, login node safe).
 #
 # Usage:
-#   bash scripts/export_dashboard.sh                  # fast exports + S3 sync
-#   bash scripts/export_dashboard.sh --skip-heavy     # same (explicit)
-#   bash scripts/export_dashboard.sh --all            # all exports (use on SLURM)
-#   bash scripts/export_dashboard.sh --only-heavy     # heavy exports only (SLURM)
+#   bash scripts/export_dashboard.sh                  # export + S3 sync
 #   bash scripts/export_dashboard.sh --dry-run        # export only (no S3 sync)
 set -euo pipefail
 
@@ -20,13 +13,9 @@ S3_BUCKET="${KD_GAT_S3_BUCKET:-kd-gat}"
 
 # --- Parse flags ---
 DRY_RUN=false
-EXPORT_FLAG="--skip-heavy"
 for arg in "$@"; do
     case "$arg" in
         --dry-run)     DRY_RUN=true ;;
-        --skip-heavy)  EXPORT_FLAG="--skip-heavy" ;;
-        --only-heavy)  EXPORT_FLAG="--only-heavy" ;;
-        --all)         EXPORT_FLAG="" ;;
         *)             echo "Unknown flag: $arg"; exit 1 ;;
     esac
 done
@@ -39,13 +28,8 @@ if [[ -z "${VIRTUAL_ENV:-}" ]]; then
 fi
 
 # --- Export experiment data → JSON ---
-WORKERS_FLAG=""
-if [[ "$EXPORT_FLAG" == "--only-heavy" ]] || [[ -z "$EXPORT_FLAG" ]]; then
-    WORKERS_FLAG="--workers 4"
-fi
-
-echo "Exporting experiment data → ${DASHBOARD_DATA}/ ${EXPORT_FLAG:+(${EXPORT_FLAG})} ${WORKERS_FLAG}"
-python -m pipeline.export --output-dir "$DASHBOARD_DATA" $EXPORT_FLAG $WORKERS_FLAG
+echo "Exporting experiment data → ${DASHBOARD_DATA}/"
+python -m pipeline.export --output-dir "$DASHBOARD_DATA"
 echo "Export complete."
 
 if $DRY_RUN; then

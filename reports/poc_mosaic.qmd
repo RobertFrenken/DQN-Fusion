@@ -1,0 +1,95 @@
+---
+title: "Mosaic + DuckDB-WASM POC"
+format:
+  html:
+    toc: true
+    code-fold: true
+---
+
+## Setup
+
+Initialize Mosaic vgplot with DuckDB-WASM running entirely in-browser.
+
+```{ojs}
+//| label: mosaic-setup
+vg = {
+  const mod = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.11.1/+esm");
+  await mod.coordinator().databaseConnector(mod.wasmConnector());
+  return mod;
+}
+```
+
+## Training Curves from Local Parquet
+
+Load a training curve Parquet file via `FileAttachment` into DuckDB-WASM, then render an interactive line chart with Mosaic vgplot.
+
+```{ojs}
+//| label: load-training-curves
+trainingLoaded = {
+  const url = await FileAttachment("data/hcrl_sa_gat_large_curriculum.parquet").url();
+  await vg.coordinator().exec(
+    vg.loadParquet("training_curves", url)
+  );
+  return true;
+}
+```
+
+```{ojs}
+//| label: fig-training-loss
+//| fig-cap: "GAT training curves (hcrl_sa, large model) — loss and accuracy per epoch, loaded from local Parquet via DuckDB-WASM."
+trainingLoaded;
+vg.plot(
+  vg.lineY(
+    vg.from("training_curves"),
+    { x: "epoch", y: "value", stroke: "metric" }
+  ),
+  {
+    width: 680,
+    height: 400,
+    color: { legend: true },
+    x: { label: "Epoch" },
+    y: { label: "Value" },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+## Metrics Overview
+
+Load the full metrics Parquet and show F1 scores across datasets.
+
+```{ojs}
+//| label: load-metrics
+metricsLoaded = {
+  const url = await FileAttachment("data/metrics.parquet").url();
+  await vg.coordinator().exec(
+    vg.loadParquet("metrics", url)
+  );
+  return true;
+}
+```
+
+```{ojs}
+//| label: fig-metrics-dot
+//| fig-cap: "Per-run best F1 scores by dataset and model type."
+metricsLoaded;
+vg.plot(
+  vg.dot(
+    vg.from("metrics", { filterBy: vg.sql`metric_name = 'f1'` }),
+    {
+      x: "dataset",
+      y: "best_value",
+      fill: "model_type",
+      r: 6
+    }
+  ),
+  {
+    width: 680,
+    height: 400,
+    color: { legend: true },
+    x: { label: "Dataset" },
+    y: { label: "F1 Score" },
+    style: { fontSize: "13px" }
+  }
+)
+```

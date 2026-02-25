@@ -20,16 +20,11 @@ Parquet-based structured storage in `data/datalake/`:
 | `training_curves/{run_id}.parquet` | Per-epoch metrics from Lightning CSV logs |
 | `analytics.duckdb` | Views + convenience queries over Parquet (always rebuildable) |
 
-**Write path**: `lakehouse.py` appends to Parquet on run completion. `cli.py` calls `register_artifacts()` after each stage.
+**Write path**: `lakehouse.py` appends to Parquet on run completion. `cli.py` calls `register_artifacts()` after each stage. S3 backup via `aws s3 sync` in SLURM job epilog (syncs Parquet, not reformatted JSON).
 
 **Read path**: `build_analytics.py` creates DuckDB views over Parquet. `export.py` reads run metadata from datalake.
 
 **Migration**: `python -m pipeline.migrate_datalake` builds initial Parquet from existing 72 runs. Idempotent.
-
-## Legacy JSON Lakehouse (Deprecated)
-
-- `pipeline/lakehouse.py` still writes per-run JSON to `data/lakehouse/runs/` as backup.
-- S3 sync is fire-and-forget to `s3://kd-gat/lakehouse/runs/`. Will be removed after datalake is stable.
 
 ## Analytics DuckDB
 

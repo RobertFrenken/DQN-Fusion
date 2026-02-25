@@ -175,12 +175,3 @@ def done_path_str(dataset: str, model_type: str, scale: str, stage: str, aux: st
     return f"{EXPERIMENT_ROOT}/{run_id_str(dataset, model_type, scale, stage, aux)}/.done"
 
 
-def lakehouse_dir() -> Path:
-    """Local lakehouse directory for structured JSON run records.
-
-    Returns $KD_GAT_DATA_ROOT/lakehouse/runs/ when set,
-    otherwise falls back to experimentruns/lakehouse/ (in-repo).
-    """
-    if _DATA_ROOT:
-        return Path(_DATA_ROOT) / "lakehouse" / "runs"
-    return Path(EXPERIMENT_ROOT) / "lakehouse"
