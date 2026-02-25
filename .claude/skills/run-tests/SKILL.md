@@ -13,19 +13,19 @@ Run the project test suite.
 
 1. **Run pytest** with the conda environment's Python:
    ```bash
-   PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT \
+   PYTHONPATH=/users/PAS2022/rf15/KD-GAT \
      /users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pytest tests/ -v $ARGUMENTS 2>&1
    ```
 
    If `$ARGUMENTS` contains a file path (ends in `.py`), pass it as the test target:
    ```bash
-   PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT \
+   PYTHONPATH=/users/PAS2022/rf15/KD-GAT \
      /users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pytest $ARGUMENTS -v 2>&1
    ```
 
    If `$ARGUMENTS` is a keyword pattern (no `.py`), use `-k`:
    ```bash
-   PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT \
+   PYTHONPATH=/users/PAS2022/rf15/KD-GAT \
      /users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pytest tests/ -v -k "$ARGUMENTS" 2>&1
    ```
 

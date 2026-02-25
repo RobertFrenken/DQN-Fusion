@@ -10,6 +10,9 @@ on:
       - "src/**"
       - "tests/**"
       - "docs/dashboard/js/**"
+      - "docs-site/src/**"
+      - "docs-site/package.json"
+      - "docs-site/astro.config.mjs"
       - "pyproject.toml"
   pull_request:
     branches: [main]
@@ -52,3 +55,17 @@ jobs:
           pip install -e ".[dev]" --no-deps
       - name: Run tests
         run: pytest tests/test_layer_boundaries.py tests/test_serve.py tests/test_registry.py -v -m "not slurm and not slow"
+
+  docs-site-build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Install dependencies
+        working-directory: docs-site
+        run: npm install
+      - name: Build Astro site
+        working-directory: docs-site
+        run: npm run build

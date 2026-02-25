@@ -58,6 +58,15 @@ Examples of structural vs transient:
 - `OSError: [Errno 116] Stale file handle` → **transient** (NFS contention). Retry is reasonable once.
 - Same Prefect/SLURM error across 3 different flag combinations → **structural**. Stop, read the docs or error message, fix the flow definition.
 
+## Node.js / Astro (docs-site)
+
+- **Runtime**: Node.js 22.12.0 via `module load node-js/22.12.0`.
+- **Package manager**: npm only (no pnpm/yarn). Lock file is `package-lock.json`.
+- **D3 imports**: Use `import * as d3 from 'd3'` (npm ES module). Never use CDN `<script>` tags or `window.d3`.
+- **Svelte + D3**: Use `client:only="svelte"` for any component that touches the DOM directly (D3 needs `document`/`window`). Never use `client:load` or `client:visible` for D3 wrappers — they attempt SSR which crashes.
+- **File organization**: D3 chart classes in `src/lib/d3/`, Svelte wrappers in `src/components/`, pages in `src/pages/`.
+- **Login node safe**: `npm install` and `npm run build` are fine on login nodes (lightweight, no GPU).
+
 ## Git
 
 - Commit messages: short summary line, body explains why not what.
@@ -71,7 +80,7 @@ Examples of structural vs transient:
 ```bash
 # Required prefix for ALL Python commands:
 export PATH="$HOME/.conda/envs/gnn-experiments/bin:$PATH"
-export PYTHONPATH=/users/PAS2022/rf15/CAN-Graph-Test/KD-GAT:$PYTHONPATH
+export PYTHONPATH=/users/PAS2022/rf15/KD-GAT:$PYTHONPATH
 
 # Then run the actual command:
 python -m pipeline.cli ...
@@ -91,7 +100,7 @@ For Prefect-submitted SLURM jobs, the dask-jobqueue SLURMCluster handles environ
 - Test on small datasets (`hcrl_ch`) before large ones (`set_02`+).
 - SLURM logs go to `slurm_logs/`, experiment outputs to `experimentruns/`.
 - Heavy tests use `@pytest.mark.slurm` — auto-skipped on login nodes, run via `scripts/run_tests_slurm.sh`.
-- **Always run tests via SLURM** (`cpu` partition, 8 CPUs, 16GB) — login nodes are too slow (tests take 2-5 min on SLURM vs 10+ min on login). Submit with: `sbatch --account=PAS3209 --partition=cpu --time=15 --mem=16G --cpus-per-task=8 --job-name=pytest --output=slurm_logs/%j-pytest.out --wrap='module load miniconda3/24.1.2-py310 && source activate gnn-experiments && cd /users/PAS2022/rf15/CAN-Graph-Test/KD-GAT && python -m pytest tests/ -v'`
+- **Always run tests via SLURM** (`cpu` partition, 8 CPUs, 16GB) — login nodes are too slow (tests take 2-5 min on SLURM vs 10+ min on login). Submit with: `sbatch --account=PAS3209 --partition=cpu --time=15 --mem=16G --cpus-per-task=8 --job-name=pytest --output=slurm_logs/%j-pytest.out --wrap='module load miniconda3/24.1.2-py310 && source activate gnn-experiments && cd /users/PAS2022/rf15/KD-GAT && python -m pytest tests/ -v'`
 - Note: `serial` partition no longer exists on OSC Pitzer — all scripts now use `cpu` partition.
 
 ## Session Management

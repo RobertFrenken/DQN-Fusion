@@ -217,7 +217,7 @@ docs/dashboard/js/
 - **Home**: `/users/PAS2022/rf15/` — NFS v4, 1.7TB — permanent, safe for checkpoints
 - **Scratch**: `/fs/scratch/PAS1266/` — GPFS (IBM Spectrum Scale), 90-day purge
 - **Git remote**: `git@github.com:RobertFrenken/DQN-Fusion.git` (SSH)
-- **Python**: uv venv `.venv/` (`source ~/CAN-Graph-Test/KD-GAT/.venv/bin/activate`)
+- **Python**: uv venv `.venv/` (`source ~/KD-GAT/.venv/bin/activate`)
 - **Key packages**: PyTorch 2.8.0+cu128, PyG 2.7.0, Lightning, Pydantic v2, W&B, Ray
 - **Package manager**: uv (lockfile: `uv.lock`, config: `pyproject.toml [tool.uv]`)
 - **SLURM account**: PAS3209, gpu partition, V100 GPUs

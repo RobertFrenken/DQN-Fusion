@@ -91,3 +91,8 @@ docs/dashboard/data/**/*.json
 *.jpeg
 *.pdf
 *.svg
+
+# ===== DOCS SITE (ASTRO) =====
+docs-site/node_modules/
+docs-site/dist/
+docs-site/.astro/

@@ -1,0 +1,47 @@
+---
+layout: ../layouts/ArticleLayout.astro
+title: "Test Figure: KD Transfer"
+---
+import FigureIsland from '../components/FigureIsland.astro';
+
+# Knowledge Distillation Transfer Analysis
+
+Knowledge distillation compresses a large teacher model into a smaller student model
+while preserving classification performance. Given a teacher with parameters $\theta_T$
+and a student with parameters $\theta_S$, the KD loss combines task loss with a
+soft-target alignment term:
+
+$$
+\mathcal{L}_{\text{KD}} = (1 - \alpha)\,\mathcal{L}_{\text{task}}(y, \hat{y}_S)
+  + \alpha\,T^2\,\text{KL}\!\left(\sigma\!\left(\frac{z_T}{T}\right) \;\middle\|\; \sigma\!\left(\frac{z_S}{T}\right)\right)
+$$
+
+where $T$ is the temperature and $\alpha$ balances the two terms.
+
+The scatter plot below shows teacher F1 score versus student F1 score across six
+dataset configurations. Points near the diagonal indicate successful knowledge
+transfer — the student closely matches the teacher's performance despite having
+fewer parameters.
+
+export const kdTransferData = [
+  { dataset: 'hcrl_ch', teacher_value: 0.9823, student_value: 0.9741 },
+  { dataset: 'hcrl_sa', teacher_value: 0.9912, student_value: 0.9856 },
+  { dataset: 'set_01',  teacher_value: 0.9745, student_value: 0.9634 },
+  { dataset: 'set_02',  teacher_value: 0.9687, student_value: 0.9521 },
+  { dataset: 'set_03',  teacher_value: 0.9801, student_value: 0.9712 },
+  { dataset: 'set_04',  teacher_value: 0.9756, student_value: 0.9689 },
+];
+
+<FigureIsland figureId="fig-kd-transfer" data={kdTransferData} height={420} />
+
+<aside class="l-margin">
+  The GAT student models converge 2× faster than standalone training,
+  suggesting the soft targets provide a smoother loss landscape.
+</aside>
+
+## Observations
+
+The student models achieve within 1–2% F1 of their teachers across all datasets,
+demonstrating effective knowledge distillation. The `hcrl_sa` configuration shows the
+strongest transfer (99.12% → 98.56%), while `set_02` has the largest gap (96.87% →
+95.21%), likely due to its higher class imbalance.

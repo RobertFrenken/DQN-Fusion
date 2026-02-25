@@ -79,6 +79,10 @@ uvicorn pipeline.serve:app --host 0.0.0.0 --port 8000
 
 # Check SLURM jobs
 squeue -u $USER
+
+# Docs site (Astro) — requires: module load node-js/22.12.0
+cd docs-site && npm run dev      # Dev server at localhost:4321 (--host 0.0.0.0 for SSH tunnel)
+cd docs-site && npm run build    # Static build → docs-site/dist/
 ```
 
 ## Project Structure (3-layer hierarchy)
@@ -125,6 +129,21 @@ docs/dashboard/     # GitHub Pages D3.js dashboard (ES modules, config-driven pa
   js/panels/        # PanelManager + panelConfig (11 panels, declarative)
   js/app.js         # Slim entry point
   data/             # Static JSON exports from pipeline
+docs-site/          # Astro 5 + Svelte 5 interactive research paper site
+  src/components/   # D3Chart.svelte (generic, all chart types), FigureIsland.astro, D3Scatter.svelte (legacy)
+  src/components/figures/  # Interactive figure islands (EmbeddingsFigure, TrainingCurvesFigure, RocCurvesFigure)
+  src/config/       # figures.ts (paper figure registry), shared.ts (ChartType, LayoutWidth)
+  src/content.config.ts  # Astro Content Collections (Zod schemas for catalog JSON)
+  src/data/         # Catalog JSON (synced from docs/dashboard/data/ by scripts/sync-data.sh)
+  src/layouts/      # ArticleLayout.astro (CSS Grid Distill-style layout, KaTeX, chart styles)
+  src/lib/d3/       # All 11 D3 chart classes + BaseChart + Theme + ThemeLight
+  src/lib/data.ts   # Typed fetch helpers for per-run data (envelope unwrapping)
+  src/lib/resource.svelte.ts  # Reactive fetch-on-state-change for Svelte 5
+  src/pages/        # index.astro, test-figure.mdx, showcase.astro
+  scripts/sync-data.sh  # Sync dashboard data → src/data/ + public/data/ symlink
+  public/data/      # Symlink → docs/dashboard/data/ (runtime fetch for per-run data)
+  astro.config.mjs  # Astro config (svelte + mdx + remark-math + rehype-katex)
+  package.json      # Node.js dependencies (astro, svelte, d3, remark-math, rehype-katex)
 ```
 
 ## Config System
@@ -175,6 +194,7 @@ These fix real crashes -- do not violate:
 - Orchestration: Ray (`pipeline/orchestration/`) with `@ray.remote` tasks. `train_pipeline()` fans out per-dataset work concurrently via `dataset_pipeline` remote functions; `eval_pipeline()` re-runs evaluation only. Each stage task dispatches via subprocess for clean CUDA context. `--local` flag uses Ray local mode. HPO via Ray Tune with OptunaSearch + ASHAScheduler.
 - Archive restore: `cli.py` archives previous runs before re-running, and restores the archive if the new run fails.
 - Inference serving: `pipeline/serve.py` provides FastAPI endpoints (`/predict`, `/health`) loading VGAE+GAT+DQN from `experimentruns/`.
+- **Docs site (Astro + Svelte)**: Astro 5 static site with Svelte 5 islands for interactive figures. Architecture: `figures.ts` registry → `FigureIsland.astro` (layout/caption) → `D3Chart.svelte` (generic, `import.meta.glob` registry) → `BaseChart` → chart class. All 11 D3 chart types adapted with `import * as d3 from 'd3'`. Hybrid data pipeline: Content Collections with Zod schemas for catalog data (build-time), client-side fetch for per-run data (runtime). CSS Grid layout (Distill-inspired: `.l-body`/`.l-wide`/`.l-full`/`.l-margin`). KaTeX for math (server-side via remark-math + rehype-katex). Interactive figures (embeddings, training curves, ROC) use Svelte 5 runes for state + `resource.svelte.ts` for reactive fetch. Run `scripts/sync-data.sh` after `pipeline/export.py` to update site data. Deploy target TBD (Cloudflare Pages).
 - Dashboard: Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types inherit from it. `PanelManager` reads config → builds nav + panels + controls → lazy-loads data → renders. All chart types registered in `Registry`.
 - Dashboard data: `export.py` scans `experimentruns/` filesystem for `config.json` and `metrics.json` files. No database dependency. Artifacts (`embeddings.npz`, `dqn_policy.json`, etc.) are read directly from run directories. `--skip-heavy` runs light exports (~2s, safe on login node); `--only-heavy` runs CPU-intensive exports (UMAP, attention, graph samples) via SLURM. Dashboard JS fetches from `s3://kd-gat/dashboard/` with `data/` fallback for local dev.
 - Dataset catalog: `config/datasets.yaml` — single place to register new datasets.
@@ -189,6 +209,7 @@ These fix real crashes -- do not violate:
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
 - **Tracking**: W&B (project `kd-gat`) + S3 lakehouse (JSON on `s3://kd-gat/lakehouse/`)
+- **Node.js**: 22.12.0 via `module load node-js/22.12.0` (npm 10.9.0). Used for docs-site only.
 - **Dashboard**: https://robertfrenken.github.io/DQN-Fusion/ (GitHub Pages from `docs/`)
 
 ## Environment Variables
@@ -330,6 +351,9 @@ This project interacts with two other repos. Changes in one may require updates 
 | Ray Tune | https://docs.ray.io/en/latest/tune/index.html |
 | OSC Documentation | https://www.osc.edu/resources/technical_support/supercomputers/pitzer |
 | SLURM | https://slurm.schedmd.com/documentation.html |
+| Astro | https://docs.astro.build/ |
+| Svelte 5 | https://svelte.dev/docs |
+| D3.js | https://d3js.org/ |
 | Claude Code | https://docs.anthropic.com/en/docs/claude-code/ |
 | DuckDB | https://duckdb.org/docs/ |
 | Ruff | https://docs.astral.sh/ruff/ |

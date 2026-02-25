@@ -1,0 +1,20 @@
+{
+  "name": "kd-gat-docs-site",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev --host 0.0.0.0",
+    "build": "astro build",
+    "preview": "astro preview --host 0.0.0.0"
+  },
+  "dependencies": {
+    "@astrojs/mdx": "^4.0",
+    "@astrojs/svelte": "^7.0",
+    "astro": "^5.3",
+    "d3": "^7.9",
+    "rehype-katex": "^7.0.1",
+    "remark-math": "^6.0.0",
+    "svelte": "^5.0"
+  }
+}

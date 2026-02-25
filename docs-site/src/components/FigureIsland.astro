@@ -1,0 +1,42 @@
+---
+/**
+ * FigureIsland: Resolves a figure from the registry, applies layout width,
+ * and renders a D3Chart island with caption.
+ *
+ * Usage in MDX:
+ *   <FigureIsland figureId="fig-kd-transfer" data={myData} />
+ *
+ * For static figures with data passed as prop.
+ * For interactive figures that fetch their own data, use a custom Svelte island instead.
+ */
+import { getFigure } from '../config/figures';
+import D3Chart from './D3Chart.svelte';
+
+interface Props {
+  figureId: string;
+  data?: unknown;
+  options?: Record<string, unknown>;
+  height?: number;
+}
+
+const { figureId, data, options = {}, height } = Astro.props;
+const fig = getFigure(figureId);
+const mergedOptions = { ...fig.defaultOptions, ...options };
+const layoutClass = `l-${fig.layout}`;
+const chartHeight = height ?? (fig.defaultOptions.height as number | undefined) ?? 400;
+---
+
+<div class={layoutClass}>
+  <figure>
+    <D3Chart
+      client:only="svelte"
+      chartType={fig.chartType}
+      data={data}
+      options={mergedOptions}
+      height={chartHeight}
+    />
+    <figcaption>
+      <strong>Figure {fig.number}.</strong> {fig.caption}
+    </figcaption>
+  </figure>
+</div>
