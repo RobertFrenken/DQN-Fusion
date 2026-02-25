@@ -1,3 +1,12 @@
+---
+paths:
+  - "pipeline/lakehouse.py"
+  - "pipeline/export.py"
+  - "pipeline/build_analytics.py"
+  - "pipeline/cli.py"
+  - "data/datalake/**"
+---
+
 # KD-GAT Experiment Tracking
 
 ## W&B

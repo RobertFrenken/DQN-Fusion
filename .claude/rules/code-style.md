@@ -17,8 +17,8 @@ When adding new code:
 
 ## General Style
 
-- Don't over-engineer. Minimal changes, no speculative abstractions.
-- Don't add docstrings, comments, or type annotations to code that wasn't changed.
+- Make minimal, targeted changes. Prefer the simplest solution; avoid speculative abstractions.
+- Leave untouched code untouched — only add docstrings, comments, or type annotations to lines you changed.
 - If something is unused, delete it completely. No compatibility shims.
 
 ## Iteration Hygiene

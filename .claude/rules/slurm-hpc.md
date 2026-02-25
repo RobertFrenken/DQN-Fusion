@@ -11,7 +11,7 @@
 
 ## Rules
 
-- Always use `spawn` multiprocessing, never `fork` with CUDA.
+- Spawn/fork CUDA rule: See critical-constraints.md.
 - Test on small datasets (`hcrl_ch`) before large ones (`set_02`+).
 - SLURM logs go to `slurm_logs/`, experiment outputs to `experimentruns/`.
 - Heavy tests use `@pytest.mark.slurm` — auto-skipped on login nodes.

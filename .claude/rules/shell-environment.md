@@ -1,3 +1,10 @@
+---
+paths:
+  - "scripts/**"
+  - "*.sh"
+  - "pyproject.toml"
+---
+
 # KD-GAT Shell Environment (CANONICAL)
 
 **Updated 2026-02-24.** This is the canonical shell environment for KD-GAT. Uses uv + `.venv/`, NOT conda.

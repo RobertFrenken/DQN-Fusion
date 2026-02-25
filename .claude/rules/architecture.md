@@ -1,11 +1,6 @@
 # KD-GAT Architecture Decisions
 
-## 3-Layer Import Hierarchy
-
-Enforced by `tests/test_layer_boundaries.py`:
-- `config/` → never imports from `pipeline/` or `src/`. Pure data definitions + path helpers.
-- `pipeline/` → imports `config/` at top level; imports `src/` only inside functions (lazy).
-- `src/` → imports `config.constants` for shared constants; never imports from `pipeline/`.
+> Import hierarchy: See code-style.md (enforced by tests/test_layer_boundaries.py).
 
 ## Config Architecture
 
@@ -14,11 +9,7 @@ Enforced by `tests/test_layer_boundaries.py`:
 - Auxiliaries: `cfg.auxiliaries` is a list of `AuxiliaryConfig`. KD is a composable loss modifier, not a model identity. Use `cfg.has_kd` / `cfg.kd` properties.
 - Constants: domain/infrastructure constants live in `config/constants.py` (not in PipelineConfig). Hyperparameters live in PipelineConfig.
 
-## Experiment Tracking
-
-- W&B (online/offline) for live metrics + S3 lakehouse for structured JSON.
-- `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle; Lightning's `WandbLogger` attaches to the active run.
-- Compute nodes auto-set `WANDB_MODE=offline`.
+> Experiment tracking (W&B, datalake, DuckDB): See experiment-tracking.md.
 
 ## Orchestration
 

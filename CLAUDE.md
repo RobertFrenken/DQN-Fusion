@@ -39,6 +39,10 @@ cd docs-site && npm run dev
 cd docs-site && npm run build
 ```
 
+## Session Start
+
+Always read `PLAN.md` before starting work. Update it after completing any task.
+
 ## Skills
 
 | Skill | Usage | Description |
