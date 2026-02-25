@@ -1,9 +1,9 @@
 """Export experiment results to static JSON for the GitHub Pages dashboard.
 
 Data sources:
-  - Filesystem: experimentruns/{ds}/{run}/metrics.json, config.json
+  - Datalake: data/datalake/*.parquet (primary — metadata + metrics)
+  - Filesystem: experimentruns/{ds}/{run}/ (binary artifacts)
   - Catalog: config/datasets.yaml
-  - Artifacts: embeddings.npz, attention_weights.npz, dqn_policy.json, cka_matrix.json
 
 Usage:
     python -m pipeline.export [--output-dir docs/dashboard/data]
@@ -26,6 +26,7 @@ log = logging.getLogger(__name__)
 
 DEFAULT_OUTPUT_DIR = Path("docs/dashboard/data")
 EXPERIMENT_ROOT = Path("experimentruns")
+_DATALAKE_ROOT = Path("data/datalake")
 
 
 def _versioned_envelope(data: list | dict) -> dict:
@@ -38,15 +39,63 @@ def _versioned_envelope(data: list | dict) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# Filesystem scanning helpers
+# Data source: datalake Parquet (primary) with filesystem fallback
 # ---------------------------------------------------------------------------
 
 def _scan_runs() -> list[dict]:
-    """Scan experimentruns/ for completed runs with config.json.
+    """Load run metadata from datalake Parquet, with filesystem dir paths.
 
-    Returns list of dicts with run metadata extracted from config.json
-    and filesystem structure.
+    Falls back to filesystem scan if datalake doesn't exist.
     """
+    runs_parquet = _DATALAKE_ROOT / "runs.parquet"
+    if runs_parquet.exists():
+        return _scan_runs_from_datalake()
+    return _scan_runs_from_filesystem()
+
+
+def _scan_runs_from_datalake() -> list[dict]:
+    """Read run metadata from datalake Parquet, attach filesystem paths."""
+    import duckdb
+
+    datalake = str(_DATALAKE_ROOT)
+    con = duckdb.connect()
+    rows = con.execute(f"""
+        SELECT run_id, dataset, model_type, scale, stage, has_kd, success
+        FROM '{datalake}/runs.parquet'
+        ORDER BY dataset, run_id
+    """).fetchall()
+    con.close()
+
+    runs = []
+    for run_id, dataset, model_type, scale, stage, has_kd, success in rows:
+        run_dir = EXPERIMENT_ROOT / run_id
+        if not run_dir.is_dir():
+            continue
+        cfg_path = run_dir / "config.json"
+        try:
+            cfg = json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+        except Exception:
+            cfg = {}
+
+        has_metrics = (run_dir / "metrics.json").exists()
+        has_checkpoint = (run_dir / "best_model.pt").exists()
+
+        runs.append({
+            "run_id": run_id,
+            "dataset": dataset,
+            "model_type": model_type,
+            "scale": scale,
+            "stage": stage,
+            "has_kd": 1 if has_kd else 0,
+            "status": "complete" if has_metrics or has_checkpoint else "running",
+            "config": cfg,
+            "dir": run_dir,
+        })
+    return runs
+
+
+def _scan_runs_from_filesystem() -> list[dict]:
+    """Legacy filesystem scan (fallback when datalake doesn't exist)."""
     runs = []
     if not EXPERIMENT_ROOT.is_dir():
         return runs
@@ -65,7 +114,6 @@ def _scan_runs() -> list[dict]:
             except Exception:
                 continue
 
-            # Prefer config.json fields, fall back to directory name parsing
             parts = run_dir.name.split("_")
             model_type = cfg.get("model_type") or (parts[0] if parts else "")
             scale = cfg.get("scale") or (parts[1] if len(parts) > 1 else "")
@@ -114,6 +162,21 @@ def _load_eval_metrics(run_dir: Path) -> dict | None:
 # Export functions (DB-free: read from filesystem)
 # ---------------------------------------------------------------------------
 
+_MODEL_KEYS = ("gat", "vgae", "fusion")
+
+
+def _extract_core_metrics(metrics: dict, base: dict, target_metrics: set) -> list[dict]:
+    """Extract core metrics across model keys, returning rows with base fields merged in."""
+    rows = []
+    for model_key in _MODEL_KEYS:
+        core = metrics.get(model_key, {}).get("core", {})
+        for name in target_metrics:
+            val = core.get(name)
+            if isinstance(val, (int, float)):
+                rows.append({**base, "model": model_key, "metric_name": name, "best_value": round(val, 6)})
+    return rows
+
+
 def export_leaderboard(output_dir: Path) -> Path:
     """Best F1/accuracy per model x dataset x scale from evaluation metrics.json files."""
     target_metrics = {"f1", "accuracy", "precision", "recall", "auc", "mcc"}
@@ -126,20 +189,11 @@ def export_leaderboard(output_dir: Path) -> Path:
         if not metrics:
             continue
 
-        for model_key in ("gat", "vgae", "fusion"):
-            model_data = metrics.get(model_key, {})
-            core = model_data.get("core", {})
-            for metric_name in target_metrics:
-                if metric_name in core and isinstance(core[metric_name], (int, float)):
-                    rows.append({
-                        "dataset": run["dataset"],
-                        "model_type": run["model_type"],
-                        "scale": run["scale"],
-                        "has_kd": run["has_kd"],
-                        "model": model_key,
-                        "metric_name": metric_name,
-                        "best_value": round(core[metric_name], 6),
-                    })
+        base = {
+            "dataset": run["dataset"], "model_type": run["model_type"],
+            "scale": run["scale"], "has_kd": run["has_kd"],
+        }
+        rows.extend(_extract_core_metrics(metrics, base, target_metrics))
 
     out = output_dir / "leaderboard.json"
     out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
@@ -200,7 +254,7 @@ def export_metrics(output_dir: Path) -> Path:
             continue
 
         rows = []
-        for model_key in ("gat", "vgae", "fusion"):
+        for model_key in _MODEL_KEYS:
             model_data = metrics.get(model_key, {})
             for scenario_type in ("core", "additional"):
                 section = model_data.get(scenario_type, {})
@@ -231,7 +285,7 @@ def export_metric_catalog(output_dir: Path) -> Path:
         metrics = _load_eval_metrics(run["dir"])
         if not metrics:
             continue
-        for model_key in ("gat", "vgae", "fusion"):
+        for model_key in _MODEL_KEYS:
             model_data = metrics.get(model_key, {})
             for section in ("core", "additional"):
                 all_names.update(
@@ -300,7 +354,7 @@ def export_kd_transfer(output_dir: Path) -> Path:
         if not t_metrics or not s_metrics:
             continue
 
-        for model_key in ("gat", "vgae", "fusion"):
+        for model_key in _MODEL_KEYS:
             t_core = t_metrics.get(model_key, {}).get("core", {})
             s_core = s_metrics.get(model_key, {}).get("core", {})
             for mn in target_metrics:
@@ -752,7 +806,7 @@ def export_roc_curves(output_dir: Path) -> Path:
             metrics = json.loads(mp.read_text())
             run_id = f"{ds_dir.name}_{run_dir.name}"
 
-            for model_key in ("vgae", "gat", "fusion"):
+            for model_key in _MODEL_KEYS:
                 model_metrics = metrics.get(model_key, {})
                 additional = model_metrics.get("additional", {})
                 roc = additional.get("roc_curve")

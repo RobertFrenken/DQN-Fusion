@@ -24,6 +24,9 @@ Enforced by `tests/test_layer_boundaries.py`:
 
 - Ray (`pipeline/orchestration/`) with `@ray.remote` tasks. `train_pipeline()` fans out per-dataset work concurrently.
 - `--local` flag uses Ray local mode. HPO via Ray Tune with OptunaSearch + ASHAScheduler.
+- **Subprocess dispatch**: Each stage runs as `subprocess.run()` for clean CUDA context. Overhead (~3-5s) is negligible vs training time (minutes-hours). CUDA contexts (~300-500 MB) are not reclaimable without process restart.
+- **Per-stage granularity**: Finer (per-epoch) has massive scheduling overhead; coarser (per-variant) loses ability to re-run single stages.
+- **Checkpoint passing**: Filesystem paths, not Ray object store (subprocesses can't access object store; checkpoints are small; path-based is debuggable).
 - Archive restore: `cli.py` archives previous runs before re-running, restores on failure.
 
 ## Inference Serving

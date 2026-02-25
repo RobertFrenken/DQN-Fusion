@@ -16,7 +16,8 @@
 | **Graph caching** | All 6 datasets cached with test scenarios (`processed_graphs.pt` + `test_*.pt`). DynamicBatchSampler for variable-size graphs. |
 | **DVC tracking** | Raw data + cache tracked. S3 remote + local scratch remote configured. |
 | **Export pipeline** | 16 exporters with `--skip-heavy`/`--only-heavy` split. Light exports ~2s on login node; heavy exports (UMAP/attention/graph samples) via SLURM. Now supports t-SNE method. |
-| **S3 lakehouse** | Fire-and-forget per-run JSON sync to `s3://kd-gat/lakehouse/runs/`. |
+| **Datalake** | Parquet-based structured storage in `data/datalake/` (runs, metrics, configs, artifacts, training curves). DuckDB analytics views. |
+| **S3 lakehouse** | Legacy per-run JSON sync to `s3://kd-gat/lakehouse/runs/` (deprecated, will be removed). |
 | **S3 dashboard data** | Public read + CORS configured on `s3://kd-gat/dashboard/`. Dashboard JS fetches from S3 with `data/` fallback for local dev. |
 | **Dashboard** | Live at https://robertfrenken.github.io/DQN-Fusion/. D3.js v7 ES modules, 27 panels, config-driven via `panelConfig.js`. |
 | **Test suite** | 108 tests (88 passed, 20 skipped). All passing on CPU fallback after RAPIDS integration. |
@@ -88,7 +89,7 @@ All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
 - **RAPIDS Phase 1** (2026-02-20): GPU-accelerated dimensionality reduction + preprocessing with CPU fallback. 108 tests passing.
 - **Dashboard rework** (2026-02-17/18): S3 data source migration, embedding panel fix, timestamp support, color theme update
 - **Export bug fixes** (2026-02-18): `_scan_runs` config.json parsing, `training_curves` index.json generation
-- **PR #2 merged** (2026-02-18): Full platform migration from Snakemake/SQLite to W&B/Prefect/S3
+- **PR #2 merged** (2026-02-18): Full platform migration from Snakemake/SQLite to W&B/Ray/S3
 - **72 training runs complete** across 6 datasets × 12 configurations
 
 ## Data Flow
@@ -98,7 +99,7 @@ Raw CAN CSVs (6 datasets, 10.8 GB, DVC)
   → Graph Cache (processed_graphs.pt + test_*.pt, DVC)
     → Training Pipeline (VGAE → GAT → DQN, large + small + small-KD)
       → Evaluation (metrics + embeddings + attention + policy)
-        → W&B (77 online) | S3 Lakehouse (DuckDB) | experimentruns/ (72 on disk)
+        → W&B (77 online) | Datalake (Parquet) | experimentruns/ (72 on disk)
           → Export Pipeline (16 exporters, --skip-heavy/--only-heavy, GPU via RAPIDS)
             → S3 Dashboard Bucket (s3://kd-gat/dashboard/)
               → GitHub Pages Dashboard (27 panels, D3.js v7)
@@ -108,7 +109,7 @@ Raw CAN CSVs (6 datasets, 10.8 GB, DVC)
 
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
-- **Prefect home**: `/fs/scratch/PAS1266/.prefect/`
+- **Ray temp**: `/fs/scratch/PAS1266/.ray/`
 - **W&B**: Project `kd-gat` (offline on compute nodes, sync later)
 - **Dashboard**: `docs/dashboard/` (GitHub Pages — static JSON + D3.js)
-- **Conda**: `gnn-experiments` (CPU, auto-loaded), `gnn-rapids` (GPU, not yet created)
+- **Conda**: `gnn-rapids` (GPU, not yet created — for RAPIDS only)

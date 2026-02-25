@@ -3,7 +3,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv, GATv2Conv, TransformerConv, JumpingKnowledge, global_mean_pool
 from torch_geometric.nn.aggr import MultiAggregation
-from torch.utils.checkpoint import checkpoint
+from ._utils import checkpoint_conv
 
 
 def _make_conv(conv_type: str, in_dim: int, out_dim: int, heads: int, edge_dim: int | None = None, **kwargs):
@@ -106,22 +106,9 @@ class GATWithJK(nn.Module):
                 x = x.relu()
                 attention_weights.append(alpha.detach().cpu())
             elif self.use_checkpointing and x.requires_grad:
-                # IMPORTANT: Use default args to capture conv and edge_index by value
-                if edge_attr is not None:
-                    x = checkpoint(
-                        lambda x_in, c=conv, ei=edge_index, ea=edge_attr: c(x_in, ei, ea).relu(),
-                        x, use_reentrant=False,
-                    )
-                else:
-                    x = checkpoint(
-                        lambda x_in, c=conv, ei=edge_index: c(x_in, ei).relu(),
-                        x, use_reentrant=False,
-                    )
+                x = checkpoint_conv(conv, x, edge_index, edge_attr).relu()
             else:
-                if edge_attr is not None:
-                    x = conv(x, edge_index, edge_attr).relu()
-                else:
-                    x = conv(x, edge_index).relu()
+                x = (conv(x, edge_index, edge_attr) if edge_attr is not None else conv(x, edge_index)).relu()
             x = F.dropout(x, p=self.dropout, training=self.training)
             xs.append(x)
         if return_attention_weights:

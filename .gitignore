@@ -35,6 +35,7 @@ experimentruns/
 # ===== PROJECT DATABASE =====
 data/project.db
 data/lakehouse/
+data/datalake/
 
 # ===== IDE & EDITOR FILES =====
 .vscode/

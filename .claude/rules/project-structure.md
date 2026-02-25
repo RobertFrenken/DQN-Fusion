@@ -25,9 +25,11 @@ pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from
     temporal.py     # Temporal graph classification (GAT encoder + Transformer over time)
   orchestration/    # Ray orchestration (ray_pipeline, ray_slurm, tune_config)
   tracking.py       # Memory monitoring utilities
-  export.py         # Filesystem → static JSON export for dashboard
+  export.py         # Datalake/filesystem → static JSON export for dashboard
   memory.py         # GPU memory management (static, measured, trial-based batch sizing)
-  lakehouse.py      # Fire-and-forget sync to S3 lakehouse
+  lakehouse.py      # Datalake Parquet append + S3 JSON backup (fire-and-forget)
+  migrate_datalake.py  # One-time migration: filesystem → Parquet datalake
+  build_analytics.py   # DuckDB views over datalake Parquet
 src/                # Layer 3: Domain (models, training, preprocessing; imports config/)
   models/           # vgae.py, gat.py, dqn.py, temporal.py
   explain.py        # GNNExplainer integration (feature importance analysis)
@@ -36,6 +38,8 @@ src/                # Layer 3: Domain (models, training, preprocessing; imports 
 data/
   automotive/       # 6 datasets (DVC-tracked): hcrl_ch, hcrl_sa, set_01-04
   cache/            # Preprocessed graph cache (.pt, .pkl, metadata)
+  datalake/         # Parquet structured storage (runs, metrics, configs, artifacts, training_curves/)
+                    # analytics.duckdb (views over Parquet)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json, embeddings.npz, dqn_policy.json, explanations.npz
 scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh, build_test_cache.sh, sweep.sh, etc.)
 docs/dashboard/     # GitHub Pages D3.js dashboard (ES modules, config-driven panels)

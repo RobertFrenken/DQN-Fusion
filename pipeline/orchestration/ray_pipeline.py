@@ -1,7 +1,5 @@
 """Ray-based pipeline orchestration for KD-GAT.
 
-Faithfully replicates the Prefect DAG from pipeline/flows/train_flow.py:
-
     preprocess ──┬──► large pipeline (vgae → gat → dqn → eval)
                  │         │ teacher checkpoints
                  │         ▼
@@ -9,8 +7,8 @@ Faithfully replicates the Prefect DAG from pipeline/flows/train_flow.py:
                  │
                  └──► small_nokd pipeline (vgae → gat → dqn → eval)
 
-Each stage runs as a subprocess for clean CUDA context, matching the
-original design. Ray handles DAG scheduling and per-dataset fan-out.
+Each stage runs as a subprocess for clean CUDA context.
+Ray handles DAG scheduling and per-dataset fan-out.
 
 Usage:
     python -m pipeline.cli flow --dataset hcrl_sa
@@ -23,6 +21,7 @@ from __future__ import annotations
 import logging
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 import ray
@@ -33,7 +32,7 @@ _PY = sys.executable
 
 
 # ---------------------------------------------------------------------------
-# Subprocess dispatch (same as Prefect version)
+# Subprocess dispatch
 # ---------------------------------------------------------------------------
 
 def _run_stage(
@@ -47,7 +46,8 @@ def _run_stage(
     """Run a pipeline stage as a subprocess via the CLI.
 
     Using subprocess ensures each stage gets a clean CUDA context
-    (critical for spawn multiprocessing).
+    (critical for spawn multiprocessing). Logs wall-clock timing
+    for benchmarking subprocess overhead vs training time.
     """
     cmd = [
         _PY, "-m", "pipeline.cli", stage,
@@ -60,7 +60,13 @@ def _run_stage(
         cmd.extend(["--teacher-path", teacher_path])
 
     log.info("Running: %s", " ".join(cmd))
+    t0 = time.monotonic()
     result = subprocess.run(cmd, check=True, capture_output=False)
+    elapsed = time.monotonic() - t0
+    log.info(
+        "Stage %s/%s/%s completed in %.1fs (dataset=%s)",
+        model, scale, stage, elapsed, dataset,
+    )
     return result
 
 
@@ -80,60 +86,26 @@ def task_preprocess(dataset: str) -> None:
     log.info("Preprocessed cache ready for %s", dataset)
 
 
-@ray.remote(num_gpus=1)
-def task_vgae(
-    dataset: str,
-    scale: str,
-    auxiliaries: str = "none",
-    teacher_path: str | None = None,
-) -> str:
-    """Train VGAE. Returns checkpoint path."""
-    _run_stage("autoencoder", "vgae", scale, dataset, auxiliaries, teacher_path)
-    from config.resolver import resolve
-    from config import checkpoint_path
-
-    cfg = resolve("vgae", scale, auxiliaries=auxiliaries, dataset=dataset)
-    return str(checkpoint_path(cfg, "autoencoder"))
+def _make_stage_task(stage: str, model: str):
+    """Factory for Ray remote tasks that train a model and return its checkpoint path."""
+    @ray.remote(num_gpus=1)
+    def task(dataset: str, scale: str, auxiliaries: str = "none", teacher_path: str | None = None) -> str:
+        _run_stage(stage, model, scale, dataset, auxiliaries, teacher_path)
+        from config.resolver import resolve
+        from config import checkpoint_path
+        cfg = resolve(model, scale, auxiliaries=auxiliaries, dataset=dataset)
+        return str(checkpoint_path(cfg, stage))
+    task.__name__ = f"task_{model}"
+    return task
 
 
-@ray.remote(num_gpus=1)
-def task_gat(
-    dataset: str,
-    scale: str,
-    auxiliaries: str = "none",
-    teacher_path: str | None = None,
-) -> str:
-    """Train GAT with curriculum learning. Returns checkpoint path."""
-    _run_stage("curriculum", "gat", scale, dataset, auxiliaries, teacher_path)
-    from config.resolver import resolve
-    from config import checkpoint_path
-
-    cfg = resolve("gat", scale, auxiliaries=auxiliaries, dataset=dataset)
-    return str(checkpoint_path(cfg, "curriculum"))
+task_vgae = _make_stage_task("autoencoder", "vgae")
+task_gat = _make_stage_task("curriculum", "gat")
+task_dqn = _make_stage_task("fusion", "dqn")
 
 
 @ray.remote(num_gpus=1)
-def task_dqn(
-    dataset: str,
-    scale: str,
-    auxiliaries: str = "none",
-    teacher_path: str | None = None,
-) -> str:
-    """Train DQN fusion agent. Returns checkpoint path."""
-    _run_stage("fusion", "dqn", scale, dataset, auxiliaries, teacher_path)
-    from config.resolver import resolve
-    from config import checkpoint_path
-
-    cfg = resolve("dqn", scale, auxiliaries=auxiliaries, dataset=dataset)
-    return str(checkpoint_path(cfg, "fusion"))
-
-
-@ray.remote(num_gpus=1)
-def task_eval(
-    dataset: str,
-    scale: str,
-    auxiliaries: str = "none",
-) -> None:
+def task_eval(dataset: str, scale: str, auxiliaries: str = "none") -> None:
     """Run evaluation on all trained models for a variant."""
     _run_stage("evaluation", "vgae", scale, dataset, auxiliaries)
 

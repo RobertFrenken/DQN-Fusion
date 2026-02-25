@@ -1,9 +1,9 @@
 ---
 name: run-pipeline
-description: Run Prefect pipeline flow for a dataset and model configuration
+description: Run Ray pipeline flow for a dataset and model configuration
 ---
 
-Run the KD-GAT Prefect pipeline.
+Run the KD-GAT Ray pipeline.
 
 ## Arguments
 
@@ -31,11 +31,11 @@ Parse the dataset and scale from `$ARGUMENTS`. If only one word is provided, it 
    ls data/automotive/<dataset>/
    ```
 
-3. **Submit Prefect flow** with appropriate arguments:
+3. **Submit Ray pipeline** with appropriate arguments:
    ```bash
    PYTHONPATH=. python -m pipeline.cli flow --dataset <dataset> [--scale <scale>]
    ```
-   If running on login node, add `--local` for local Dask execution (no SLURM).
+   If running on login node, add `--local` for Ray local mode (no GPU).
 
 4. **Report the status** and show how to monitor with `squeue -u $USER`.
 
@@ -50,8 +50,7 @@ Parse the dataset and scale from `$ARGUMENTS`. If only one word is provided, it 
 
 ## Notes
 
-- Pipeline runs on SLURM with GPU resources (V100, via dask-jobqueue SLURMCluster)
+- Pipeline runs on SLURM with GPU resources (V100) via Ray remote tasks
 - W&B tracking is automatic (offline on compute nodes, sync later)
 - S3 lakehouse sync is fire-and-forget on run completion
 - Each stage runs as a subprocess for clean CUDA context
-- Prefect retries failed tasks twice with 30s delay

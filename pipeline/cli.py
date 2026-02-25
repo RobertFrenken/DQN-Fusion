@@ -105,7 +105,7 @@ def _parse_dot_overrides(pairs: list[list[str]]) -> dict:
 
 
 def _run_flow(args: argparse.Namespace, log: logging.Logger) -> None:
-    """Dispatch pipeline flow via Ray (default) or Prefect (migration period).
+    """Dispatch pipeline flow via Ray.
 
     --scale filters to a single variant (large, small_kd, small_nokd).
     Without --scale, all variants run.  The argparse default "large" is
@@ -231,21 +231,9 @@ def main(argv: list[str] | None = None) -> None:
         log.info("Loaded frozen config: %s", args.config)
     else:
         # Build overrides dict
-        overrides: dict = {}
-        if args.dataset:
-            overrides["dataset"] = args.dataset
-        if args.seed is not None:
-            overrides["seed"] = args.seed
-        if args.experiment_root:
-            overrides["experiment_root"] = args.experiment_root
-        if args.device:
-            overrides["device"] = args.device
-        if args.num_workers is not None:
-            overrides["num_workers"] = args.num_workers
-        if args.mp_start_method:
-            overrides["mp_start_method"] = args.mp_start_method
-        if args.run_test is not None:
-            overrides["run_test"] = args.run_test
+        _OVERRIDE_FIELDS = ("dataset", "seed", "experiment_root", "device",
+                            "num_workers", "mp_start_method", "run_test")
+        overrides = {f: getattr(args, f) for f in _OVERRIDE_FIELDS if getattr(args, f) is not None}
 
         # Handle --teacher-path shorthand
         aux_name = args.auxiliaries
@@ -297,8 +285,15 @@ def main(argv: list[str] | None = None) -> None:
         if _wandb_run is not None and isinstance(result, dict):
             _wandb_log_metrics(result)
 
-        # Sync to S3 lakehouse (fire-and-forget)
+        # Sync to datalake + S3 lakehouse (fire-and-forget)
         _sync_lakehouse(cfg, args.stage, run_name, result)
+
+        # Register artifacts in datalake (fire-and-forget)
+        try:
+            from .lakehouse import register_artifacts
+            register_artifacts(run_name, sdir)
+        except Exception as e:
+            log.debug("Artifact registration skipped: %s", e)
 
         # Success → delete archive
         if archive and archive.exists():

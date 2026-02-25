@@ -26,7 +26,7 @@ You are an expert ML debugger specializing in PyTorch, PyTorch Lightning, and GN
 - `config/paths.py` - Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
 - `pipeline/stages/` - Training, fusion, evaluation modules (use nested config access: `cfg.vgae.latent_dim`, `cfg.gat.hidden`, etc.)
 - `pipeline/cli.py` - Entry point, W&B lifecycle, archive/restore on failure
-- `pipeline/flows/` - Prefect orchestration (train_flow, eval_flow, SLURMCluster)
+- `pipeline/orchestration/` - Ray orchestration (ray_pipeline, ray_slurm)
 - `experimentruns/` - Experiment outputs and logs
 
 ## Common Issues to Check
@@ -46,7 +46,7 @@ You are an expert ML debugger specializing in PyTorch, PyTorch Lightning, and GN
 - SLURM failures → Check logs in `slurm_logs/<jobid>-<name>.{out,err}`
 - Missing checkpoints → Verify best_model.pt exists in run directory
 - W&B errors → Check offline runs in `wandb/` directory, sync with `wandb sync`
-- Prefect failures → Check flow logs, verify dask-jobqueue SLURMCluster config
+- Ray orchestration failures → Check Ray logs in scratch `.ray/` dir, verify SLURM allocation
 
 ## Output Format
 

@@ -157,9 +157,10 @@ experimentruns/{dataset}/eval_{scale}_evaluation[_kd]/
   attention_weights.npz             <- per-layer GAT attention alphas
   dqn_policy.json                   <- alpha distribution by class
         |
-        +---> pipeline/lakehouse.py ---> s3://kd-gat/lakehouse/runs/{run_id}.json
-        |     (fire-and-forget, flat JSON: run_id + flattened core metrics)
-        |     Queryable: SELECT * FROM read_json('s3://kd-gat/lakehouse/runs/*.json')
+        +---> pipeline/lakehouse.py ---> data/datalake/*.parquet (primary)
+        |     (append to runs.parquet + metrics.parquet + artifacts.parquet)
+        |     Queryable: SELECT * FROM 'data/datalake/runs.parquet'
+        |     Also writes legacy JSON to s3://kd-gat/lakehouse/runs/ (deprecated)
         |
         +---> pipeline/export.py ---> docs/dashboard/data/
         |     Light (~2s):  leaderboard.json, runs.json, datasets.json, kd_transfer.json,
@@ -183,11 +184,11 @@ experimentruns/{dataset}/eval_{scale}_evaluation[_kd]/
 ```mermaid
 flowchart LR
     subgraph OSC["OSC Cluster"]
+        Ray["Ray Orchestration"]
         Pipeline["Training Pipeline<br/>(SLURM GPU)"]
         Export["Export Pipeline"]
         Tests["Test Suite<br/>(SLURM CPU)"]
         Serve["FastAPI Server"]
-        Prefect["Prefect + Dask"]
     end
 
     subgraph AWS["AWS"]
@@ -210,7 +211,7 @@ flowchart LR
     Export -->|"aws s3 sync"| S3_Dash
     Export -->|"git push docs/"| Pages
     Repo -->|"push / PR"| Actions
-    Prefect -->|"sbatch / srun"| Pipeline
+    Ray -->|"subprocess per stage"| Pipeline
     Serve -->|"HTTP /predict"| Serve
     S3_Dash -.->|"fetch JSON"| Pages
 ```
@@ -225,8 +226,7 @@ flowchart LR
 | **DVC** (scratch GPFS) | `dvc push/pull` | Bidirectional | Raw data + cache blobs | Data versioning |
 | **GitHub Actions** | Webhook | Triggered by push/PR | Ruff lint, JS syntax check, pytest (3 test files) | On push to main (filtered by path) |
 | **GitHub Pages** | `git push` to `docs/` | Outbound | Static HTML/JS/JSON dashboard | After export script |
-| **Prefect** | Python SDK | Local orchestration | Flow DAG, task retry, subprocess dispatch | `pipeline.cli flow` |
-| **Dask-jobqueue** | SLURM cluster | Local | Worker provisioning for Prefect tasks | When `--local` is NOT used |
+| **Ray** | Python SDK | Local orchestration | DAG scheduling, per-dataset fan-out, subprocess dispatch | `pipeline.cli flow` |
 | **FastAPI** | HTTP REST | Inbound | `/predict` (graph->label), `/health` | When serving (`uvicorn`) |
 | **D3.js CDN** | `<script>` in browser | Inbound (browser) | Visualization library | Dashboard page load |
 
@@ -263,11 +263,10 @@ flowchart LR
 
 /fs/scratch/PAS1266/                           <- GPFS scratch (90-day purge)
   can-graph-dvc/                               <- DVC primary remote (fast local)
-  .prefect/                                    <- Prefect state (avoids NFS issues)
-  .dask-logs/                                  <- Dask worker logs
+  .ray/                                        <- Ray temp files + logs
 ```
 
-**Why two filesystems?** NFS home is permanent but slow for parallel I/O. GPFS scratch is fast but purged after 90 days. Large blobs (DVC data, Prefect state, Dask logs) live on scratch; everything else on NFS.
+**Why two filesystems?** NFS home is permanent but slow for parallel I/O. GPFS scratch is fast but purged after 90 days. Large blobs (DVC data, Ray temp files) live on scratch; everything else on NFS.
 
 ---
 
@@ -413,8 +412,10 @@ The teacher is frozen during student training — its weights never update. The 
 | KD settings | `config/auxiliaries/kd_standard.yaml` |
 | SLURM job scripts | `scripts/` |
 | W&B offline runs | `wandb/` (gitignored) |
+| Datalake (Parquet) | `data/datalake/*.parquet` |
+| Analytics DuckDB | `data/datalake/analytics.duckdb` |
 | DVC cache (local fast) | `/fs/scratch/PAS1266/can-graph-dvc/` |
-| Lakehouse (S3) | `s3://kd-gat/lakehouse/runs/*.json` |
+| Lakehouse (S3, legacy) | `s3://kd-gat/lakehouse/runs/*.json` |
 | Dashboard (S3) | `s3://kd-gat/dashboard/` |
 | Dashboard (live) | https://robertfrenken.github.io/DQN-Fusion/ |
 

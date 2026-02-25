@@ -269,36 +269,34 @@ class PipelineConfig(BaseModel, frozen=True):
         if "lr" not in fusion and "fusion_lr" in flat:
             fusion["lr"] = flat["fusion_lr"]
 
-        # Curriculum fields that were top-level
-        for field_name in ("curriculum_start_ratio", "curriculum_end_ratio",
-                           "difficulty_percentile", "use_vgae_mining",
-                           "difficulty_cache_update", "curriculum_memory_multiplier",
-                           "log_teacher_student_comparison"):
-            if field_name in flat and field_name not in training:
-                training[field_name] = flat[field_name]
+        def _migrate_fields(src: dict, dest: dict, fields: tuple[str, ...]) -> None:
+            for f in fields:
+                if f in src and f not in dest:
+                    dest[f] = src[f]
 
-        # LR scheduling fields
-        for field_name in ("use_scheduler", "scheduler_type", "scheduler_t_max",
-                           "scheduler_step_size", "scheduler_gamma"):
-            if field_name in flat and field_name not in training:
-                training[field_name] = flat[field_name]
-
-        # Memory / batch fields
-        for field_name in ("gradient_checkpointing", "use_teacher_cache",
-                           "clear_cache_every_n", "offload_teacher_to_cpu",
-                           "optimize_batch_size", "safety_factor",
-                           "memory_estimation", "accumulate_grad_batches",
-                           "save_top_k", "monitor_metric", "monitor_mode",
-                           "log_every_n_steps", "test_every_n_epochs",
-                           "deterministic", "cudnn_benchmark"):
-            if field_name in flat and field_name not in training:
-                training[field_name] = flat[field_name]
-
-        # Core training fields
-        for field_name in ("lr", "max_epochs", "batch_size", "patience",
-                           "weight_decay", "gradient_clip", "precision"):
-            if field_name in flat and field_name not in training:
-                training[field_name] = flat[field_name]
+        _migrate_fields(flat, training, (
+            "curriculum_start_ratio", "curriculum_end_ratio",
+            "difficulty_percentile", "use_vgae_mining",
+            "difficulty_cache_update", "curriculum_memory_multiplier",
+            "log_teacher_student_comparison",
+        ))
+        _migrate_fields(flat, training, (
+            "use_scheduler", "scheduler_type", "scheduler_t_max",
+            "scheduler_step_size", "scheduler_gamma",
+        ))
+        _migrate_fields(flat, training, (
+            "gradient_checkpointing", "use_teacher_cache",
+            "clear_cache_every_n", "offload_teacher_to_cpu",
+            "optimize_batch_size", "safety_factor",
+            "memory_estimation", "accumulate_grad_batches",
+            "save_top_k", "monitor_metric", "monitor_mode",
+            "log_every_n_steps", "test_every_n_epochs",
+            "deterministic", "cudnn_benchmark",
+        ))
+        _migrate_fields(flat, training, (
+            "lr", "max_epochs", "batch_size", "patience",
+            "weight_decay", "gradient_clip", "precision",
+        ))
 
         if vgae:
             nested["vgae"] = vgae
@@ -313,15 +311,11 @@ class PipelineConfig(BaseModel, frozen=True):
 
         # KD → auxiliaries
         if flat.get("use_kd"):
-            kd_aux: dict[str, Any] = {"type": "kd"}
-            if "temperature" in kd_fields:
-                kd_aux["temperature"] = kd_fields["temperature"]
-            if "alpha" in kd_fields:
-                kd_aux["alpha"] = kd_fields["alpha"]
-            if "vgae_latent_weight" in kd_fields:
-                kd_aux["vgae_latent_weight"] = kd_fields["vgae_latent_weight"]
-            if "vgae_recon_weight" in kd_fields:
-                kd_aux["vgae_recon_weight"] = kd_fields["vgae_recon_weight"]
+            kd_aux = {"type": "kd"} | {
+                k: kd_fields[k]
+                for k in ("temperature", "alpha", "vgae_latent_weight", "vgae_recon_weight")
+                if k in kd_fields
+            }
             if flat.get("teacher_path"):
                 kd_aux["model_path"] = flat["teacher_path"]
             nested["auxiliaries"] = [kd_aux]

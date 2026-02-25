@@ -26,7 +26,8 @@ python -m pipeline.cli flow --dataset hcrl_sa --local  # No SLURM
 
 # Export + analytics
 python -m pipeline.export --skip-heavy         # Light exports (~2s, login node OK)
-python -m pipeline.build_analytics             # DuckDB rebuild (~1s)
+python -m pipeline.build_analytics             # DuckDB rebuild (sub-second, views over Parquet)
+python -m pipeline.migrate_datalake            # One-time: filesystem → Parquet datalake
 bash scripts/export_dashboard.sh               # Export + commit + push
 
 # Tests — ALWAYS submit to SLURM

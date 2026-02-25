@@ -1,7 +1,4 @@
-"""SLURM configuration helpers for Ray on OSC.
-
-Replaces pipeline/flows/slurm_config.py (Prefect + dask-jobqueue).
-"""
+"""SLURM configuration helpers for Ray on OSC."""
 from __future__ import annotations
 
 import os

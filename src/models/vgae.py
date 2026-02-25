@@ -2,7 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv, GATv2Conv, TransformerConv
-from torch.utils.checkpoint import checkpoint
+from ._utils import checkpoint_conv
 
 
 def _make_conv(conv_type: str, in_dim: int, out_dim: int, heads: int, edge_dim: int | None = None, **kwargs):
@@ -148,21 +148,9 @@ class GraphAutoencoderNeighborhood(nn.Module):
         # Apply encoder layers; handle optional batchnorm safely
         for i, conv in enumerate(self.encoder_layers):
             if self.use_checkpointing and x.requires_grad:
-                # IMPORTANT: Use default args to capture conv and edge_index by value,
-                # not by reference. Otherwise, the lambda captures the loop variable
-                # which will have changed by the time the backward pass recomputes.
-                if edge_attr is not None:
-                    x = checkpoint(
-                        lambda x_in, c=conv, ei=edge_index, ea=edge_attr: c(x_in, ei, ea),
-                        x, use_reentrant=False,
-                    )
-                else:
-                    x = checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei), x, use_reentrant=False)
+                x = checkpoint_conv(conv, x, edge_index, edge_attr)
             else:
-                if edge_attr is not None:
-                    x = conv(x, edge_index, edge_attr)
-                else:
-                    x = conv(x, edge_index)
+                x = conv(x, edge_index, edge_attr) if edge_attr is not None else conv(x, edge_index)
             if self.batch_norm:
                 bn = self.encoder_bns[i]
                 x = self.dropout(F.relu(bn(x)))
@@ -197,19 +185,9 @@ class GraphAutoencoderNeighborhood(nn.Module):
         for i, conv in enumerate(self.decoder_layers):
             if i < len(self.decoder_layers) - 1:
                 if self.use_checkpointing and x.requires_grad:
-                    # IMPORTANT: Use default args to capture conv and edge_index by value
-                    if edge_attr is not None:
-                        x = checkpoint(
-                            lambda x_in, c=conv, ei=edge_index, ea=edge_attr: c(x_in, ei, ea),
-                            x, use_reentrant=False,
-                        )
-                    else:
-                        x = checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei), x, use_reentrant=False)
+                    x = checkpoint_conv(conv, x, edge_index, edge_attr)
                 else:
-                    if edge_attr is not None:
-                        x = conv(x, edge_index, edge_attr)
-                    else:
-                        x = conv(x, edge_index)
+                    x = conv(x, edge_index, edge_attr) if edge_attr is not None else conv(x, edge_index)
                 if self.batch_norm:
                     bn = self.decoder_bns[i]
                     x = self.dropout(F.relu(bn(x)))
@@ -217,18 +195,9 @@ class GraphAutoencoderNeighborhood(nn.Module):
                     x = self.dropout(F.relu(x))
             else:
                 if self.use_checkpointing and x.requires_grad:
-                    if edge_attr is not None:
-                        x = torch.sigmoid(checkpoint(
-                            lambda x_in, c=conv, ei=edge_index, ea=edge_attr: c(x_in, ei, ea),
-                            x, use_reentrant=False,
-                        ))
-                    else:
-                        x = torch.sigmoid(checkpoint(lambda x_in, c=conv, ei=edge_index: c(x_in, ei), x, use_reentrant=False))
+                    x = torch.sigmoid(checkpoint_conv(conv, x, edge_index, edge_attr))
                 else:
-                    if edge_attr is not None:
-                        x = torch.sigmoid(conv(x, edge_index, edge_attr))
-                    else:
-                        x = torch.sigmoid(conv(x, edge_index))
+                    x = torch.sigmoid(conv(x, edge_index, edge_attr) if edge_attr is not None else conv(x, edge_index))
         cont_out = x  # shape: [num_nodes, in_channels-1]
         canid_logits = self.canid_classifier(z)
 

@@ -29,13 +29,34 @@ from .modules import VGAEModule, GATModule, CurriculumDataModule
 log = logging.getLogger(__name__)
 
 
-def train_autoencoder(cfg: PipelineConfig) -> Path:
-    """Train VGAE on graph reconstruction. Returns checkpoint path."""
-    log.info("=== AUTOENCODER: %s / %s_%s ===", cfg.dataset, cfg.model_type, cfg.scale)
+def _training_preamble(cfg: PipelineConfig, stage_name: str):
+    """Shared setup for all training stages: log, seed, load data, resolve device."""
+    log.info("=== %s: %s / %s_%s ===", stage_name, cfg.dataset, cfg.model_type, cfg.scale)
     pl.seed_everything(cfg.seed)
-
     train_data, val_data, num_ids, in_ch = load_data(cfg)
     device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+    return train_data, val_data, num_ids, in_ch, device
+
+
+def _resolve_batch_config(cfg, model, train_data, teacher=None):
+    """Compute batch size and optional dynamic batching node budget."""
+    if cfg.training.optimize_batch_size:
+        bs = compute_optimal_batch_size(model, train_data, cfg, teacher=teacher)
+    else:
+        bs = effective_batch_size(cfg)
+    max_nodes = None
+    if cfg.training.dynamic_batching:
+        max_nodes = compute_node_budget(bs, cfg)
+        if max_nodes:
+            log.info("Dynamic batching: max_num_nodes=%d (batch_size=%d × p95)", max_nodes, bs)
+        else:
+            log.info("Dynamic batching: no cache metadata, falling back to static batch_size=%d", bs)
+    return bs, max_nodes
+
+
+def train_autoencoder(cfg: PipelineConfig) -> Path:
+    """Train VGAE on graph reconstruction. Returns checkpoint path."""
+    train_data, val_data, num_ids, in_ch, device = _training_preamble(cfg, "AUTOENCODER")
 
     # Optional KD: load teacher
     teacher, projection = None, None
@@ -47,19 +68,7 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
         del _tmp_student
 
     module = VGAEModule(cfg, num_ids, in_ch, teacher=teacher, projection=projection)
-
-    if cfg.training.optimize_batch_size:
-        bs = compute_optimal_batch_size(module.model, train_data, cfg, teacher=teacher)
-    else:
-        bs = effective_batch_size(cfg)
-
-    max_nodes = None
-    if cfg.training.dynamic_batching:
-        max_nodes = compute_node_budget(bs, cfg)
-        if max_nodes:
-            log.info("Dynamic batching: max_num_nodes=%d (batch_size=%d × p95)", max_nodes, bs)
-        else:
-            log.info("Dynamic batching: no cache metadata, falling back to static batch_size=%d", bs)
+    bs, max_nodes = _resolve_batch_config(cfg, module.model, train_data, teacher=teacher)
 
     log_memory_state("pre-dataloader")
     train_dl = make_dataloader(train_data, cfg, bs, shuffle=True, max_num_nodes=max_nodes)
@@ -79,11 +88,7 @@ def train_autoencoder(cfg: PipelineConfig) -> Path:
 
 def train_curriculum(cfg: PipelineConfig) -> Path:
     """Train GAT with VGAE-guided curriculum learning. Returns checkpoint path."""
-    log.info("=== CURRICULUM: %s / %s_%s ===", cfg.dataset, cfg.model_type, cfg.scale)
-    pl.seed_everything(cfg.seed)
-
-    train_data, val_data, num_ids, in_ch = load_data(cfg)
-    device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+    train_data, val_data, num_ids, in_ch, device = _training_preamble(cfg, "CURRICULUM")
 
     # Load VGAE for difficulty scoring
     vgae = load_model(cfg, "vgae", "autoencoder", num_ids, in_ch, device)
@@ -117,11 +122,7 @@ def train_curriculum(cfg: PipelineConfig) -> Path:
 
 def train_normal(cfg: PipelineConfig) -> Path:
     """Train GAT with standard cross-entropy (no curriculum). Returns checkpoint path."""
-    log.info("=== NORMAL: %s / %s_%s ===", cfg.dataset, cfg.model_type, cfg.scale)
-    pl.seed_everything(cfg.seed)
-
-    train_data, val_data, num_ids, in_ch = load_data(cfg)
-    device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+    train_data, val_data, num_ids, in_ch, device = _training_preamble(cfg, "NORMAL")
 
     # Optional KD: load teacher GAT
     teacher = None
@@ -129,19 +130,7 @@ def train_normal(cfg: PipelineConfig) -> Path:
         teacher = load_teacher(cfg.kd.model_path, "gat", cfg, num_ids, in_ch, device)
 
     module = GATModule(cfg, num_ids, in_ch, teacher=teacher)
-
-    if cfg.training.optimize_batch_size:
-        bs = compute_optimal_batch_size(module.model, train_data, cfg, teacher=teacher)
-    else:
-        bs = effective_batch_size(cfg)
-
-    max_nodes = None
-    if cfg.training.dynamic_batching:
-        max_nodes = compute_node_budget(bs, cfg)
-        if max_nodes:
-            log.info("Dynamic batching: max_num_nodes=%d (batch_size=%d × p95)", max_nodes, bs)
-        else:
-            log.info("Dynamic batching: no cache metadata, falling back to static batch_size=%d", bs)
+    bs, max_nodes = _resolve_batch_config(cfg, module.model, train_data, teacher=teacher)
 
     log_memory_state("pre-dataloader")
     train_dl = make_dataloader(train_data, cfg, bs, shuffle=True, max_num_nodes=max_nodes)

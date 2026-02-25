@@ -18,59 +18,37 @@ log = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Search spaces per stage
+# Search spaces per model (declarative: type + args → Ray Tune sampler)
 # ---------------------------------------------------------------------------
 
-def vgae_search_space() -> dict[str, Any]:
-    """VGAE autoencoder hyperparameter search space."""
-    from ray import tune
-
-    return {
-        "training.lr": tune.loguniform(1e-4, 1e-2),
-        "training.weight_decay": tune.loguniform(1e-6, 1e-3),
-        "vgae.latent_dim": tune.choice([16, 32, 48, 64]),
-        "vgae.dropout": tune.uniform(0.05, 0.4),
-        "vgae.heads": tune.choice([1, 2, 4, 8]),
-        "vgae.embedding_dim": tune.choice([8, 16, 32]),
-    }
-
-
-def gat_search_space() -> dict[str, Any]:
-    """GAT classifier hyperparameter search space."""
-    from ray import tune
-
-    return {
-        "training.lr": tune.loguniform(1e-4, 1e-2),
-        "training.weight_decay": tune.loguniform(1e-6, 1e-3),
-        "gat.hidden": tune.choice([32, 48, 64, 96]),
-        "gat.layers": tune.choice([2, 3, 4]),
-        "gat.heads": tune.choice([4, 8]),
-        "gat.dropout": tune.uniform(0.1, 0.4),
-        "gat.embedding_dim": tune.choice([8, 16, 32]),
-        "gat.fc_layers": tune.choice([2, 3, 4]),
-    }
-
-
-def dqn_search_space() -> dict[str, Any]:
-    """DQN fusion agent hyperparameter search space."""
-    from ray import tune
-
-    return {
-        "fusion.lr": tune.loguniform(1e-4, 1e-2),
-        "dqn.hidden": tune.choice([256, 512, 576, 768]),
-        "dqn.layers": tune.choice([2, 3, 4]),
-        "dqn.gamma": tune.uniform(0.95, 0.999),
-        "dqn.epsilon": tune.uniform(0.05, 0.2),
-        "dqn.epsilon_decay": tune.uniform(0.99, 0.999),
-        "fusion.episodes": tune.choice([300, 500, 750]),
-    }
-
-
-_STAGE_SEARCH_SPACES = {
-    "autoencoder": vgae_search_space,
-    "curriculum": gat_search_space,
-    "normal": gat_search_space,
-    "fusion": dqn_search_space,
+_SEARCH_SPACES: dict[str, dict[str, tuple]] = {
+    "vgae": {
+        "training.lr": ("loguniform", 1e-4, 1e-2),
+        "training.weight_decay": ("loguniform", 1e-6, 1e-3),
+        "vgae.latent_dim": ("choice", [16, 32, 48, 64]),
+        "vgae.dropout": ("uniform", 0.05, 0.4),
+        "vgae.heads": ("choice", [1, 2, 4, 8]),
+        "vgae.embedding_dim": ("choice", [8, 16, 32]),
+    },
+    "gat": {
+        "training.lr": ("loguniform", 1e-4, 1e-2),
+        "training.weight_decay": ("loguniform", 1e-6, 1e-3),
+        "gat.hidden": ("choice", [32, 48, 64, 96]),
+        "gat.layers": ("choice", [2, 3, 4]),
+        "gat.heads": ("choice", [4, 8]),
+        "gat.dropout": ("uniform", 0.1, 0.4),
+        "gat.embedding_dim": ("choice", [8, 16, 32]),
+        "gat.fc_layers": ("choice", [2, 3, 4]),
+    },
+    "dqn": {
+        "fusion.lr": ("loguniform", 1e-4, 1e-2),
+        "dqn.hidden": ("choice", [256, 512, 576, 768]),
+        "dqn.layers": ("choice", [2, 3, 4]),
+        "dqn.gamma": ("uniform", 0.95, 0.999),
+        "dqn.epsilon": ("uniform", 0.05, 0.2),
+        "dqn.epsilon_decay": ("uniform", 0.99, 0.999),
+        "fusion.episodes": ("choice", [300, 500, 750]),
+    },
 }
 
 _STAGE_MODEL = {
@@ -79,6 +57,13 @@ _STAGE_MODEL = {
     "normal": "gat",
     "fusion": "dqn",
 }
+
+
+def _build_search_space(stage: str) -> dict[str, Any]:
+    """Build Ray Tune search space from declarative spec."""
+    from ray import tune
+    _BUILDERS = {"loguniform": tune.loguniform, "choice": tune.choice, "uniform": tune.uniform}
+    return {k: _BUILDERS[t](*args) for k, (t, *args) in _SEARCH_SPACES[_STAGE_MODEL[stage]].items()}
 
 
 # ---------------------------------------------------------------------------
@@ -180,7 +165,7 @@ def run_tune(
 
     from .ray_slurm import ray_init_kwargs
 
-    if stage not in _STAGE_SEARCH_SPACES:
+    if stage not in _STAGE_MODEL:
         raise ValueError(f"No search space defined for stage '{stage}'")
 
     if not ray.is_initialized():
@@ -189,7 +174,7 @@ def run_tune(
             kwargs["num_gpus"] = 0
         ray.init(**kwargs)
 
-    search_space = _STAGE_SEARCH_SPACES[stage]()
+    search_space = _build_search_space(stage)
 
     scheduler = ASHAScheduler(
         metric=metric,
