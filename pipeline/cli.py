@@ -182,7 +182,7 @@ def _sync_lakehouse(
     result: object = None, success: bool = True,
     failure_reason: str | None = None,
 ) -> None:
-    """Fire-and-forget sync to local lakehouse + S3."""
+    """Fire-and-forget sync to datalake (Parquet)."""
     try:
         from .lakehouse import sync_to_lakehouse
         sync_to_lakehouse(
@@ -285,7 +285,7 @@ def main(argv: list[str] | None = None) -> None:
         if _wandb_run is not None and isinstance(result, dict):
             _wandb_log_metrics(result)
 
-        # Sync to datalake + S3 lakehouse (fire-and-forget)
+        # Sync to datalake (fire-and-forget)
         _sync_lakehouse(cfg, args.stage, run_name, result)
 
         # Register artifacts in datalake (fire-and-forget)

@@ -11,7 +11,7 @@ export const PANELS = [
         joinFn: (leaderboard, sizes, kd) => ({ leaderboard, sizes, kd }),
     },
 
-    // --- Original 5 panels ---
+    // --- Core Panels ---
     {
         id: 'leaderboard',
         title: 'Leaderboard',
@@ -183,7 +183,7 @@ export const PANELS = [
         dataSource: 'runs.json',
     },
 
-    // --- New panels (Phase 4) ---
+    // --- Model Analysis ---
     {
         id: 'graph-structure',
         title: 'CAN Bus Graph Structure',
@@ -295,120 +295,6 @@ export const PANELS = [
         ],
     },
     {
-        id: 'vgae-latent',
-        title: 'VGAE Latent Space',
-        description: '2D projection of VGAE encoder embeddings (color = class label)',
-        chartType: 'scatter',
-        dataSource: null,
-        dynamicLoader: 'embeddings_vgae',
-        chartConfig: {
-            xField: 'dim0',
-            yField: 'dim1',
-            colorField: 'label',
-            xLabel: 'Dimension 1',
-            yLabel: 'Dimension 2',
-            labelColors: true,
-            tooltipFn: d => `Label: ${d.label === 0 ? 'Normal' : 'Attack'}<br>Error: ${(d.error ?? 0).toFixed(6)}`,
-        },
-        controls: [
-            {
-                type: 'select', id: 'vl-run', label: 'Run',
-                options: [],
-                embeddingSource: 'vgae',
-                mapTo: '_run',
-            },
-            {
-                type: 'select', id: 'vl-method', label: 'Projection',
-                options: [
-                    { value: 'umap', label: 'UMAP' },
-                    { value: 'pymde', label: 'PyMDE' },
-                ],
-                default: 'umap',
-                mapTo: '_method',
-            },
-            {
-                type: 'select', id: 'vl-render', label: 'Overlay',
-                options: [
-                    { value: 'points', label: 'Points Only' },
-                    { value: 'density', label: '+ Density' },
-                    { value: 'voronoi', label: '+ Voronoi' },
-                ],
-                default: 'points',
-                mapTo: 'showDensity',
-            },
-        ],
-    },
-    {
-        id: 'gat-state',
-        title: 'GAT State Space',
-        description: '2D projection of GAT hidden representations (color = class label)',
-        chartType: 'scatter',
-        dataSource: null,
-        dynamicLoader: 'embeddings_gat',
-        chartConfig: {
-            xField: 'dim0',
-            yField: 'dim1',
-            colorField: 'label',
-            xLabel: 'Dimension 1',
-            yLabel: 'Dimension 2',
-            labelColors: true,
-            tooltipFn: d => `Label: ${d.label === 0 ? 'Normal' : 'Attack'}`,
-        },
-        controls: [
-            {
-                type: 'select', id: 'gs2-run', label: 'Run',
-                options: [],
-                embeddingSource: 'gat',
-                mapTo: '_run',
-            },
-            {
-                type: 'select', id: 'gs2-method', label: 'Projection',
-                options: [
-                    { value: 'umap', label: 'UMAP' },
-                    { value: 'pymde', label: 'PyMDE' },
-                ],
-                default: 'umap',
-                mapTo: '_method',
-            },
-            {
-                type: 'select', id: 'gs2-render', label: 'Overlay',
-                options: [
-                    { value: 'points', label: 'Points Only' },
-                    { value: 'density', label: '+ Density' },
-                    { value: 'voronoi', label: '+ Voronoi' },
-                ],
-                default: 'points',
-                mapTo: 'showDensity',
-            },
-        ],
-    },
-    {
-        id: 'dqn-policy',
-        title: 'DQN Policy Visualization',
-        description: 'Alpha distribution: how DQN weighs VGAE vs GAT per class',
-        chartType: 'histogram',
-        dataSource: null,
-        dynamicLoader: 'dqn_policy',
-        controls: [
-            {
-                type: 'select', id: 'dp-run', label: 'Run',
-                options: [],
-                dqnPolicySource: true,
-                mapTo: '_run',
-            },
-            {
-                type: 'select', id: 'dp-bins', label: 'Bins',
-                options: [
-                    { value: '10', label: '10' },
-                    { value: '20', label: '20' },
-                    { value: '40', label: '40' },
-                ],
-                default: '20',
-                mapTo: 'bins',
-            },
-        ],
-    },
-    {
         id: 'model-predictions',
         title: 'Model Predictions Breakdown',
         description: 'Per-scenario metrics across model types',
@@ -437,7 +323,7 @@ export const PANELS = [
         ],
     },
 
-    // --- Advanced Visualizations (Phase 5) ---
+    // --- Advanced Analysis ---
     {
         id: 'confusion-matrix',
         title: 'Confusion Matrix',
@@ -473,119 +359,6 @@ export const PANELS = [
         ],
     },
     {
-        id: 'roc-pr-curves',
-        title: 'ROC & PR Curves',
-        description: 'Receiver Operating Characteristic and Precision-Recall curves',
-        chartType: 'curve',
-        dataSource: null,
-        dynamicLoader: 'roc_curves',
-        controls: [
-            {
-                type: 'select', id: 'rc-run', label: 'Run',
-                options: [],
-                evalRunSource: true,
-                mapTo: '_run',
-            },
-            {
-                type: 'select', id: 'rc-type', label: 'Curve Type',
-                options: [
-                    { value: 'roc', label: 'ROC' },
-                    { value: 'pr', label: 'Precision-Recall' },
-                ],
-                default: 'roc',
-                mapTo: '_curveType',
-            },
-        ],
-    },
-    {
-        id: 'recon-errors',
-        title: 'VGAE Reconstruction Errors',
-        description: 'Distribution of VGAE reconstruction errors by class with optimal threshold',
-        chartType: 'histogram',
-        dataSource: null,
-        dynamicLoader: 'recon_errors',
-        controls: [
-            {
-                type: 'select', id: 're-run', label: 'Run',
-                options: [],
-                reconErrorSource: true,
-                mapTo: '_run',
-            },
-            {
-                type: 'select', id: 're-bins', label: 'Bins',
-                options: [
-                    { value: '20', label: '20' },
-                    { value: '40', label: '40' },
-                    { value: '60', label: '60' },
-                ],
-                default: '40',
-                mapTo: 'bins',
-            },
-        ],
-    },
-    {
-        id: 'gat-attention',
-        title: 'GAT Attention Weights',
-        description: 'Force-directed graph with edge thickness showing attention weight magnitude',
-        chartType: 'force',
-        dataSource: null,
-        dynamicLoader: 'attention',
-        controls: [
-            {
-                type: 'select', id: 'ga-run', label: 'Run',
-                options: [],
-                attentionSource: true,
-                mapTo: '_run',
-            },
-            {
-                type: 'select', id: 'ga-layer', label: 'Layer',
-                options: [
-                    { value: '0', label: 'Layer 1' },
-                    { value: '1', label: 'Layer 2' },
-                    { value: '2', label: 'Layer 3' },
-                ],
-                default: '0',
-                mapTo: '_layer',
-            },
-            {
-                type: 'select', id: 'ga-sample', label: 'Sample',
-                options: [
-                    { value: '0', label: 'Sample 1' },
-                    { value: '1', label: 'Sample 2' },
-                    { value: '2', label: 'Sample 3' },
-                ],
-                default: '0',
-                mapTo: '_sample',
-            },
-        ],
-    },
-    {
-        id: 'attention-carpet',
-        title: 'Attention Patterns',
-        description: 'Heatmap showing how attention weights evolve across GAT layers',
-        chartType: 'heatmap',
-        dataSource: null,
-        dynamicLoader: 'attention_carpet',
-        controls: [
-            {
-                type: 'select', id: 'ac-run', label: 'Run',
-                options: [],
-                attentionSource: true,
-                mapTo: '_run',
-            },
-            {
-                type: 'select', id: 'ac-sample', label: 'Sample',
-                options: [
-                    { value: '0', label: 'Sample 1' },
-                    { value: '1', label: 'Sample 2' },
-                    { value: '2', label: 'Sample 3' },
-                ],
-                default: '0',
-                mapTo: '_sample',
-            },
-        ],
-    },
-    {
         id: 'training-carpet',
         title: 'Training Curve Heatmap',
         description: 'Convergence patterns across all runs (rows=runs, cols=epochs, value=metric)',
@@ -602,48 +375,6 @@ export const PANELS = [
                 ],
                 default: 'val_loss',
                 mapTo: '_metric',
-            },
-        ],
-    },
-    {
-        id: 'feature-importance',
-        title: 'Feature Importance (GNNExplainer)',
-        description: 'Node feature importance masks from GNNExplainer — reveals which input features drive predictions',
-        chartType: 'bar',
-        dataSource: null,
-        dynamicLoader: 'explanations',
-        controls: [
-            {
-                type: 'select', id: 'fi-run', label: 'Run',
-                options: [],
-                explanationSource: true,
-                mapTo: '_run',
-            },
-            {
-                type: 'select', id: 'fi-class', label: 'Class',
-                options: [
-                    { value: '', label: 'All' },
-                    { value: '0', label: 'Normal' },
-                    { value: '1', label: 'Attack' },
-                ],
-                default: '',
-                mapTo: '_class_filter',
-            },
-        ],
-    },
-    {
-        id: 'kd-cka',
-        title: 'Knowledge Transfer (CKA)',
-        description: 'Centered Kernel Alignment between teacher and student GAT layers',
-        chartType: 'heatmap',
-        dataSource: null,
-        dynamicLoader: 'cka',
-        controls: [
-            {
-                type: 'select', id: 'cka-run', label: 'Run',
-                options: [],
-                ckaSource: true,
-                mapTo: '_run',
             },
         ],
     },

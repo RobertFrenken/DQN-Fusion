@@ -29,7 +29,7 @@ Parquet-based structured storage in `data/datalake/`:
 | `training_curves/{run_id}.parquet` | Per-epoch metrics from Lightning CSV logs |
 | `analytics.duckdb` | Views + convenience queries over Parquet (always rebuildable) |
 
-**Write path**: `lakehouse.py` appends to Parquet on run completion. `cli.py` calls `register_artifacts()` after each stage. S3 backup via `aws s3 sync` in SLURM job epilog (syncs Parquet, not reformatted JSON).
+**Write path**: `lakehouse.py` appends to Parquet on run completion. `cli.py` calls `register_artifacts()` after each stage. S3 backup via `aws s3 sync` in SLURM job epilog.
 
 **Read path**: `build_analytics.py` creates DuckDB views over Parquet. `export.py` reads run metadata from datalake.
 
@@ -52,4 +52,4 @@ Stored in run directories under `experimentruns/`. Indexed in `artifacts.parquet
 
 ## Dashboard Export
 
-`python -m pipeline.export` reads metadata from datalake Parquet, artifacts from filesystem → static JSON. `scripts/export_dashboard.sh` commits + pushes to GitHub Pages + syncs to S3.
+`python -m pipeline.export` reads datalake Parquet → static JSON (leaderboard, runs, metrics, training curves, datasets, KD transfer, model sizes). ~2s, login node safe. Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/04_artifact_analysis.ipynb`. `scripts/export_dashboard.sh` syncs to S3.

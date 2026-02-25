@@ -152,101 +152,6 @@ export class PanelManager {
                 opt.textContent = r.run_id;
                 select.appendChild(opt);
             });
-        } else if (ctrl.reconErrorSource || ctrl.attentionSource || ctrl.ckaSource) {
-            // Load index.json for recon_errors, attention, or cka
-            const dir = ctrl.reconErrorSource ? 'recon_errors'
-                : ctrl.attentionSource ? 'attention' : 'cka';
-            this._loadJSON(`${dir}/index.json`).then(index => {
-                select.innerHTML = '';
-                const files = Array.isArray(index) ? index : (index?.data ?? []);
-                if (files.length === 0) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = 'No data available';
-                    select.appendChild(opt);
-                    return;
-                }
-                files.forEach(fname => {
-                    const opt = document.createElement('option');
-                    const base = fname.replace(/\.json$/, '');
-                    opt.value = base;
-                    opt.textContent = base;
-                    select.appendChild(opt);
-                });
-            }).catch(() => {
-                select.innerHTML = '';
-                const opt = document.createElement('option');
-                opt.value = '';
-                opt.textContent = 'No data available';
-                select.appendChild(opt);
-            });
-        } else if (ctrl.embeddingSource) {
-            // Load index.json and extract unique run IDs for this model type
-            this._loadJSON('embeddings/index.json').then(index => {
-                select.innerHTML = '';
-                const files = Array.isArray(index) ? index : (index?.data ?? []);
-                if (files.length === 0) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = 'No data available';
-                    select.appendChild(opt);
-                    return;
-                }
-                const runIds = new Set();
-                files.forEach(fname => {
-                    const base = fname.replace(/\.json$/, '');
-                    const parts = base.split('_');
-                    const method = parts.pop();   // umap or pymde
-                    const model = parts.pop();    // vgae or gat
-                    if (model !== ctrl.embeddingSource) return;
-                    runIds.add(parts.join('_'));
-                });
-                if (runIds.size === 0) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = 'No data available';
-                    select.appendChild(opt);
-                    return;
-                }
-                [...runIds].sort().forEach(rid => {
-                    const opt = document.createElement('option');
-                    opt.value = rid;
-                    opt.textContent = rid;
-                    select.appendChild(opt);
-                });
-            }).catch(() => {
-                select.innerHTML = '';
-                const opt = document.createElement('option');
-                opt.value = '';
-                opt.textContent = 'No data available';
-                select.appendChild(opt);
-            });
-        } else if (ctrl.dqnPolicySource) {
-            // Load index.json to discover available DQN policy files
-            this._loadJSON('dqn_policy/index.json').then(index => {
-                select.innerHTML = '';
-                const files = Array.isArray(index) ? index : (index?.data ?? []);
-                if (files.length === 0) {
-                    const opt = document.createElement('option');
-                    opt.value = '';
-                    opt.textContent = 'No data available';
-                    select.appendChild(opt);
-                    return;
-                }
-                files.forEach(fname => {
-                    const opt = document.createElement('option');
-                    const base = fname.replace(/\.json$/, '');
-                    opt.value = base;
-                    opt.textContent = base;
-                    select.appendChild(opt);
-                });
-            }).catch(() => {
-                select.innerHTML = '';
-                const opt = document.createElement('option');
-                opt.value = '';
-                opt.textContent = 'No data available';
-                select.appendChild(opt);
-            });
         } else if (ctrl.options?.length) {
             ctrl.options.forEach(o => {
                 const opt = document.createElement('option');
@@ -371,22 +276,6 @@ export class PanelManager {
             return { runs };
         }
 
-        if (panel.dynamicLoader === 'embeddings_vgae' || panel.dynamicLoader === 'embeddings_gat') {
-            const runId = options._run;
-            const method = options._method || 'umap';
-            if (!runId) return null;
-            const model = panel.dynamicLoader.split('_')[1];
-            const fname = `${runId.replace(/\//g, '_')}_${model}_${method}.json`;
-            return this._loadCached('embeddings/' + fname);
-        }
-
-        if (panel.dynamicLoader === 'dqn_policy') {
-            const runId = options._run;
-            if (!runId) return null;
-            const fname = runId.replace(/\//g, '_') + '.json';
-            return this._loadCached('dqn_policy/' + fname);
-        }
-
         if (panel.dynamicLoader === 'predictions') {
             const runId = options._run;
             if (!runId) return null;
@@ -425,126 +314,6 @@ export class PanelManager {
             };
         }
 
-        if (panel.dynamicLoader === 'roc_curves') {
-            const runId = options._run;
-            const curveType = options._curveType || 'roc';
-            if (!runId) return null;
-            const runSlug = runId.replace(/\//g, '_');
-            // Load all model curves for this run
-            const index = await this._loadCached('roc_curves/index.json');
-            const files = Array.isArray(index) ? index : (index?.data ?? []);
-            const matching = files.filter(f => f.startsWith(runSlug));
-            if (matching.length === 0) return null;
-            const series = [];
-            for (const fname of matching) {
-                const curveData = await this._loadCached('roc_curves/' + fname);
-                if (!curveData) continue;
-                const d = curveData.data || curveData;
-                const model = d.model || fname.split('_').pop().replace('.json', '');
-                if (curveType === 'roc' && d.roc_curve) {
-                    series.push({
-                        name: model.toUpperCase(),
-                        auc: d.auc,
-                        points: d.roc_curve.fpr.map((fpr, i) => ({ x: fpr, y: d.roc_curve.tpr[i] })),
-                    });
-                } else if (curveType === 'pr' && d.pr_curve) {
-                    series.push({
-                        name: model.toUpperCase(),
-                        auc: d.pr_auc,
-                        points: d.pr_curve.recall.map((rec, i) => ({ x: rec, y: d.pr_curve.precision[i] })),
-                    });
-                }
-            }
-            return {
-                series,
-                _curveType: curveType,
-                _xLabel: curveType === 'roc' ? 'False Positive Rate' : 'Recall',
-                _yLabel: curveType === 'roc' ? 'True Positive Rate' : 'Precision',
-                _refLine: curveType === 'roc' ? 'diagonal' : 'none',
-            };
-        }
-
-        if (panel.dynamicLoader === 'recon_errors') {
-            const runId = options._run;
-            if (!runId) return null;
-            const fname = runId.replace(/\//g, '_') + '.json';
-            const recon = await this._loadCached('recon_errors/' + fname);
-            if (!recon) return null;
-            const d = recon.data || recon;
-            // Transform to histogram-friendly format (alpha_by_label style)
-            const normalErrors = [], attackErrors = [];
-            for (let i = 0; i < d.errors.length; i++) {
-                if (d.labels[i] === 0) normalErrors.push(d.errors[i]);
-                else attackErrors.push(d.errors[i]);
-            }
-            return {
-                alpha_by_label: { normal: normalErrors, attack: attackErrors },
-                _thresholdLine: d.optimal_threshold,
-                _xLabel: 'Reconstruction Error',
-            };
-        }
-
-        if (panel.dynamicLoader === 'attention') {
-            const runId = options._run;
-            const layer = parseInt(options._layer || '0', 10);
-            const sampleIdx = parseInt(options._sample || '0', 10);
-            if (!runId) return null;
-            const fname = runId.replace(/\//g, '_') + '.json';
-            const attnData = await this._loadCached('attention/' + fname);
-            if (!attnData || attnData.length === 0) return null;
-            const samples = Array.isArray(attnData) ? attnData : (attnData.data || []);
-            const sample = samples[sampleIdx] || samples[0];
-            if (!sample) return null;
-            // Build force graph data with attention edge weights
-            const edgeIndex = sample.edge_index;
-            const nodeFeatures = sample.node_features;
-            const layerData = sample.layers[layer] || sample.layers[0];
-            const numNodes = nodeFeatures.length;
-            const nodes = nodeFeatures.map((feat, i) => ({ id: i, features: [feat] }));
-            const links = [];
-            const edgeWeights = [];
-            for (let i = 0; i < edgeIndex[0].length; i++) {
-                links.push({ source: edgeIndex[0][i], target: edgeIndex[1][i] });
-                edgeWeights.push(layerData.alpha_mean[i] || 0);
-            }
-            return [{
-                dataset: 'attention',
-                sample_idx: sampleIdx,
-                label: sample.label,
-                nodes,
-                links,
-                _edgeWeights: edgeWeights,
-            }];
-        }
-
-        if (panel.dynamicLoader === 'attention_carpet') {
-            const runId = options._run;
-            const sampleIdx = parseInt(options._sample || '0', 10);
-            if (!runId) return null;
-            const fname = runId.replace(/\//g, '_') + '.json';
-            const attnData = await this._loadCached('attention/' + fname);
-            if (!attnData || attnData.length === 0) return null;
-            const samples = Array.isArray(attnData) ? attnData : (attnData.data || []);
-            const sample = samples[sampleIdx] || samples[0];
-            if (!sample || !sample.layers) return null;
-            // Build carpet: rows=edges, cols=layers, value=mean attention
-            const nEdges = Math.min(sample.layers[0].alpha_mean.length, 30); // cap for readability
-            const nLayers = sample.layers.length;
-            const matrix = [];
-            for (let e = 0; e < nEdges; e++) {
-                const row = [];
-                for (let l = 0; l < nLayers; l++) {
-                    row.push(sample.layers[l].alpha_mean[e] || 0);
-                }
-                matrix.push(row);
-            }
-            return {
-                matrix,
-                rowLabels: Array.from({ length: nEdges }, (_, i) => `E${i}`),
-                colLabels: sample.layers.map((_, i) => `Layer ${i + 1}`),
-            };
-        }
-
         if (panel.dynamicLoader === 'training_carpet') {
             const metric = options._metric || 'val_loss';
             // Load all training curve files
@@ -579,20 +348,6 @@ export class PanelManager {
                 matrix,
                 rowLabels,
                 colLabels: Array.from({ length: maxEpochs }, (_, i) => `${i + 1}`),
-            };
-        }
-
-        if (panel.dynamicLoader === 'cka') {
-            const runId = options._run;
-            if (!runId) return null;
-            const fname = runId.replace(/\//g, '_') + '.json';
-            const ckaData = await this._loadCached('cka/' + fname);
-            if (!ckaData) return null;
-            const d = ckaData.data || ckaData;
-            return {
-                matrix: d.matrix,
-                rowLabels: d.teacher_layers || d.matrix.map((_, i) => `Teacher L${i + 1}`),
-                colLabels: d.student_layers || d.matrix[0].map((_, i) => `Student L${i + 1}`),
             };
         }
 

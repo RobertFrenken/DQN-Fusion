@@ -40,9 +40,11 @@ Full decision document: `~/plans/orchestration-redesign-decision.md`
 
 ## Dashboard
 
-Config-driven ES module architecture. Adding a visualization = adding an entry to `panelConfig.js`. `BaseChart` provides SVG/tooltip/responsive infrastructure; 8 chart types. `PanelManager` reads config → builds nav + panels + controls. All chart types registered in `Registry`.
+**Primary dashboard: Quarto** (`reports/dashboard.qmd`). Single-file, multi-page Quarto dashboard using OJS + Mosaic/vgplot + DuckDB-WASM. Data loaded from `reports/data/` (Parquet + JSON). Pages: Overview, Performance, Training, GAT & DQN, Knowledge Distillation, Graph Structure, Datasets, Staging.
 
-Dashboard data: `export.py` exports leaderboard, runs, metrics, training curves, datasets, KD transfer, and model sizes (~2s, login node safe). Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/`. Dashboard JS fetches from `s3://kd-gat/dashboard/` with `data/` fallback.
+Dashboard data: `export.py` exports leaderboard, runs, metrics, training curves, datasets, KD transfer, model sizes, and graph samples (~2s, login node safe). `export_data_for_reports()` copies datalake Parquet + JSON to `reports/data/`. Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/`.
+
+**Legacy D3 dashboard** (`docs/dashboard/`): Config-driven ES module architecture with 8 chart types. Being retired — all panels migrated to Quarto.
 
 ## General Principles
 

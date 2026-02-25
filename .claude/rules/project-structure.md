@@ -27,7 +27,7 @@ pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from
   tracking.py       # Memory monitoring utilities
   export.py         # Datalake/filesystem → static JSON export for dashboard
   memory.py         # GPU memory management (static, measured, trial-based batch sizing)
-  lakehouse.py      # Datalake Parquet append + S3 JSON backup (fire-and-forget)
+  lakehouse.py      # Datalake Parquet append (fire-and-forget)
   migrate_datalake.py  # One-time migration: filesystem → Parquet datalake
   build_analytics.py   # DuckDB views over datalake Parquet
 src/                # Layer 3: Domain (models, training, preprocessing; imports config/)
@@ -42,23 +42,24 @@ data/
                     # analytics.duckdb (views over Parquet)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json, embeddings.npz, dqn_policy.json, explanations.npz
 scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh, build_test_cache.sh, sweep.sh, etc.)
-docs/dashboard/     # GitHub Pages D3.js dashboard (ES modules, config-driven panels)
+docs/dashboard/     # Legacy D3.js dashboard (being retired, panels migrated to Quarto)
   js/core/          # BaseChart, Registry, Theme
   js/charts/        # 8 chart types (Table, Bar, Scatter, Line, Timeline, Bubble, ForceGraph, Histogram)
   js/panels/        # PanelManager + panelConfig (11 panels, declarative)
   js/app.js         # Slim entry point
   data/             # Static JSON exports from pipeline
-docs-site/          # Astro 5 + Svelte 5 interactive research paper site
-  src/components/   # D3Chart.svelte, PlotFigure.svelte, FigureIsland.astro
-  src/components/figures/  # Interactive figure islands
-  src/config/       # figures.ts (paper figure registry), shared.ts
-  src/content.config.ts  # Astro Content Collections (Zod schemas)
-  src/data/         # Catalog JSON (synced from docs/dashboard/data/)
-  src/layouts/      # ArticleLayout.astro (CSS Grid Distill-style)
-  src/lib/d3/       # All 11 D3 chart classes + BaseChart + Theme
-  src/lib/data.ts   # Typed fetch helpers for per-run data
-  src/lib/resource.svelte.ts  # Reactive fetch-on-state-change for Svelte 5
-  src/pages/        # index.astro, showcase.astro, test-figure.mdx
-  scripts/sync-data.sh  # Sync dashboard data → src/data/
-notebooks/          # Deno Jupyter notebooks for prototyping plots
+reports/            # Quarto website — paper chapters + interactive dashboard (PRIMARY)
+  _quarto.yml       # Project config (website, HTML + Typst + Revealjs)
+  index.qmd         # Introduction
+  02-background.qmd through 07-evaluation.qmd  # Paper chapters
+  appendix.qmd      # Appendix
+  dashboard.qmd     # Multi-page dashboard (Overview, Performance, Training, GAT & DQN, KD, Graph, Datasets, Staging)
+  slides.qmd        # Revealjs presentation
+  pipeline_report.qmd  # Auto-generated pipeline report
+  custom.scss       # Theme overrides
+  references.bib    # BibTeX bibliography
+  data/             # Report data (Parquet + JSON from export pipeline, incl. graph_samples.json)
+  _ojs/             # Observable JS modules (force-graph.js, mosaic-setup.js, theme.js)
+  _site/            # Build output (.gitignored)
+notebooks/          # Jupyter notebooks for analysis + prototyping
 ```

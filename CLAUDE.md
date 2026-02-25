@@ -34,9 +34,9 @@ bash scripts/export_dashboard.sh               # Export + commit + push
 bash scripts/run_tests_slurm.sh
 bash scripts/run_tests_slurm.sh -k "test_full_pipeline"
 
-# Docs site (Astro) — requires: module load node-js/22.12.0
-cd docs-site && npm run dev
-cd docs-site && npm run build
+# Reports (Quarto)
+quarto preview reports/                     # Dev server
+quarto render reports/                      # Build → reports/_site/
 ```
 
 ## Session Start
@@ -58,12 +58,11 @@ All project conventions, architecture decisions, and constraints are in modular 
 - `project-structure.md` — directory tree, layer hierarchy
 - `config-system.md` — Pydantic + YAML resolution
 - `critical-constraints.md` — crash-prevention rules (DO NOT VIOLATE)
-- `architecture.md` — 3-layer hierarchy, orchestration, dashboard, docs-site
+- `architecture.md` — 3-layer hierarchy, orchestration, dashboard
 - `code-style.md` — imports, iteration hygiene, git
 - `shell-environment.md` — uv + `.venv/` setup (CANONICAL — not conda)
 - `slurm-hpc.md` — SLURM conventions, login node safety
 - `experiment-tracking.md` — W&B, lakehouse, DuckDB analytics
-- `docs-site.md` — Astro + Svelte (path-scoped: `docs-site/**`)
 - `pytorch-compat.md` — uv + PyTorch + PyG version pinning
 
 > Cross-repo propagation: See `~/.claude/rules/cross-repo-propagation.md`

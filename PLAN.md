@@ -12,7 +12,7 @@
 
 ## Next Up
 
-- [ ] **Docs-site deploy target** — Cloudflare Pages vs Vercel for Astro site (see `~/plans/cross-project-decisions.md`)
+(none)
 
 ## Completed
 

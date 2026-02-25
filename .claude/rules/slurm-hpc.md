@@ -7,7 +7,6 @@
 - **Python**: 3.12 via `module load python/3.12`, uv venv `.venv/`
 - **Home**: `/users/PAS2022/rf15/` (NFS, permanent)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
-- **Node.js**: 22.12.0 via `module load node-js/22.12.0` (docs-site only)
 
 ## Rules
 
@@ -23,7 +22,7 @@
 - Import checks: `python -c "from module import func; print('OK')"`
 - Exports: `python -m pipeline.export`
 - DuckDB rebuild: `python -m pipeline.build_analytics`
-- Node.js: `npm install`, `npm run build`
+- Quarto: `quarto render`, `quarto preview`
 - Git, DVC, W&B sync, ruff
 
 **Must go through SLURM:**

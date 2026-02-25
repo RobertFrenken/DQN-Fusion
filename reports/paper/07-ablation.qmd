@@ -1,0 +1,43 @@
+---
+title: "Ablation Study"
+---
+
+## Ablation Study
+
+To assess the contribution of different model configurations, we perform ablation experiments investigating three key variables: Knowledge Distillation, supervised learning training strategies (curriculum learning and hard sample mining), and fusion effectiveness, comparing standalone and fused architectures. @tbl-ablation-kd, @tbl-ablation-gat, and @tbl-ablation-fusion test different configurations across two of the six datasets.
+
+### Knowledge Distillation Effects
+
+```{python}
+#| label: tbl-ablation-kd
+#| tbl-cap: "Ablation Study: Knowledge Distillation Effects"
+import pandas as pd
+from IPython.display import Markdown
+
+df = pd.read_csv("data/ablation_kd.csv")
+Markdown(df.to_markdown(index=False))
+```
+
+### GAT Training Strategy
+
+```{python}
+#| label: tbl-ablation-gat
+#| tbl-cap: "Ablation Study: GAT Training Strategy Comparison"
+import pandas as pd
+from IPython.display import Markdown
+
+df = pd.read_csv("data/ablation_gat_training.csv")
+Markdown(df.to_markdown(index=False))
+```
+
+### DQN Fusion vs. Baseline Strategies
+
+```{python}
+#| label: tbl-ablation-fusion
+#| tbl-cap: "Ablation Study: DQN Fusion vs. Baseline Strategies"
+import pandas as pd
+from IPython.display import Markdown
+
+df = pd.read_csv("data/ablation_fusion.csv")
+Markdown(df.to_markdown(index=False))
+```
