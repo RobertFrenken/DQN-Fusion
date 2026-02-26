@@ -3,7 +3,7 @@
  * Import in OJS cells: import { vg, loadParquetTable } from "./_ojs/mosaic-setup.js"
  */
 
-const vg = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.11.1/+esm");
+const vg = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm");
 
 // Initialize DuckDB-WASM coordinator (singleton)
 await vg.coordinator().databaseConnector(vg.wasmConnector());

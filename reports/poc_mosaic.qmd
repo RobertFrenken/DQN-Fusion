@@ -13,7 +13,7 @@ Initialize Mosaic vgplot with DuckDB-WASM running entirely in-browser.
 ```{ojs}
 //| label: mosaic-setup
 vg = {
-  const mod = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.11.1/+esm");
+  const mod = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm");
   await mod.coordinator().databaseConnector(mod.wasmConnector());
   return mod;
 }
