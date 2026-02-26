@@ -53,7 +53,7 @@ SLURM_GPU_TYPE = os.getenv("KD_GAT_GPU_TYPE", "v100")
 # ---------------------------------------------------------------------------
 RAPIDS_AVAILABLE = False
 try:
-    import cuml
+    import cuml  # noqa: F401
     RAPIDS_AVAILABLE = True
 except ImportError:
     pass

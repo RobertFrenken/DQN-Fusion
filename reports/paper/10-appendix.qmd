@@ -44,15 +44,19 @@ Student ensemble members are not equally sized. The GAT classifier and VGAE auto
 
 @tbl-teacher-student details the architectural parameters for all teacher and student models across the three ensemble members. Each model follows a teacher-student distillation framework with $\approx 20\times$ compression ratio.
 
-```{python}
-#| label: tbl-teacher-student
-#| tbl-cap: "Teacher (Tch.) and Student (Std.) Model Parameters for Classifier, Autoencoder, and Fusion"
-import pandas as pd
-from IPython.display import Markdown
+| Parameter | GAT Tch | GAT Std | VGAE Tch | VGAE Std | DQN Tch | DQN Std |
+|-----------|---------|---------|----------|----------|---------|---------|
+| Layers | 5 | 2 | 3 | 2 | 3 | 2 |
+| Attn. heads | 8 | 4 | NA | NA | NA | NA |
+| Hidden ch. | 32 | 16 | 32 | 16 | 64 | 16 |
+| Embedding dim. | 32 | 8 | 48 | 12 | NA | NA |
+| Latent dim. | NA | NA | 48 | 12 | NA | NA |
+| Input/Output | 37 | 37 | 37 | 37 | 20 | 20 |
+| Hidden units | 128 | 16 | NA | NA | 64 | 16 |
+| Output dim. | 2 | 2 | 37 | 37 | \|A\| | \|A\| |
+| Total param. | 1.100M | 55K | 1.740M | 87K | 660K | 33K |
 
-df = pd.read_csv("data/model_params.csv")
-Markdown(df.to_markdown(index=False))
-```
+: Teacher (Tch.) and Student (Std.) Model Parameters for Classifier, Autoencoder, and Fusion {#tbl-teacher-student}
 
 @fig-model-sizes visualizes the parameter counts across all model variants, illustrating the compression achieved through knowledge distillation.
 

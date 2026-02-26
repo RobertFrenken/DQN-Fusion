@@ -242,8 +242,6 @@ def _trial_batch_size(
 
     Returns a safe batch size (90% of the largest successful value).
     """
-    import torch.nn.functional as F
-
     if len(sample_graphs) < min_bs:
         log.warning("Trial batch: only %d graphs available, using min_bs=%d", len(sample_graphs), min_bs)
         return min_bs

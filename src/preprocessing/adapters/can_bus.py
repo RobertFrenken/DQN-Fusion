@@ -18,7 +18,6 @@ import os
 from pathlib import Path
 from typing import Sequence
 
-import numpy as np
 import pandas as pd
 
 from config.constants import EXCLUDED_ATTACK_TYPES, MAX_DATA_BYTES

@@ -12,17 +12,9 @@ is not available or when running in local mode with few files.
 from __future__ import annotations
 
 import hashlib
-import json
 import logging
-import os
-import time
 from pathlib import Path
-from typing import Sequence
-
-import numpy as np
-import pandas as pd
-import torch
-from torch_geometric.data import Data
+from typing import TYPE_CHECKING, Sequence
 
 from config.constants import (
     DEFAULT_WINDOW_SIZE,
@@ -30,9 +22,11 @@ from config.constants import (
     PREPROCESSING_VERSION,
 )
 from .adapters.can_bus import CANBusAdapter
-from .dataset import GraphDataset
 from .engine import GraphEngine
-from .schema import IRSchema, CAN_BUS_SCHEMA
+from .schema import IRSchema
+
+if TYPE_CHECKING:
+    from torch_geometric.data import Data
 from .vocabulary import EntityVocabulary
 
 log = logging.getLogger(__name__)

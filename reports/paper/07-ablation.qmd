@@ -8,36 +8,39 @@ To assess the contribution of different model configurations, we perform ablatio
 
 ### Knowledge Distillation Effects
 
-```{python}
-#| label: tbl-ablation-kd
-#| tbl-cap: "Ablation Study: Knowledge Distillation Effects"
-import pandas as pd
-from IPython.display import Markdown
+| Model | Expert | Dataset | KD Enabled | F1 Score | Accuracy |
+|-------|--------|---------|------------|----------|----------|
+| KD-1 | GAT | CarH | Yes | 0.948 | 0.955 |
+| KD-2 | GAT | CarH | No | 0.912 | 0.924 |
+| KD-3 | VGAE | CarH | Yes | 0.943 | 0.951 |
+| KD-4 | VGAE | CarH | No | 0.918 | 0.928 |
+| KD-5 | GAT | CarS | Yes | 0.961 | 0.967 |
+| KD-6 | GAT | CarS | No | 0.935 | 0.945 |
+| KD-7 | VGAE | CarS | Yes | 0.956 | 0.963 |
+| KD-8 | VGAE | CarS | No | 0.931 | 0.940 |
 
-df = pd.read_csv("data/ablation_kd.csv")
-Markdown(df.to_markdown(index=False))
-```
+: Ablation Study: Knowledge Distillation Effects {#tbl-ablation-kd}
 
 ### GAT Training Strategy
 
-```{python}
-#| label: tbl-ablation-gat
-#| tbl-cap: "Ablation Study: GAT Training Strategy Comparison"
-import pandas as pd
-from IPython.display import Markdown
+| Model | Strategy | Dataset | F1 Score | Accuracy |
+|-------|----------|---------|----------|----------|
+| GAT-1 | Curriculum | CarH | 0.952 | 0.960 |
+| GAT-2 | Random Undersampling | CarH | 0.928 | 0.937 |
+| GAT-3 | VGAE Undersampling | CarH | 0.945 | 0.954 |
+| GAT-4 | Curriculum | CarS | 0.963 | 0.970 |
+| GAT-5 | Random Undersampling | CarS | 0.938 | 0.948 |
+| GAT-6 | VGAE Undersampling | CarS | 0.957 | 0.964 |
 
-df = pd.read_csv("data/ablation_gat_training.csv")
-Markdown(df.to_markdown(index=False))
-```
+: Ablation Study: GAT Training Strategy Comparison {#tbl-ablation-gat}
 
 ### DQN Fusion vs. Baseline Strategies
 
-```{python}
-#| label: tbl-ablation-fusion
-#| tbl-cap: "Ablation Study: DQN Fusion vs. Baseline Strategies"
-import pandas as pd
-from IPython.display import Markdown
+| Model | Fusion Strategy | CarH F1 | CarH Acc | CarS F1 | CarS Acc |
+|-------|-----------------|---------|----------|---------|----------|
+| DQN-1 | DQN Fusion | 0.957 | 0.963 | 0.965 | 0.971 |
+| DQN-2 | Fixed Alpha | 0.934 | 0.943 | 0.941 | 0.950 |
+| DQN-3 | GAT Only | 0.912 | 0.921 | 0.928 | 0.938 |
+| DQN-4 | VGAE Only | 0.906 | 0.915 | 0.923 | 0.933 |
 
-df = pd.read_csv("data/ablation_fusion.csv")
-Markdown(df.to_markdown(index=False))
-```
+: Ablation Study: DQN Fusion vs. Baseline Strategies {#tbl-ablation-fusion}

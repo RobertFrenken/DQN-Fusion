@@ -8,14 +8,10 @@ which show *which edges* the model attends to).
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING
 
 import numpy as np
 import torch
 import torch.nn as nn
-
-if TYPE_CHECKING:
-    from torch_geometric.data import Data
 
 log = logging.getLogger(__name__)
 

@@ -4,6 +4,7 @@ project:
   render:
     - "*.qmd"
     - "paper/*.qmd"
+    - "!pipeline_report.qmd"
     - "!workflow.rst"
   resources:
     - "data/**"
