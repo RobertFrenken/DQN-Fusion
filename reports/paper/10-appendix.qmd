@@ -54,6 +54,44 @@ df = pd.read_csv("data/model_params.csv")
 Markdown(df.to_markdown(index=False))
 ```
 
+@fig-model-sizes visualizes the parameter counts across all model variants, illustrating the compression achieved through knowledge distillation.
+
+```{ojs}
+//| label: fig-model-sizes
+//| fig-cap: "Parameter counts by model type and scale. Large models serve as teachers; small models are the distilled students deployed on edge hardware."
+
+model_sizes_json = FileAttachment("../data/model_sizes.json").json()
+
+{
+  const data = model_sizes_json.data;
+  return Plot.plot({
+    width: 500,
+    height: 280,
+    marginLeft: 100,
+    x: { label: "Parameters (millions)" },
+    y: { label: null },
+    color: { legend: true, domain: ["large", "small"], range: ["#58a6ff", "#79c0ff"] },
+    marks: [
+      Plot.barX(data, {
+        y: d => `${d.model_type} (${d.scale})`,
+        x: "param_count_M",
+        fill: "scale",
+        sort: { y: "-x" }
+      }),
+      Plot.text(data, {
+        y: d => `${d.model_type} (${d.scale})`,
+        x: "param_count_M",
+        text: d => `${d.param_count_M}M`,
+        dx: 5,
+        textAnchor: "start",
+        fontSize: 11
+      }),
+      Plot.ruleX([0])
+    ]
+  });
+}
+```
+
 #### GAT Classifier (55 K Student, 1.100 M Teacher)
 
 Graph attention network over 11 CAN signal features per node (CAN ID, 8 data bytes, message count, and bus position). The student model uses 2 stacked GAT layers with 4 attention heads and 24 hidden channels, producing 8-dimensional node embeddings that feed into a 2-class classification head. The teacher model expands to 5 GAT layers with 8 attention heads and 64 hidden channels with 32-dimensional embeddings, using jumping knowledge (concatenation mode) and residual connections for higher representational capacity and softer knowledge targets during distillation.

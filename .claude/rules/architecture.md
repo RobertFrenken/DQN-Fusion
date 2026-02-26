@@ -38,13 +38,15 @@ Full decision document: `~/plans/orchestration-redesign-decision.md`
 
 `pipeline/serve.py` — FastAPI endpoints (`/predict`, `/health`) loading VGAE+GAT+DQN from `experimentruns/`.
 
-## Dashboard
+## Dashboard & Reports
 
-**Primary dashboard: Quarto** (`reports/dashboard.qmd`). Single-file, multi-page Quarto dashboard using OJS + Mosaic/vgplot + DuckDB-WASM. Data loaded from `reports/data/` (Parquet + JSON). Pages: Overview, Performance, Training, GAT & DQN, Knowledge Distillation, Graph Structure, Datasets, Staging.
+**Dashboard: Quarto** (`reports/dashboard.qmd`). Single-file, multi-page Quarto dashboard using OJS + Mosaic/vgplot + DuckDB-WASM. Data loaded from `reports/data/` (Parquet + JSON). Pages: Overview, Performance, Training, GAT & DQN, Knowledge Distillation, Graph Structure, Datasets, Staging.
 
-Dashboard data: `export.py` exports leaderboard, runs, metrics, training curves, datasets, KD transfer, model sizes, and graph samples (~2s, login node safe). `export_data_for_reports()` copies datalake Parquet + JSON to `reports/data/`. Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/`.
+**Paper:** `reports/paper/` contains the full research paper (10 chapters). Chapters include interactive Mosaic figures ported from the dashboard, loaded via a shared `_setup.qmd` include. Paper data lives in `reports/paper/data/` (CSVs) and `reports/data/` (Parquet + JSON).
 
-**Legacy D3 dashboard** (`docs/dashboard/`): Config-driven ES module architecture with 8 chart types. Being retired — all panels migrated to Quarto.
+Dashboard data: `export.py` exports leaderboard, runs, metrics, training curves, datasets, KD transfer, model sizes, and graph samples (~2s, login node safe) directly to `reports/data/`. `export_data_for_reports()` copies datalake Parquet to `reports/data/`. Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/`.
+
+**Deployment:** GitHub Actions renders Quarto on push and auto-deploys to `gh-pages` branch on main. No legacy D3 dashboard remains.
 
 ## General Principles
 

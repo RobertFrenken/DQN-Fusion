@@ -1,4 +1,4 @@
-"""Export experiment results to static JSON for the GitHub Pages dashboard.
+"""Export experiment results to static JSON for the Quarto reports site.
 
 Data sources:
   - Datalake: data/datalake/*.parquet (primary — metadata + metrics)
@@ -6,7 +6,7 @@ Data sources:
   - Catalog: config/datasets.yaml
 
 Usage:
-    python -m pipeline.export [--output-dir docs/dashboard/data]
+    python -m pipeline.export [--output-dir reports/data]
 """
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-DEFAULT_OUTPUT_DIR = Path("docs/dashboard/data")
+DEFAULT_OUTPUT_DIR = Path("reports/data")
 EXPERIMENT_ROOT = Path("experimentruns")
 _DATALAKE_ROOT = Path("data/datalake")
 
@@ -499,10 +499,9 @@ def export_data_for_reports(reports_data_dir: Path | None = None) -> None:
             log.info("Merged %d training curve files → %s", len(tables), out)
 
     # Graph samples for force-directed visualization
-    graph_src = DEFAULT_OUTPUT_DIR / "graph_samples.json"
-    if graph_src.exists():
-        shutil.copy2(graph_src, reports_data_dir / "graph_samples.json")
-        log.info("Copied graph_samples.json → reports/data/")
+    graph_src = reports_data_dir / "graph_samples.json"
+    if not graph_src.exists():
+        log.info("graph_samples.json already in reports/data/ or not yet exported")
 
 
 # ---------------------------------------------------------------------------
@@ -542,7 +541,7 @@ def export_all(output_dir: Path, *, include_reports: bool = False) -> None:
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
         prog="pipeline.export",
-        description="Export experiment results to static JSON for dashboard",
+        description="Export experiment results to static JSON/Parquet for Quarto site",
     )
     parser.add_argument(
         "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
@@ -550,7 +549,7 @@ def main(argv: list[str] | None = None) -> None:
     )
     parser.add_argument(
         "--reports", action="store_true",
-        help="Also copy Parquet data to reports/data/ for Quarto site",
+        help="Also copy datalake Parquet data to reports/data/ for Quarto site",
     )
     args = parser.parse_args(argv)
 

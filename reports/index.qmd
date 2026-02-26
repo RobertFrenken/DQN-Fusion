@@ -2,51 +2,42 @@
 title: "KD-GAT: CAN Bus Intrusion Detection via Knowledge Distillation"
 subtitle: "Graph-Based Anomaly Detection with Model Compression for Edge Deployment"
 author:
-  - name: Robert Fisher
+  - name: Robert Frenken
     affiliation: The Ohio State University
 date: 2026-02-25
-abstract: |
-  We present KD-GAT, a three-stage pipeline for CAN bus intrusion detection
-  that combines graph neural networks with knowledge distillation for
-  deployment on resource-constrained automotive edge devices. The pipeline
-  uses a Variational Graph Autoencoder (VGAE) for unsupervised graph
-  reconstruction, a Graph Attention Network (GAT) for supervised
-  classification with curriculum learning, and a Deep Q-Network (DQN) for
-  reinforcement learning-based prediction fusion. Large teacher models are
-  compressed into small student models via knowledge distillation, achieving
-  competitive performance at 5--20$\times$ parameter reduction. We evaluate
-  on six CAN bus datasets spanning DoS, fuzzing, spoofing, suppress, and
-  masquerade attack types.
 format:
   html: default
 ---
 
-## Introduction {#sec-introduction}
+## About
 
-::: {.callout-note}
-This is a stub. Full content will be added in Phase 2.
-:::
+KD-GAT is a three-stage pipeline for CAN bus intrusion detection that combines graph neural networks with knowledge distillation for deployment on resource-constrained automotive edge devices.
 
-Controller Area Network (CAN) bus is the dominant communication protocol in
-modern vehicles, connecting Electronic Control Units (ECUs) for safety-critical
-functions. The lack of built-in authentication makes CAN vulnerable to
-injection attacks.
+The pipeline uses:
 
-## Pipeline Overview {#sec-pipeline-overview}
+1. **VGAE** (Variational Graph Autoencoder) --- unsupervised graph reconstruction to identify hard examples
+2. **GAT** (Graph Attention Network) --- supervised classification with curriculum learning
+3. **DQN** (Deep Q-Network) --- reinforcement learning fusion of model predictions
 
-The KD-GAT pipeline consists of three stages:
+Large teacher models are compressed into small student models via knowledge distillation, achieving competitive performance at ~20$\times$ parameter reduction. We evaluate on six CAN bus datasets spanning DoS, fuzzing, spoofing, suppress, and masquerade attack types.
 
-1. **VGAE** (Variational Graph Autoencoder) --- unsupervised graph
-   reconstruction learning (@sec-vgae)
-2. **GAT** (Graph Attention Network) --- supervised classification with
-   curriculum learning (@sec-gat)
-3. **DQN** (Deep Q-Network) --- reinforcement learning fusion of model
-   predictions (@sec-dqn)
+## Navigate
 
-Knowledge distillation compresses large teacher models into small student
-models (@sec-kd), enabling deployment on automotive edge hardware.
+| Section | Description |
+|---------|-------------|
+| [Dashboard](dashboard.qmd) | Interactive experiment dashboard with Mosaic/vgplot visualizations |
+| [Paper](paper/index.qmd) | Full research paper (10 chapters) |
+| [Slides](slides.qmd) | Revealjs presentation |
 
-## Datasets {#sec-datasets}
+## Paper Chapters
 
-We evaluate on six CAN bus intrusion detection datasets. See @sec-evaluation
-for full results.
+1. [Introduction](paper/index.qmd)
+2. [Background](paper/02-background.qmd)
+3. [Related Work](paper/03-related-work.qmd)
+4. [Methodology](paper/04-methodology.qmd)
+5. [Experiments](paper/05-experiments.qmd)
+6. [Results](paper/06-results.qmd)
+7. [Ablation](paper/07-ablation.qmd)
+8. [Explainability](paper/08-explainability.qmd)
+9. [Conclusion](paper/09-conclusion.qmd)
+10. [Appendix](paper/10-appendix.qmd)

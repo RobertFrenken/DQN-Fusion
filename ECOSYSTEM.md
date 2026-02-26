@@ -162,17 +162,12 @@ experimentruns/{dataset}/eval_{scale}_evaluation[_kd]/
         |     Queryable: SELECT * FROM 'data/datalake/runs.parquet'
         |     Also writes legacy JSON to s3://kd-gat/lakehouse/runs/ (deprecated)
         |
-        +---> pipeline/export.py ---> docs/dashboard/data/
-        |     Light (~2s):  leaderboard.json, runs.json, datasets.json, kd_transfer.json,
-        |                   training_curves/, metrics/, model_sizes.json
-        |     Heavy (SLURM): embeddings/ (UMAP 2D), graph_samples.json, dqn_policy/,
-        |                    roc_curves/, attention/, recon_errors/
-        |
-        +---> scripts/export_dashboard.sh
-              1. python -m pipeline.export
-              2. aws s3 sync docs/dashboard/data/ s3://kd-gat/dashboard/
-              3. git add + commit + push  (GitHub Pages deploys from docs/)
-              4. dvc push -r s3
+        +---> pipeline/export.py ---> reports/data/
+              Light (~2s):  leaderboard.json, runs.json, datasets.json, kd_transfer.json,
+                            training_curves/, metrics/, model_sizes.json
+              Heavy (SLURM): embeddings/ (UMAP 2D), graph_samples.json, dqn_policy/,
+                             roc_curves/, attention/, recon_errors/
+              GitHub Actions auto-deploys Quarto site to gh-pages on push to main.
 ```
 
 **Key insight**: The data flows in one direction from raw CSVs to dashboard. There are no feedback loops. Each transformation is idempotent — you can re-run any step from its inputs.
@@ -262,10 +257,10 @@ flowchart LR
         vgae_small_autoencoder_kd/
         gat_small_curriculum_kd/
         ... (3 variants x 4 stages = 12 dirs per dataset)
-    docs/dashboard/                            <- GitHub Pages site
-      data/                                    <- Static JSON (exported)
-      js/                                      <- D3.js ES modules
-    docs-site/                                 <- Astro 5 + Svelte 5 research paper site
+    reports/                                   <- Quarto site (dashboard + paper + slides)
+      data/                                    <- Static JSON/Parquet (exported)
+      paper/                                   <- 10-chapter research paper
+      _ojs/                                    <- Observable JS modules
     scripts/                                   <- SLURM job scripts
     wandb/                                     <- Offline W&B runs (.gitignored)
     .dvc/                                      <- DVC config
@@ -415,7 +410,7 @@ The teacher is frozen during student training — its weights never update. The 
 | Evaluation metrics (final) | `experimentruns/.../eval_*/metrics.json` |
 | Embeddings for visualization | `experimentruns/.../eval_*/embeddings.npz` |
 | DQN policy (alpha values) | `experimentruns/.../eval_*/dqn_policy.json` |
-| Dashboard static data | `docs/dashboard/data/` |
+| Report data (exports) | `reports/data/` |
 | Config defaults | `config/defaults.yaml` |
 | Architecture definitions | `config/models/{type}/{scale}.yaml` |
 | KD settings | `config/auxiliaries/kd_standard.yaml` |
@@ -425,8 +420,7 @@ The teacher is frozen during student training — its weights never update. The 
 | Analytics DuckDB | `data/datalake/analytics.duckdb` |
 | DVC cache (local fast) | `/fs/scratch/PAS1266/can-graph-dvc/` |
 | Lakehouse (S3, legacy) | `s3://kd-gat/lakehouse/runs/*.json` |
-| Dashboard (S3) | `s3://kd-gat/dashboard/` |
-| Dashboard (live) | https://robertfrenken.github.io/DQN-Fusion/ |
+| Quarto site (live) | https://robertfrenken.github.io/DQN-Fusion/ (gh-pages) |
 
 ---
 

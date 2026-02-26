@@ -30,6 +30,53 @@ df = pd.read_csv("data/can_datasets.csv")
 Markdown(df.to_markdown(index=False))
 ```
 
+### Knowledge Distillation Effectiveness
+
+@fig-kd-transfer visualizes the knowledge transfer between teacher (large) and student (small + KD) models. Points near the diagonal indicate successful knowledge distillation with minimal performance degradation.
+
+```{ojs}
+//| label: fig-kd-transfer
+//| fig-cap: "Knowledge distillation transfer: teacher (large) vs student (small + KD) performance. Points near the diagonal indicate effective knowledge transfer. Color encodes dataset."
+
+kd_transfer_json = FileAttachment("../data/kd_transfer.json").json()
+
+viewof selectedKdMetric = Inputs.select(
+  ["f1", "accuracy", "auc"],
+  { label: "Metric", value: "f1" }
+)
+
+{
+  const data = kd_transfer_json.data.filter(d => d.metric_name === selectedKdMetric);
+  const metricLabel = selectedKdMetric.toUpperCase();
+  return Plot.plot({
+    width: 600,
+    height: 360,
+    x: { label: `Teacher ${metricLabel} (Large)`, domain: [0.5, 1.01] },
+    y: { label: `Student ${metricLabel} (Small + KD)`, domain: [0.5, 1.01] },
+    color: { legend: true },
+    marks: [
+      Plot.line([[0.5, 0.5], [1, 1]], { stroke: "#8b949e", strokeDasharray: "4,4", strokeWidth: 1 }),
+      Plot.dot(data, {
+        x: "teacher_value",
+        y: "student_value",
+        fill: "dataset",
+        stroke: "dataset",
+        r: 7,
+        tip: true,
+        title: d => `${d.dataset} / ${d.model_type}\nTeacher: ${d.teacher_value.toFixed(4)}\nStudent: ${d.student_value.toFixed(4)}`
+      }),
+      Plot.text(data, {
+        x: "teacher_value",
+        y: "student_value",
+        text: d => d.model_type.slice(0, 3),
+        dy: -12,
+        fontSize: 10
+      })
+    ]
+  });
+}
+```
+
 ### Discussion
 
 **Class Imbalance Handling:** Our multi-stage approach demonstrates superior performance on imbalanced datasets compared to single-stage methods. The VGAE component effectively captures structural anomalies even with limited attack samples, while the GAT classifier benefits from the refined feature representations. This combination proves particularly effective on datasets S02 and S04, where traditional methods struggle with extreme class ratios.

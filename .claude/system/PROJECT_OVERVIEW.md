@@ -49,7 +49,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 - `tracking.py` — Memory monitoring utilities
 - `memory.py` — GPU memory management: static estimation, measured (forward hooks), trial-based (binary search with forward+backward passes)
 - `lakehouse.py` — Fire-and-forget sync to S3 (structured metrics as JSON)
-- `export.py` — Filesystem scanning → static JSON export for dashboard
+- `export.py` — Filesystem scanning → static JSON/Parquet export for Quarto reports
 
 ### Layer 3: `src/` (domain — imports config.constants, never imports pipeline/)
 
@@ -177,39 +177,17 @@ experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
 - Structured metrics as JSON at `s3://kd-gat/lakehouse/runs/`, queryable via DuckDB
 - Fire-and-forget sync from `pipeline/lakehouse.py`
 
-## Dashboard Architecture
+## Quarto Reports & Dashboard
 
-Config-driven D3.js v7 dashboard (ES modules) on GitHub Pages. Adding a panel = adding an entry to `panelConfig.js`.
+**Dashboard:** `reports/dashboard.qmd` — single-file, multi-page Quarto dashboard using OJS + Mosaic/vgplot + DuckDB-WASM. Pages: Overview, Performance, Training, GAT & DQN, Knowledge Distillation, Graph Structure, Datasets, Staging. Data loaded from `reports/data/` (Parquet + JSON).
 
-```
-docs/dashboard/js/
-  core/BaseChart.js      # Base class: SVG, margins, tooltip, responsive, loading/error/no-data
-  core/Registry.js       # Chart type registry: register(name, class), get(name), list()
-  core/Theme.js          # Shared palette (8 colors), CSS variable refs, colorScale()
-  charts/                # 8 chart types extending BaseChart
-    TableChart.js        # Sortable leaderboard table (overrides _setupSVG for DOM table)
-    BarChart.js          # Grouped bar chart (dataset comparison, model predictions)
-    ScatterChart.js      # Configurable scatter (xField/yField/colorField/sizeField)
-    LineChart.js         # Multi-series line chart (training curves)
-    TimelineChart.js     # Timeline scatter (run history, dynamic height)
-    BubbleChart.js       # Extends ScatterChart (3-metric + size encoding)
-    ForceGraph.js        # D3 force simulation (CAN bus graph visualization)
-    HistogramChart.js    # Stacked histogram (DQN alpha distribution)
-  panels/panelConfig.js  # Declarative panel definitions (11 panels)
-  panels/PanelManager.js # Config → nav + panels + controls → lazy-load data → render
-  app.js                 # Slim entry: import chart types (side-effect registration) + PanelManager.init()
-```
+**Paper:** `reports/paper/` — 10-chapter research paper with interactive Mosaic figures embedded. Shared init in `_setup.qmd`, included via `_metadata.yml`. Chapters: Introduction, Background, Related Work, Methodology, Experiments, Results, Ablation, Explainability, Conclusion, Appendix. Figures include: force-directed CAN graphs, training curves, KD transfer scatter, attention heatmaps, UMAP embeddings, CKA similarity, DQN policy distribution, reconstruction error histograms, model size bar charts.
 
-**Lifecycle**: `BaseChart.init()` → `_setupSVG()` + `_setupTooltip()` → `update(data, options)` → `render(data, options)` [subclass] → `destroy()` cleanup.
+**Slides:** `reports/slides.qmd` — Revealjs presentation.
 
-**Panel config entry**:
-```js
-{ id, title, description, chartType, dataSource, controls: [...], chartConfig: {...} }
-```
+**Export pipeline**: `pipeline/export.py` → `export_all()` generates: leaderboard, per-run metrics, training curves, KD transfer, datasets, runs, metric catalog, graph samples, model sizes. Exports go directly to `reports/data/`.
 
-**Data sources**: Static JSON files in `docs/dashboard/data/`, lazy-loaded per panel. Some panels use `dynamicLoader` for run-specific data (training curves, embeddings, DQN policy).
-
-**Export pipeline**: `pipeline/export.py` → `export_all()` generates: leaderboard, per-run metrics, training curves, KD transfer, datasets, runs, metric catalog, graph samples, model sizes, embeddings, DQN policy, ROC/PR curves, attention weights, reconstruction errors, CKA matrices, explanations.
+**Deployment:** GitHub Actions renders Quarto on push and auto-deploys to `gh-pages` branch on main.
 
 ## Environment
 

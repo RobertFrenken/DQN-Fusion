@@ -25,18 +25,19 @@ sbatch scripts/ray_slurm.sh flow --dataset hcrl_sa
 python -m pipeline.cli flow --dataset hcrl_sa --local  # No SLURM
 
 # Export + analytics
-python -m pipeline.export                      # All exports (~2s, login node OK)
+python -m pipeline.export                      # All exports → reports/data/ (~2s, login node OK)
+python -m pipeline.export --reports            # Also copy datalake Parquet to reports/data/
 python -m pipeline.build_analytics             # DuckDB rebuild (sub-second, views over Parquet)
 python -m pipeline.migrate_datalake            # One-time: filesystem → Parquet datalake
-bash scripts/export_dashboard.sh               # Export + commit + push
 
 # Tests — ALWAYS submit to SLURM
 bash scripts/run_tests_slurm.sh
 bash scripts/run_tests_slurm.sh -k "test_full_pipeline"
 
-# Reports (Quarto)
+# Reports (Quarto) — site auto-deploys via GitHub Actions on push to main
 quarto preview reports/                     # Dev server
 quarto render reports/                      # Build → reports/_site/
+quarto render reports/paper/ --to typst     # PDF output via Typst
 ```
 
 ## Session Start

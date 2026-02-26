@@ -3,9 +3,11 @@ project:
   output-dir: _site
   render:
     - "*.qmd"
+    - "paper/*.qmd"
     - "!workflow.rst"
   resources:
     - "data/**"
+    - "paper/data/**"
 
 website:
   title: "KD-GAT"
@@ -16,21 +18,25 @@ website:
       - text: "Paper"
         menu:
           - text: "Introduction"
-            href: index.qmd
+            href: paper/index.qmd
           - text: "Background"
-            href: 02-background.qmd
-          - text: "VGAE"
-            href: 03-vgae.qmd
-          - text: "GAT"
-            href: 04-gat.qmd
-          - text: "DQN"
-            href: 05-dqn.qmd
-          - text: "Knowledge Distillation"
-            href: 06-kd.qmd
-          - text: "Evaluation"
-            href: 07-evaluation.qmd
+            href: paper/02-background.qmd
+          - text: "Related Work"
+            href: paper/03-related-work.qmd
+          - text: "Methodology"
+            href: paper/04-methodology.qmd
+          - text: "Experiments"
+            href: paper/05-experiments.qmd
+          - text: "Results"
+            href: paper/06-results.qmd
+          - text: "Ablation"
+            href: paper/07-ablation.qmd
+          - text: "Explainability"
+            href: paper/08-explainability.qmd
+          - text: "Conclusion"
+            href: paper/09-conclusion.qmd
           - text: "Appendix"
-            href: appendix.qmd
+            href: paper/10-appendix.qmd
       - text: "Slides"
         href: slides.qmd
     right:

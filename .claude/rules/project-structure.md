@@ -25,7 +25,7 @@ pipeline/           # Layer 2: Orchestration (imports config/, lazy imports from
     temporal.py     # Temporal graph classification (GAT encoder + Transformer over time)
   orchestration/    # Ray orchestration (ray_pipeline, ray_slurm, tune_config)
   tracking.py       # Memory monitoring utilities
-  export.py         # Datalake/filesystem → static JSON export for dashboard
+  export.py         # Datalake/filesystem → static JSON/Parquet export for Quarto reports
   memory.py         # GPU memory management (static, measured, trial-based batch sizing)
   lakehouse.py      # Datalake Parquet append (fire-and-forget)
   migrate_datalake.py  # One-time migration: filesystem → Parquet datalake
@@ -41,25 +41,28 @@ data/
   datalake/         # Parquet structured storage (runs, metrics, configs, artifacts, training_curves/)
                     # analytics.duckdb (views over Parquet)
 experimentruns/     # Outputs: best_model.pt, config.json, metrics.json, embeddings.npz, dqn_policy.json, explanations.npz
-scripts/            # Automation (export_dashboard.sh, run_tests_slurm.sh, build_test_cache.sh, sweep.sh, etc.)
-docs/dashboard/     # Legacy D3.js dashboard (being retired, panels migrated to Quarto)
-  js/core/          # BaseChart, Registry, Theme
-  js/charts/        # 8 chart types (Table, Bar, Scatter, Line, Timeline, Bubble, ForceGraph, Histogram)
-  js/panels/        # PanelManager + panelConfig (11 panels, declarative)
-  js/app.js         # Slim entry point
-  data/             # Static JSON exports from pipeline
+scripts/            # Automation (run_tests_slurm.sh, build_test_cache.sh, sweep.sh, etc.)
+ECOSYSTEM.md        # Dependency ecosystem documentation
+user_guides/        # User guides (memory_optimization.md)
 reports/            # Quarto website — paper chapters + interactive dashboard (PRIMARY)
   _quarto.yml       # Project config (website, HTML + Typst + Revealjs)
-  index.qmd         # Introduction
-  02-background.qmd through 07-evaluation.qmd  # Paper chapters
-  appendix.qmd      # Appendix
+  index.qmd         # Landing page
   dashboard.qmd     # Multi-page dashboard (Overview, Performance, Training, GAT & DQN, KD, Graph, Datasets, Staging)
   slides.qmd        # Revealjs presentation
   pipeline_report.qmd  # Auto-generated pipeline report
+  pipeline_dag.svg  # Pipeline DAG visualization
   custom.scss       # Theme overrides
   references.bib    # BibTeX bibliography
   data/             # Report data (Parquet + JSON from export pipeline, incl. graph_samples.json)
   _ojs/             # Observable JS modules (force-graph.js, mosaic-setup.js, theme.js)
+  paper/            # Research paper (10 chapters with interactive Mosaic figures)
+    index.qmd       # Paper introduction
+    02-background.qmd through 09-conclusion.qmd  # Paper body
+    10-appendix.qmd # Appendix with model sizing details
+    _metadata.yml   # Paper-specific metadata + shared _setup.qmd include
+    _setup.qmd      # Shared Mosaic/vgplot + DuckDB-WASM init for figures
+    references.bib  # Paper bibliography
+    data/           # Paper-specific CSV data (ablation, datasets, model params)
   _site/            # Build output (.gitignored)
 notebooks/          # Jupyter notebooks for analysis + prototyping
 ```

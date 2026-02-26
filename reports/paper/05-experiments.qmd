@@ -6,6 +6,60 @@ title: "Experiments"
 
 This section presents the experimental setup, evaluation metrics, and insights into the datasets used in this study.
 
+### Training Progression
+
+@fig-training-curves shows the training curve comparison across runs, illustrating convergence behavior and learning dynamics for each pipeline stage.
+
+```{ojs}
+//| label: fig-training-curves
+//| fig-cap: "Training curve comparison across two selected runs. Solid lines represent Run A; dashed lines represent Run B. Each metric is tracked per epoch."
+
+await loadTable("training_curves", FileAttachment("../data/training_curves.parquet"));
+
+viewof compareRun1 = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM training_curves ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run A", value: runs[0] });
+}
+
+viewof compareRun2 = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM training_curves ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run B", value: runs.length > 1 ? runs[1] : runs[0] });
+}
+
+{
+  const r1 = await vg.coordinator().query(
+    vg.sql`SELECT epoch, metric_name, value, run_id FROM training_curves WHERE run_id = '${compareRun1}'`
+  );
+  const r2 = await vg.coordinator().query(
+    vg.sql`SELECT epoch, metric_name, value, run_id FROM training_curves WHERE run_id = '${compareRun2}'`
+  );
+  const data = [...Array.from(r1), ...Array.from(r2)];
+
+  return Plot.plot({
+    width: 700,
+    height: 320,
+    color: { legend: true },
+    x: { label: "Epoch" },
+    y: { label: "Value" },
+    marks: [
+      Plot.line(data, {
+        x: "epoch",
+        y: "value",
+        stroke: "metric_name",
+        strokeDasharray: d => d.run_id === compareRun1 ? null : "4,3",
+        tip: true,
+      }),
+    ],
+  });
+}
+```
+
 ### Evaluation Metrics
 
 The performance of the model is evaluated using accuracy and F1-Score.

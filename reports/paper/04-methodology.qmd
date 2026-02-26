@@ -30,6 +30,52 @@ CAN messages are broadcast by Electronic Control Units (ECUs); CAN IDs identify 
 2. **end for**
 :::
 
+@fig-can-graph visualizes a sample CAN bus graph constructed using this algorithm, rendered as a force-directed layout where nodes represent unique CAN IDs and edges encode sequential transitions within a traffic window.
+
+```{ojs}
+//| label: fig-can-graph
+//| fig-cap: "Force-directed CAN bus graph structure. Nodes represent unique CAN IDs within a traffic window; edges encode sequential message transitions. Node size reflects degree centrality."
+
+import { renderForceGraph } from "../_ojs/force-graph.js"
+
+graph_samples_json = FileAttachment("../data/graph_samples.json").json()
+
+{
+  const d3 = await import("https://cdn.jsdelivr.net/npm/d3@7/+esm");
+  const container = document.createElement("div");
+  container.style.position = "relative";
+  container.style.width = "100%";
+
+  const style = document.createElement("style");
+  style.textContent = `
+    .tooltip {
+      position: absolute;
+      pointer-events: none;
+      background: rgba(13, 17, 23, 0.95);
+      color: #e6edf3;
+      border: 1px solid #30363d;
+      border-radius: 6px;
+      padding: 8px 12px;
+      font-size: 12px;
+      opacity: 0;
+      transition: opacity 0.15s;
+      z-index: 10;
+    }
+  `;
+  container.appendChild(style);
+
+  const datasets = [...new Set(graph_samples_json.data.map(d => d.dataset))].sort();
+  renderForceGraph(d3, container, graph_samples_json.data, {
+    dataset: datasets[0],
+    colorBy: "can_id",
+    width: 700,
+    height: 450,
+  });
+
+  return container;
+}
+```
+
 Node features (11 dimensions) include: CAN ID, normalized payload bytes (mean across occurrences), occurrence count, and temporal position (last occurrence normalized to window length). Edge features (11 dimensions) comprise: frequency count, relative frequency, mean/std inter-arrival intervals, regularity score, temporal position metrics (first, last, spread), reverse-edge indicator, degree product, and degree ratio. Window size $W=100$ balances temporal context and computational efficiency. Graphs are directed and weighted by transition counts; self-loops occur for consecutive identical IDs.
 
 ### Training Paradigm

@@ -15,10 +15,9 @@
 | **SLURM integration** | Pitzer cluster. GPU (2x V100 per node, 362GB RAM, PAS3209) + CPU partitions. |
 | **Graph caching** | All 6 datasets cached with test scenarios (`processed_graphs.pt` + `test_*.pt`). DynamicBatchSampler for variable-size graphs. |
 | **DVC tracking** | Raw data + cache tracked. S3 remote + local scratch remote configured. |
-| **Export pipeline** | 8 lightweight exporters (~2s, login node safe): leaderboard, runs, metrics, metric catalog, datasets, KD transfer, training curves, model sizes. Heavy analysis (UMAP, attention, CKA, etc.) moved to notebooks. |
+| **Export pipeline** | 8 lightweight exporters (~2s, login node safe) → `reports/data/`: leaderboard, runs, metrics, metric catalog, datasets, KD transfer, training curves, model sizes. Heavy analysis (UMAP, attention, CKA, etc.) in notebooks. |
 | **Datalake** | Parquet-based structured storage in `data/datalake/` (runs, metrics, configs, artifacts, training curves). DuckDB analytics views. S3 backup via `aws s3 sync` in SLURM epilog. |
-| **S3 dashboard data** | Public read + CORS configured on `s3://kd-gat/dashboard/`. Dashboard JS fetches from S3 with `data/` fallback for local dev. |
-| **Dashboard** | Live at https://robertfrenken.github.io/DQN-Fusion/. D3.js v7 ES modules, 27 panels, config-driven via `panelConfig.js`. |
+| **Quarto site** | Dashboard + paper + slides rendered via Quarto. Auto-deployed to GitHub Pages via GitHub Actions on push to main. |
 | **Test suite** | 108 tests (88 passed, 20 skipped). All passing on CPU fallback after RAPIDS integration. |
 
 ### Partially Working (Yellow)
@@ -27,14 +26,14 @@
 |-----------|-------|
 | **W&B tracking** | 77 online runs; offline runs may need sync. Run `wandb sync wandb/offline-run-*`. |
 | **RAPIDS GPU acceleration** | Phase 1 integrated (cuML PCA/UMAP/TSNE in export, cudf.pandas in preprocessing). Fallback to CPU verified. Needs `gnn-rapids` conda env setup (`bash scripts/setup_rapids_env.sh`) and GPU partition testing. |
-| **Dashboard panels** | Most panels verified. Timeline, duration, and training curves panels need browser verification. |
+| **Paper figures** | Interactive Mosaic figures ported from dashboard to paper chapters. Browser verification needed. |
 | **Inference server** | `pipeline/serve.py` exists (`/predict`, `/health`). Untested with current 72-run checkpoints. |
 
 ### Missing (Gray)
 
 | Component | Impact |
 |-----------|--------|
-| **CI/CD** | GitHub Actions CI added (docs-site-build job). No automated testing or full deployment yet. |
+| **CI/CD** | GitHub Actions CI: lint + test + quarto-build (auto-deploy to gh-pages on main). |
 | **gnn-rapids conda env** | Setup script exists but env not yet created. Run `bash scripts/setup_rapids_env.sh` on a GPU node. |
 | **RAPIDS Phase 2** | Vectorized `safe_hex_to_int()` (currently falls back to CPU under cudf.pandas due to `.apply()` with Python control flow). |
 
@@ -50,7 +49,7 @@ Added 2026-02-20 (`a2cdcc2`). Zero-code-change GPU acceleration with CPU fallbac
 | `pyproject.toml` | `[project.optional-dependencies] rapids = [cudf-cu12, cuml-cu12, cupy-cuda12x]` |
 | `scripts/setup_rapids_env.sh` | New: creates `gnn-rapids` conda env (RAPIDS 24.12 + CUDA 12.4) |
 | `scripts/preprocess_gpu_slurm.sh` | New: GPU preprocessing SLURM script |
-| `scripts/export_dashboard_slurm.sh` | `--gpu` flag for GPU partition with RAPIDS env |
+| `pipeline/export.py` | RAPIDS cuML PCA/UMAP/TSNE with sklearn fallback in `_reduce_embeddings()` |
 
 ## Experiment Runs
 
@@ -80,11 +79,11 @@ All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
   - WS2 (Orchestration research): Decision document at `~/plans/orchestration-redesign-decision.md`. Concurrent `small_nokd` variant refactored. Benchmark instrumentation added. R1 benchmark submitted (job 44398773). R2 pending R1 results.
   - WS3 (Datalake consolidation): All 6 phases complete — migration script, Parquet writes, analytics views, export integration, CLI registration, documentation.
   - Cleanup: ECOSYSTEM.md Diagram 5 fixed (path + datalake). 5 stale git stashes dropped. `.claude/settings.local.json` cleaned.
-- **Docs-site Observable Plot** (2026-02-24):
-  - PlotFigure.svelte with dual renderer architecture (`renderer: 'plot' | 'd3'` in figure registry)
-  - Deno Jupyter notebook workflow (`notebooks/deno_plot_template.ipynb`) for prototyping plots
-  - Showcase page (`src/pages/showcase.astro`), site now 3 pages (index, showcase, test-figure)
-  - Build: 7.13s, `docs-site/dist/` is a build artifact (~288 MB, in `.gitignore`, do not commit)
+- **Quarto migration complete** (2026-02-25):
+  - Deleted legacy D3 dashboard (`docs/dashboard/`), old stub chapters, export scripts
+  - Ported 9 interactive Mosaic figures from `dashboard.qmd` into paper chapters
+  - Updated CI: removed js-syntax + docs-site-build jobs, added quarto-build + gh-pages deploy
+  - Navbar now points to `paper/` chapters. Landing page (`index.qmd`) updated.
 - **Phase 5: Advanced Enhancements** (2026-02-23):
   - 5.1 GNNExplainer integration (`src/explain.py`, evaluation wiring, export, dashboard panel)
   - 5.4 Trial-based batch size auto-tuning (binary search in `pipeline/memory.py`)
@@ -104,9 +103,9 @@ Raw CAN CSVs (6 datasets, 10.8 GB, DVC)
     → Training Pipeline (VGAE → GAT → DQN, large + small + small-KD)
       → Evaluation (metrics + embeddings + attention + policy)
         → W&B (77 online) | Datalake (Parquet) | experimentruns/ (72 on disk)
-          → Export Pipeline (8 lightweight exporters, login node safe)
-            → S3 Dashboard Bucket (s3://kd-gat/dashboard/)
-              → GitHub Pages Dashboard (27 panels, D3.js v7)
+          → Export Pipeline (8 lightweight exporters → reports/data/)
+            → Quarto Site (dashboard + paper + slides)
+              → GitHub Pages (auto-deploy via GitHub Actions on push to main)
 ```
 
 ## OSC Environment
@@ -115,5 +114,5 @@ Raw CAN CSVs (6 datasets, 10.8 GB, DVC)
 - **Scratch**: `/fs/scratch/PAS1266/` (GPFS, 90-day purge)
 - **Ray temp**: `/fs/scratch/PAS1266/.ray/`
 - **W&B**: Project `kd-gat` (offline on compute nodes, sync later)
-- **Dashboard**: `docs/dashboard/` (GitHub Pages — static JSON + D3.js)
+- **Reports**: `reports/` (Quarto site — auto-deployed to GitHub Pages)
 - **Conda**: `gnn-rapids` (GPU, not yet created — for RAPIDS only)

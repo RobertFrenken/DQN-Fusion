@@ -12,6 +12,72 @@ Raw CAN-graph data projected via UMAP shows loose clustering that indicates limi
 
 Despite binary supervision (attack vs. normal), the learned embedding space forms well-separated clusters aligned with specific attack types (DoS, Fuzzy, Gear, RPM). This emergent multi-class structure demonstrates that our model captures high-level semantic patterns in CAN traffic and generalizes across attack categories without explicit multi-class labels. The clear cluster separation in embedding space, absent in raw features, validates the GAT's ability to learn discriminative representations from graph-structured temporal data.
 
+```{ojs}
+//| label: fig-umap-vgae
+//| fig-cap: "UMAP projection of VGAE latent embeddings. Normal samples (green) and attack samples (red) show separation patterns learned by the autoencoder without explicit labels."
+
+await loadTable("embeddings", FileAttachment("../data/embeddings.parquet"));
+
+viewof selectedEmbRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM embeddings WHERE model = 'vgae' ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.dot(
+    vg.from("embeddings", {
+      filterBy: vg.sql`run_id = '${selectedEmbRun}' AND model = 'vgae'`
+    }),
+    {
+      x: "x",
+      y: "y",
+      fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+      r: 2,
+      opacity: 0.5
+    }
+  ),
+  {
+    width: 600,
+    height: 350,
+    color: { legend: true, domain: ["normal", "attack"], range: ["#3fb950", "#f85149"] },
+    x: { label: "UMAP 1", axis: null },
+    y: { label: "UMAP 2", axis: null },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+```{ojs}
+//| label: fig-umap-gat
+//| fig-cap: "UMAP projection of GAT penultimate-layer embeddings. The supervised classifier produces well-separated clusters, with emergent multi-class structure despite binary training."
+
+vg.plot(
+  vg.dot(
+    vg.from("embeddings", {
+      filterBy: vg.sql`run_id = '${selectedEmbRun}' AND model = 'gat'`
+    }),
+    {
+      x: "x",
+      y: "y",
+      fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+      r: 2,
+      opacity: 0.5
+    }
+  ),
+  {
+    width: 600,
+    height: 350,
+    color: { legend: true, domain: ["normal", "attack"], range: ["#3fb950", "#f85149"] },
+    x: { label: "UMAP 1", axis: null },
+    y: { label: "UMAP 2", axis: null },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
 ### Composite VGAE Reconstruction Error
 
 To assess the overall reconstruction quality of the VGAE, we combine three types of reconstruction errors: node feature reconstruction error ($E_{\text{node}}$), CAN ID prediction error ($E_{\text{CAN\,ID}}$), and neighborhood reconstruction error ($E_{\text{neighbor}}$). Each error captures a different aspect of the graph structure and message semantics. We compute a single composite score as a weighted sum:
@@ -24,6 +90,156 @@ where $\alpha$, $\beta$, and $\gamma$ are empirically chosen weights that regula
 
 This approach enables the detection of subtle anomalies by jointly evaluating node content, CAN identifier semantics, and local neighborhood structure.
 
+@fig-recon-errors shows the distribution of composite reconstruction errors for normal and attack samples. The separation between distributions validates the VGAE's ability to discriminate between normal traffic patterns and anomalous injections.
+
+```{ojs}
+//| label: fig-recon-errors
+//| fig-cap: "Distribution of VGAE composite reconstruction errors. Normal samples (green) concentrate at low error values, while attack samples (red) exhibit higher reconstruction errors, enabling threshold-based anomaly detection."
+
+await loadTable("recon_errors", FileAttachment("../data/recon_errors.parquet"));
+
+viewof selectedReconRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM recon_errors ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.rectY(
+    vg.from("recon_errors", {
+      filterBy: vg.sql`run_id = '${selectedReconRun}'`
+    }),
+    vg.binX({ y: "count" }, { x: "error", fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END` })
+  ),
+  {
+    width: 650,
+    height: 320,
+    color: { legend: true, domain: ["normal", "attack"], range: ["#3fb950", "#f85149"] },
+    x: { label: "Reconstruction Error" },
+    y: { label: "Count" },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+### Attention Weight Analysis
+
+To understand which graph structural features the GAT prioritizes, we analyze the learned attention weights across layers and heads. @fig-attention-heatmap shows the mean attention weight distribution, revealing how different heads specialize in capturing distinct message relationship patterns.
+
+```{ojs}
+//| label: fig-attention-heatmap
+//| fig-cap: "GAT attention weight heatmap across layers and heads. Color intensity indicates mean attention magnitude. Different heads learn to attend to different structural patterns in the CAN bus graph."
+
+await loadTable("attention_weights", FileAttachment("../data/attention_weights.parquet"));
+
+viewof selectedAttRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM attention_weights ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.cell(
+    vg.from("attention_weights", {
+      filterBy: vg.sql`run_id = '${selectedAttRun}'`
+    }),
+    {
+      x: vg.sql`'Head ' || head`,
+      y: vg.sql`'Layer ' || layer`,
+      fill: "mean_alpha",
+      inset: 0.5
+    }
+  ),
+  {
+    width: 500,
+    height: 280,
+    color: { scheme: "blues", legend: true, label: "Mean Attention" },
+    x: { label: "Attention Head" },
+    y: { label: "GAT Layer" },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
 ### DQN-Fusion Analysis
 
 The learned DQN fusion policy exhibits interpretable, context-specific weighting that validates adaptive expert selection. Analysis reveals a strong correlation between VGAE anomaly scores and fusion weights: low VGAE scores cluster at $\alpha \approx 0$ (favoring the robust expert), while higher scores transition to intermediate weights, demonstrating the policy learned to default to VGAE's out-of-distribution detection while conditionally leveraging GAT's strength on known attacks. The multimodal distribution with peaks at $\alpha \approx 0, 0.2, 0.4, 0.6, 0.8$ indicates the DQN discovered distinct attack-type-specific strategies rather than learning fixed averaging ($\alpha = 0.5$). Critically, the divergence between normal and attack distributions validates meaningful anomaly detection logic.
+
+@fig-dqn-policy shows the learned DQN fusion weight distribution, confirming the multimodal policy structure.
+
+```{ojs}
+//| label: fig-dqn-policy
+//| fig-cap: "DQN fusion weight (alpha) distribution. The multimodal pattern with peaks at distinct alpha values indicates the policy learned context-specific fusion strategies rather than simple averaging."
+
+await loadTable("dqn_policy", FileAttachment("../data/dqn_policy.parquet"));
+
+viewof selectedPolicyRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM dqn_policy ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.rectY(
+    vg.from("dqn_policy", {
+      filterBy: vg.sql`run_id = '${selectedPolicyRun}'`
+    }),
+    vg.binX({ y: "count" }, { x: "alpha" })
+  ),
+  {
+    width: 500,
+    height: 280,
+    color: { scheme: "oranges" },
+    x: { label: "Alpha (GAT weight in fusion)" },
+    y: { label: "Count" },
+    style: { fontSize: "13px" }
+  }
+)
+```
+
+### Layer-wise Knowledge Transfer
+
+To quantify how well the student model replicates the teacher's internal representations, we compute Centered Kernel Alignment (CKA) between corresponding layers. @fig-cka-heatmap shows the layer-wise similarity matrix, where high values along the diagonal indicate successful representation alignment at each depth.
+
+```{ojs}
+//| label: fig-cka-heatmap
+//| fig-cap: "CKA similarity between teacher and student layers. High diagonal values indicate the student successfully learns representations aligned with the teacher at each network depth."
+
+await loadTable("cka_similarity", FileAttachment("../data/cka_similarity.parquet"));
+
+viewof selectedCkaRun = {
+  const result = await vg.coordinator().query(
+    vg.sql`SELECT DISTINCT run_id FROM cka_similarity ORDER BY run_id`
+  );
+  const runs = Array.from(result, d => d.run_id);
+  return Inputs.select(runs, { label: "Run", value: runs[0] });
+}
+
+vg.plot(
+  vg.cell(
+    vg.from("cka_similarity", {
+      filterBy: vg.sql`run_id = '${selectedCkaRun}'`
+    }),
+    {
+      x: "student_layer",
+      y: "teacher_layer",
+      fill: "similarity",
+      inset: 0.5
+    }
+  ),
+  {
+    width: 400,
+    height: 300,
+    color: { scheme: "viridis", legend: true, label: "CKA Similarity" },
+    x: { label: "Student Layer" },
+    y: { label: "Teacher Layer" },
+    style: { fontSize: "13px" }
+  }
+)
+```

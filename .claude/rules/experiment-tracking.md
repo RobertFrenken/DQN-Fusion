@@ -50,6 +50,6 @@ Evaluation stage captures:
 
 Stored in run directories under `experimentruns/`. Indexed in `artifacts.parquet`.
 
-## Dashboard Export
+## Report Export
 
-`python -m pipeline.export` reads datalake Parquet → static JSON (leaderboard, runs, metrics, training curves, datasets, KD transfer, model sizes). ~2s, login node safe. Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/04_artifact_analysis.ipynb`. `scripts/export_dashboard.sh` syncs to S3.
+`python -m pipeline.export` reads datalake Parquet → static JSON/Parquet in `reports/data/` (leaderboard, runs, metrics, training curves, datasets, KD transfer, model sizes). ~2s, login node safe. Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/`. Quarto site auto-deploys via GitHub Actions on push to main.
