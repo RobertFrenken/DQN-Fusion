@@ -187,7 +187,7 @@ experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
 
 **Export pipeline**: `pipeline/export.py` → `export_all()` generates: leaderboard, per-run metrics, training curves, KD transfer, datasets, runs, metric catalog, graph samples, model sizes. Exports go directly to `reports/data/`.
 
-**Deployment:** GitHub Actions renders Quarto on push and auto-deploys to `gh-pages` branch on main.
+**Deployment:** GitHub Actions renders Quarto on push to main and deploys via `actions/deploy-pages` (Actions-based Pages). CI: lint → test → quarto-build → deploy.
 
 ## Environment
 

@@ -39,14 +39,15 @@ vg.plot(
       opacity: 0.5
     }
   ),
-  {
-    width: 600,
-    height: 350,
-    color: { legend: true, domain: ["normal", "attack"], range: ["#3fb950", "#f85149"] },
-    x: { label: "UMAP 1", axis: null },
-    y: { label: "UMAP 2", axis: null },
-    style: { fontSize: "13px" }
-  }
+  vg.width(600),
+  vg.height(350),
+  vg.colorLegend(true),
+  vg.colorDomain(["normal", "attack"]),
+  vg.colorRange(["#3fb950", "#f85149"]),
+  vg.xLabel("UMAP 1"),
+  vg.xAxis(null),
+  vg.yLabel("UMAP 2"),
+  vg.yAxis(null)
 )
 ```
 
@@ -67,14 +68,15 @@ vg.plot(
       opacity: 0.5
     }
   ),
-  {
-    width: 600,
-    height: 350,
-    color: { legend: true, domain: ["normal", "attack"], range: ["#3fb950", "#f85149"] },
-    x: { label: "UMAP 1", axis: null },
-    y: { label: "UMAP 2", axis: null },
-    style: { fontSize: "13px" }
-  }
+  vg.width(600),
+  vg.height(350),
+  vg.colorLegend(true),
+  vg.colorDomain(["normal", "attack"]),
+  vg.colorRange(["#3fb950", "#f85149"]),
+  vg.xLabel("UMAP 1"),
+  vg.xAxis(null),
+  vg.yLabel("UMAP 2"),
+  vg.yAxis(null)
 )
 ```
 
@@ -111,16 +113,21 @@ vg.plot(
     vg.from("recon_errors", {
       filterBy: vg.sql`run_id = '${selectedReconRun}'`
     }),
-    vg.binX({ y: "count" }, { x: "error", fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END` })
+    {
+      x: vg.bin("error"),
+      y: vg.count(),
+      fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+      insetLeft: 0.5,
+      insetRight: 0.5
+    }
   ),
-  {
-    width: 650,
-    height: 320,
-    color: { legend: true, domain: ["normal", "attack"], range: ["#3fb950", "#f85149"] },
-    x: { label: "Reconstruction Error" },
-    y: { label: "Count" },
-    style: { fontSize: "13px" }
-  }
+  vg.width(650),
+  vg.height(320),
+  vg.colorLegend(true),
+  vg.colorDomain(["normal", "attack"]),
+  vg.colorRange(["#3fb950", "#f85149"]),
+  vg.xLabel("Reconstruction Error"),
+  vg.yLabel("Count")
 )
 ```
 
@@ -154,14 +161,13 @@ vg.plot(
       inset: 0.5
     }
   ),
-  {
-    width: 500,
-    height: 280,
-    color: { scheme: "blues", legend: true, label: "Mean Attention" },
-    x: { label: "Attention Head" },
-    y: { label: "GAT Layer" },
-    style: { fontSize: "13px" }
-  }
+  vg.width(500),
+  vg.height(280),
+  vg.colorScheme("blues"),
+  vg.colorLegend(true),
+  vg.colorLabel("Mean Attention"),
+  vg.xLabel("Attention Head"),
+  vg.yLabel("GAT Layer")
 )
 ```
 
@@ -190,16 +196,13 @@ vg.plot(
     vg.from("dqn_policy", {
       filterBy: vg.sql`run_id = '${selectedPolicyRun}'`
     }),
-    vg.binX({ y: "count" }, { x: "alpha" })
+    {x: vg.bin("alpha"), y: vg.count(), fill: "steelblue", insetLeft: 0.5, insetRight: 0.5}
   ),
-  {
-    width: 500,
-    height: 280,
-    color: { scheme: "oranges" },
-    x: { label: "Alpha (GAT weight in fusion)" },
-    y: { label: "Count" },
-    style: { fontSize: "13px" }
-  }
+  vg.width(500),
+  vg.height(280),
+  vg.colorScheme("oranges"),
+  vg.xLabel("Alpha (GAT weight in fusion)"),
+  vg.yLabel("Count")
 )
 ```
 
@@ -233,13 +236,12 @@ vg.plot(
       inset: 0.5
     }
   ),
-  {
-    width: 400,
-    height: 300,
-    color: { scheme: "viridis", legend: true, label: "CKA Similarity" },
-    x: { label: "Student Layer" },
-    y: { label: "Teacher Layer" },
-    style: { fontSize: "13px" }
-  }
+  vg.width(400),
+  vg.height(300),
+  vg.colorScheme("viridis"),
+  vg.colorLegend(true),
+  vg.colorLabel("CKA Similarity"),
+  vg.xLabel("Student Layer"),
+  vg.yLabel("Teacher Layer")
 )
 ```

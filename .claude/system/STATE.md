@@ -19,6 +19,7 @@
 | **Datalake** | Parquet-based structured storage in `data/datalake/` (runs, metrics, configs, artifacts, training curves). DuckDB analytics views. S3 backup via `aws s3 sync` in SLURM epilog. |
 | **Quarto site** | Dashboard + paper + slides rendered via Quarto. Auto-deployed to GitHub Pages via GitHub Actions on push to main. |
 | **Test suite** | 108 tests (88 passed, 20 skipped). All passing on CPU fallback after RAPIDS integration. |
+| **CI/CD** | GitHub Actions CI: lint → test → quarto-build → deploy (Actions-based Pages). All 4 jobs green. |
 
 ### Partially Working (Yellow)
 
@@ -26,14 +27,13 @@
 |-----------|-------|
 | **W&B tracking** | 77 online runs; offline runs may need sync. Run `wandb sync wandb/offline-run-*`. |
 | **RAPIDS GPU acceleration** | Phase 1 integrated (cuML PCA/UMAP/TSNE in export, cudf.pandas in preprocessing). Fallback to CPU verified. Needs `gnn-rapids` conda env setup (`bash scripts/setup_rapids_env.sh`) and GPU partition testing. |
-| **Paper figures** | Interactive Mosaic figures ported from dashboard to paper chapters. Browser verification needed. |
+| **Paper figures** | Mosaic figures deployed with vgplot@0.21.1 CDN. Pending data verification (some Parquet files may not exist yet in reports/data/). |
 | **Inference server** | `pipeline/serve.py` exists (`/predict`, `/health`). Untested with current 72-run checkpoints. |
 
 ### Missing (Gray)
 
 | Component | Impact |
 |-----------|--------|
-| **CI/CD** | GitHub Actions CI: lint + test + quarto-build (auto-deploy to gh-pages on main). |
 | **gnn-rapids conda env** | Setup script exists but env not yet created. Run `bash scripts/setup_rapids_env.sh` on a GPU node. |
 | **RAPIDS Phase 2** | Vectorized `safe_hex_to_int()` (currently falls back to CPU under cudf.pandas due to `.apply()` with Python control flow). |
 
@@ -79,10 +79,16 @@ All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
   - WS2 (Orchestration research): Decision document at `~/plans/orchestration-redesign-decision.md`. Concurrent `small_nokd` variant refactored. Benchmark instrumentation added. R1 benchmark submitted (job 44398773). R2 pending R1 results.
   - WS3 (Datalake consolidation): All 6 phases complete — migration script, Parquet writes, analytics views, export integration, CLI registration, documentation.
   - Cleanup: ECOSYSTEM.md Diagram 5 fixed (path + datalake). 5 stale git stashes dropped. `.claude/settings.local.json` cleaned.
+- **CI deploy fix** (2026-02-26):
+  - Fixed vgplot CDN: `@uwdata/vgplot@0.11.1` (404) → `@0.21.1` across 4 files
+  - Switched GitHub Pages from legacy Jekyll (`docs/`) to Actions-based deployment (`upload-pages-artifact` + `deploy-pages`)
+  - Converted paper `{python}` table blocks to native Quarto markdown tables (removes Jupyter CI dependency)
+  - Cleaned 10 ruff F401 unused import violations across 7 files
+  - All 4 CI jobs green: lint, test, quarto-build, deploy
 - **Quarto migration complete** (2026-02-25):
   - Deleted legacy D3 dashboard (`docs/dashboard/`), old stub chapters, export scripts
   - Ported 9 interactive Mosaic figures from `dashboard.qmd` into paper chapters
-  - Updated CI: removed js-syntax + docs-site-build jobs, added quarto-build + gh-pages deploy
+  - Updated CI: removed js-syntax + docs-site-build jobs, added quarto-build + deploy
   - Navbar now points to `paper/` chapters. Landing page (`index.qmd`) updated.
 - **Phase 5: Advanced Enhancements** (2026-02-23):
   - 5.1 GNNExplainer integration (`src/explain.py`, evaluation wiring, export, dashboard panel)
