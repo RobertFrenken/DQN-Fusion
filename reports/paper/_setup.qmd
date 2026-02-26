@@ -4,7 +4,8 @@
 // --- Mosaic vgplot + DuckDB-WASM init (shared across paper chapters) ---
 vg = {
   const mod = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm");
-  await mod.coordinator().databaseConnector(mod.wasmConnector());
+  const wasm = await mod.wasmConnector();
+  mod.coordinator().databaseConnector(wasm);
   return mod;
 }
 

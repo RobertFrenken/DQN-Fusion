@@ -6,7 +6,8 @@
 const vg = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm");
 
 // Initialize DuckDB-WASM coordinator (singleton)
-await vg.coordinator().databaseConnector(vg.wasmConnector());
+const wasm = await vg.wasmConnector();
+vg.coordinator().databaseConnector(wasm);
 
 /**
  * Load a Parquet file (via FileAttachment URL) into a DuckDB table.

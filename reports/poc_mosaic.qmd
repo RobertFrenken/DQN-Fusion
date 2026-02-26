@@ -14,7 +14,8 @@ Initialize Mosaic vgplot with DuckDB-WASM running entirely in-browser.
 //| label: mosaic-setup
 vg = {
   const mod = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm");
-  await mod.coordinator().databaseConnector(mod.wasmConnector());
+  const wasm = await mod.wasmConnector();
+  mod.coordinator().databaseConnector(wasm);
   return mod;
 }
 ```
@@ -43,14 +44,11 @@ vg.plot(
     vg.from("training_curves"),
     { x: "epoch", y: "value", stroke: "metric" }
   ),
-  {
-    width: 680,
-    height: 400,
-    color: { legend: true },
-    x: { label: "Epoch" },
-    y: { label: "Value" },
-    style: { fontSize: "13px" }
-  }
+  vg.width(680),
+  vg.height(400),
+  vg.colorLegend(true),
+  vg.xLabel("Epoch"),
+  vg.yLabel("Value")
 )
 ```
 
@@ -83,13 +81,10 @@ vg.plot(
       r: 6
     }
   ),
-  {
-    width: 680,
-    height: 400,
-    color: { legend: true },
-    x: { label: "Dataset" },
-    y: { label: "F1 Score" },
-    style: { fontSize: "13px" }
-  }
+  vg.width(680),
+  vg.height(400),
+  vg.colorLegend(true),
+  vg.xLabel("Dataset"),
+  vg.yLabel("F1 Score")
 )
 ```
