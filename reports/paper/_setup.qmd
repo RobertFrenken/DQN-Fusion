@@ -2,16 +2,10 @@
 //| output: false
 
 // --- Mosaic vgplot + DuckDB-WASM init (shared across paper chapters) ---
-vg = {
-  const mod = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm");
-  const wasm = await mod.wasmConnector();
-  mod.coordinator().databaseConnector(wasm);
-  return mod;
-}
+import { vg, loadParquetTable } from "../_ojs/mosaic-setup.js"
 
-// --- Helper: load Parquet table into DuckDB-WASM ---
 async function loadTable(name, attachment) {
   const url = await attachment.url();
-  await vg.coordinator().exec(vg.loadParquet(name, url));
+  await loadParquetTable(name, url);
 }
 ```

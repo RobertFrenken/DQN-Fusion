@@ -1,13 +1,24 @@
 /**
  * Mosaic coordinator init + Parquet loading helpers.
- * Import in OJS cells: import { vg, loadParquetTable } from "./_ojs/mosaic-setup.js"
+ *
+ * Usage in OJS cells:
+ *   import { vg, loadParquetTable, listTables, describeTable } from "./_ojs/mosaic-setup.js"
+ *
+ * IMPORTANT: wasmConnector() returns synchronously but DuckDB-WASM initializes
+ * lazily on first query. We must call getDuckDB() to force full initialization
+ * before passing to databaseConnector(), otherwise internal objects aren't ready
+ * and you get "t.addEventListener is not a function".
  */
 
-const vg = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm");
+async function initMosaic() {
+  const mod = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm");
+  const wasm = mod.wasmConnector();
+  await wasm.getDuckDB();
+  mod.coordinator().databaseConnector(wasm);
+  return mod;
+}
 
-// Initialize DuckDB-WASM coordinator (singleton)
-const wasm = await vg.wasmConnector();
-vg.coordinator().databaseConnector(wasm);
+const vg = await initMosaic();
 
 /**
  * Load a Parquet file (via FileAttachment URL) into a DuckDB table.
