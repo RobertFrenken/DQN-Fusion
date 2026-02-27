@@ -40,6 +40,8 @@ website:
             href: paper/10-appendix.qmd
       - text: "Slides"
         href: slides.qmd
+      - text: "Playground"
+        href: playground.qmd
     right:
       - icon: github
         href: https://github.com/buckeyeguy/KD-GAT

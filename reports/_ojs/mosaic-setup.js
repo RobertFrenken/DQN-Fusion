@@ -20,4 +20,27 @@ async function loadParquetTable(tableName, url) {
   );
 }
 
-export { vg, loadParquetTable };
+/**
+ * List all tables currently loaded in DuckDB-WASM.
+ * @returns {Promise<Array<{name: string}>>} Array of table objects
+ */
+async function listTables() {
+  const result = await vg.coordinator().query(
+    vg.sql`SHOW TABLES`
+  );
+  return Array.from(result);
+}
+
+/**
+ * Describe a table's columns.
+ * @param {string} tableName - DuckDB table name
+ * @returns {Promise<Array<{column_name: string, column_type: string}>>}
+ */
+async function describeTable(tableName) {
+  const result = await vg.coordinator().query(
+    `DESCRIBE ${tableName}`
+  );
+  return Array.from(result);
+}
+
+export { vg, loadParquetTable, listTables, describeTable };

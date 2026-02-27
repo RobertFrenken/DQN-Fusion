@@ -48,6 +48,7 @@ reports/            # Quarto website — paper chapters + interactive dashboard 
   _quarto.yml       # Project config (website, HTML + Typst + Revealjs)
   index.qmd         # Landing page
   dashboard.qmd     # Multi-page dashboard (Overview, Performance, Training, GAT & DQN, KD, Graph, Datasets, Staging)
+  playground.qmd    # Visualization playground (SQL console, chart builder, scratch cells)
   slides.qmd        # Revealjs presentation
   pipeline_report.qmd  # Auto-generated pipeline report
   pipeline_dag.svg  # Pipeline DAG visualization

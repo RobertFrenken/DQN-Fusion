@@ -46,6 +46,8 @@ Full decision document: `~/plans/orchestration-redesign-decision.md`
 
 Dashboard data: `export.py` exports leaderboard, runs, metrics, training curves, datasets, KD transfer, model sizes, and graph samples (~2s, login node safe) directly to `reports/data/`. `export_data_for_reports()` copies datalake Parquet to `reports/data/`. Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/`.
 
+**Playground:** Two-tier prototyping — `notebooks/playground.ipynb` (pyobsplot + DuckDB Python, rapid inline iteration) → `reports/playground.qmd` (Mosaic/vgplot + DuckDB-WASM, production preview). See `~/plans/playground-conventions.md` for shared patterns.
+
 **Deployment:** GitHub Actions renders Quarto on push to main and deploys via `actions/deploy-pages` (not gh-pages branch). CI: lint → test → quarto-build → deploy. Mosaic/vgplot loaded from jsdelivr CDN (`@uwdata/vgplot@0.21.1`).
 
 ## General Principles

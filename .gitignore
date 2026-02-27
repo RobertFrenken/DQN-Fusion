@@ -46,6 +46,7 @@ data/datalake/
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 *.ipynb
+!notebooks/playground.ipynb
 
 # ===== SYSTEM FILES =====
 .DS_Store
