@@ -47,6 +47,7 @@ data/datalake/
 .ipynb_checkpoints/
 *.ipynb
 !notebooks/playground.ipynb
+!notebooks/sample_*.ipynb
 
 # ===== SYSTEM FILES =====
 .DS_Store
