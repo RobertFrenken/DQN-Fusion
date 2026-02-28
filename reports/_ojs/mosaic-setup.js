@@ -4,10 +4,9 @@
  * Usage in OJS cells:
  *   import { vg, loadParquetTable, listTables, describeTable } from "./_ojs/mosaic-setup.js"
  *
- * IMPORTANT: wasmConnector() returns synchronously but DuckDB-WASM initializes
- * lazily on first query. We must call getDuckDB() to force full initialization
- * before passing to databaseConnector(), otherwise internal objects aren't ready
- * and you get "t.addEventListener is not a function".
+ * wasmConnector() is synchronous. DuckDB-WASM initializes lazily on first
+ * query — do NOT call getDuckDB() before databaseConnector(), as that forces
+ * premature init and causes "t.addEventListener is not a function".
  */
 
 const CDN_URL = "https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm";
@@ -15,12 +14,9 @@ const CDN_URL = "https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm";
 async function initMosaic() {
   console.log(`[mosaic-setup] Loading vgplot from ${CDN_URL}`);
   const mod = await import(CDN_URL);
-  console.log("[mosaic-setup] vgplot module loaded, initializing DuckDB-WASM...");
-  const wasm = mod.wasmConnector();
-  await wasm.getDuckDB();
-  console.log("[mosaic-setup] DuckDB-WASM initialized, connecting coordinator...");
-  mod.coordinator().databaseConnector(wasm);
-  console.log("[mosaic-setup] Mosaic ready");
+  console.log("[mosaic-setup] vgplot module loaded, connecting coordinator...");
+  mod.coordinator().databaseConnector(mod.wasmConnector());
+  console.log("[mosaic-setup] Mosaic ready (DuckDB-WASM will init on first query)");
   return mod;
 }
 
