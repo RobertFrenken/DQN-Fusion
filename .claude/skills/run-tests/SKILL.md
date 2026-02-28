@@ -11,22 +11,19 @@ Run the project test suite.
 
 ## Execution Steps
 
-1. **Run pytest** with the conda environment's Python:
+1. **Run pytest** with the uv venv Python:
    ```bash
-   PYTHONPATH=/users/PAS2022/rf15/KD-GAT \
-     /users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pytest tests/ -v $ARGUMENTS 2>&1
+   cd /users/PAS2022/rf15/KD-GAT && source .venv/bin/activate && python -m pytest tests/ -v $ARGUMENTS 2>&1
    ```
 
    If `$ARGUMENTS` contains a file path (ends in `.py`), pass it as the test target:
    ```bash
-   PYTHONPATH=/users/PAS2022/rf15/KD-GAT \
-     /users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pytest $ARGUMENTS -v 2>&1
+   cd /users/PAS2022/rf15/KD-GAT && source .venv/bin/activate && python -m pytest $ARGUMENTS -v 2>&1
    ```
 
    If `$ARGUMENTS` is a keyword pattern (no `.py`), use `-k`:
    ```bash
-   PYTHONPATH=/users/PAS2022/rf15/KD-GAT \
-     /users/PAS2022/rf15/.conda/envs/gnn-experiments/bin/python -m pytest tests/ -v -k "$ARGUMENTS" 2>&1
+   cd /users/PAS2022/rf15/KD-GAT && source .venv/bin/activate && python -m pytest tests/ -v -k "$ARGUMENTS" 2>&1
    ```
 
 2. **Summarize results** in a table:

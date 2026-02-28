@@ -27,7 +27,7 @@
 |-----------|-------|
 | **W&B tracking** | 77 online runs; offline runs may need sync. Run `wandb sync wandb/offline-run-*`. |
 | **RAPIDS GPU acceleration** | Phase 1 integrated (cuML PCA/UMAP/TSNE in export, cudf.pandas in preprocessing). Fallback to CPU verified. Needs `gnn-rapids` conda env setup (`bash scripts/setup_rapids_env.sh`) and GPU partition testing. |
-| **Paper figures** | Mosaic figures deployed with vgplot@0.21.1 CDN. Pending data verification (some Parquet files may not exist yet in reports/data/). |
+| **Paper figures** | Mosaic figures deployed with vgplot@0.21.1 CDN. Paper chapters use `{{< include _setup.qmd >}}` for OJS init. Pending runtime verification in browser. |
 | **Inference server** | `pipeline/serve.py` exists (`/predict`, `/health`). Untested with current 72-run checkpoints. |
 
 ### Missing (Gray)
@@ -79,6 +79,17 @@ All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
   - WS2 (Orchestration research): Decision document at `~/plans/orchestration-redesign-decision.md`. Concurrent `small_nokd` variant refactored. Benchmark instrumentation added. R1 benchmark submitted (job 44398773). R2 pending R1 results.
   - WS3 (Datalake consolidation): All 6 phases complete — migration script, Parquet writes, analytics views, export integration, CLI registration, documentation.
   - Cleanup: ECOSYSTEM.md Diagram 5 fixed (path + datalake). 5 stale git stashes dropped. `.claude/settings.local.json` cleaned.
+- **Paper OJS include fix** (2026-02-27):
+  - `include-before-body` in `_metadata.yml` was inserting `_setup.qmd` as raw HTML — OJS cells never compiled, causing "vg is not defined" in all paper chapters
+  - Replaced with `{{< include _setup.qmd >}}` shortcode in chapters 04, 05, 06, 08, 10
+  - Added `echo: false` to `_setup.qmd` so setup code is invisible in rendered output
+  - Added error handling + Proxy fallback to `mosaic-setup.js` for actionable runtime errors
+- **Mosaic vgplot API rewrite** (2026-02-26):
+  - All `vg.plot()` calls in `dashboard.qmd` (10) and `paper/08-explainability.qmd` (6) rewritten from broken options-object pattern to correct v0.21.1 function-call directive pattern
+  - Fixed `vg.binX()` (never existed in Mosaic) → `vg.bin()`/`vg.count()`
+  - Fixed VARCHAR timestamp subtraction with `CAST(... AS TIMESTAMP)`
+  - Added `scrolling: true` to dashboard to fix squished layout
+  - Report data Parquet files (~5 MB) committed to git for deployment
 - **CI deploy fix** (2026-02-26):
   - Fixed vgplot CDN: `@uwdata/vgplot@0.11.1` (404) → `@0.21.1` across 4 files
   - Switched GitHub Pages from legacy Jekyll (`docs/`) to Actions-based deployment (`upload-pages-artifact` + `deploy-pages`)
