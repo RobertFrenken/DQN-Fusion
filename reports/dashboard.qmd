@@ -30,6 +30,14 @@ await loadTable("dqn_policy", FileAttachment("data/dqn_policy.parquet"));
 await loadTable("cka_similarity", FileAttachment("data/cka_similarity.parquet"));
 await loadTable("embeddings", FileAttachment("data/embeddings.parquet"));
 
+// Create model-specific views for embedding plots
+await vg.coordinator().exec(
+  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_vgae AS SELECT * FROM embeddings WHERE model = 'vgae'`
+);
+await vg.coordinator().exec(
+  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_gat AS SELECT * FROM embeddings WHERE model = 'gat'`
+);
+
 // --- Static JSON data ---
 datasets_json = FileAttachment("data/datasets.json").json()
 kd_transfer_json = FileAttachment("data/kd_transfer.json").json()
@@ -558,35 +566,25 @@ viewof compareRun2 = {
 
 ```{ojs}
 //| title: "Training Carpet (Metric × Epoch Heatmap)"
-
-viewof carpetRun = {
-  const result = await vg.coordinator().query(
-    vg.sql`SELECT DISTINCT run_id FROM training_curves ORDER BY run_id`
+{
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "training_curves", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.cell(
+        vg.from("training_curves", { filterBy: sel }),
+        { x: "epoch", y: "metric_name", fill: "value", inset: 0.5 }
+      ),
+      vg.width(900),
+      vg.height(200),
+      vg.colorScheme("viridis"),
+      vg.colorLegend(true),
+      vg.colorLabel("Value"),
+      vg.xLabel("Epoch"),
+      vg.yLabel(null)
+    )
   );
-  const runs = Array.from(result, d => d.run_id);
-  return Inputs.select(runs, { label: "Run", value: runs[0] });
 }
-
-vg.plot(
-  vg.cell(
-    vg.from("training_curves", {
-      filterBy: vg.sql`run_id = '${carpetRun}'`
-    }),
-    {
-      x: "epoch",
-      y: "metric_name",
-      fill: "value",
-      inset: 0.5
-    }
-  ),
-  vg.width(900),
-  vg.height(200),
-  vg.colorScheme("viridis"),
-  vg.colorLegend(true),
-  vg.colorLabel("Value"),
-  vg.xLabel("Epoch"),
-  vg.yLabel(null)
-)
 ```
 
 # GAT & DQN
@@ -595,123 +593,103 @@ vg.plot(
 
 ```{ojs}
 //| title: "GAT Attention Weights by Layer"
-
-viewof selectedAttRun = {
-  const result = await vg.coordinator().query(
-    vg.sql`SELECT DISTINCT run_id FROM attention_weights ORDER BY run_id`
+{
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "attention_weights", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.cell(
+        vg.from("attention_weights", { filterBy: sel }),
+        {
+          x: vg.sql`'Head ' || head`,
+          y: vg.sql`'Layer ' || layer`,
+          fill: "mean_alpha",
+          inset: 0.5
+        }
+      ),
+      vg.width(500),
+      vg.height(280),
+      vg.colorScheme("blues"),
+      vg.colorLegend(true),
+      vg.colorLabel("Mean Attention"),
+      vg.xLabel("Attention Head"),
+      vg.yLabel("GAT Layer")
+    )
   );
-  const runs = Array.from(result, d => d.run_id);
-  return Inputs.select(runs, { label: "Run", value: runs[0] });
 }
-
-vg.plot(
-  vg.cell(
-    vg.from("attention_weights", {
-      filterBy: vg.sql`run_id = '${selectedAttRun}'`
-    }),
-    {
-      x: vg.sql`'Head ' || head`,
-      y: vg.sql`'Layer ' || layer`,
-      fill: "mean_alpha",
-      inset: 0.5
-    }
-  ),
-  vg.width(500),
-  vg.height(280),
-  vg.colorScheme("blues"),
-  vg.colorLegend(true),
-  vg.colorLabel("Mean Attention"),
-  vg.xLabel("Attention Head"),
-  vg.yLabel("GAT Layer")
-)
 ```
 
 ```{ojs}
 //| title: "DQN Fusion Policy (Alpha Distribution)"
-
-viewof selectedPolicyRun = {
-  const result = await vg.coordinator().query(
-    vg.sql`SELECT DISTINCT run_id FROM dqn_policy ORDER BY run_id`
+{
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "dqn_policy", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.rectY(
+        vg.from("dqn_policy", { filterBy: sel }),
+        {x: vg.bin("alpha"), y: vg.count(), fill: "steelblue", insetLeft: 0.5, insetRight: 0.5}
+      ),
+      vg.width(500),
+      vg.height(280),
+      vg.colorScheme("oranges"),
+      vg.xLabel("Alpha (GAT weight in fusion)"),
+      vg.yLabel("Count")
+    )
   );
-  const runs = Array.from(result, d => d.run_id);
-  return Inputs.select(runs, { label: "Run", value: runs[0] });
 }
-
-vg.plot(
-  vg.rectY(
-    vg.from("dqn_policy", {
-      filterBy: vg.sql`run_id = '${selectedPolicyRun}'`
-    }),
-    {x: vg.bin("alpha"), y: vg.count(), fill: "steelblue", insetLeft: 0.5, insetRight: 0.5}
-  ),
-  vg.width(500),
-  vg.height(280),
-  vg.colorScheme("oranges"),
-  vg.xLabel("Alpha (GAT weight in fusion)"),
-  vg.yLabel("Count")
-)
 ```
 
 ## Row {height=50%}
 
 ```{ojs}
 //| title: "Training Curves (single run)"
-
-viewof selectedRun = {
-  const result = await vg.coordinator().query(
-    vg.sql`SELECT DISTINCT run_id FROM training_curves ORDER BY run_id`
+{
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "training_curves", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.lineY(
+        vg.from("training_curves", { filterBy: sel }),
+        { x: "epoch", y: "value", stroke: "metric_name" }
+      ),
+      vg.width(680),
+      vg.height(350),
+      vg.colorLegend(true),
+      vg.xLabel("Epoch"),
+      vg.yLabel("Value")
+    )
   );
-  const runs = Array.from(result, d => d.run_id);
-  return Inputs.select(runs, { label: "Run", value: runs[0] });
 }
-
-vg.plot(
-  vg.lineY(
-    vg.from("training_curves", {
-      filterBy: vg.sql`run_id = '${selectedRun}'`
-    }),
-    { x: "epoch", y: "value", stroke: "metric_name" }
-  ),
-  vg.width(680),
-  vg.height(350),
-  vg.colorLegend(true),
-  vg.xLabel("Epoch"),
-  vg.yLabel("Value")
-)
 ```
 
 ```{ojs}
 //| title: "VGAE Reconstruction Errors"
-
-viewof selectedReconRun = {
-  const result = await vg.coordinator().query(
-    vg.sql`SELECT DISTINCT run_id FROM recon_errors ORDER BY run_id`
+{
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "recon_errors", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.rectY(
+        vg.from("recon_errors", { filterBy: sel }),
+        {
+          x: vg.bin("error"),
+          y: vg.count(),
+          fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+          insetLeft: 0.5,
+          insetRight: 0.5
+        }
+      ),
+      vg.width(680),
+      vg.height(350),
+      vg.colorLegend(true),
+      vg.colorDomain(["normal", "attack"]),
+      vg.colorRange(["#3fb950", "#f85149"]),
+      vg.xLabel("Reconstruction Error"),
+      vg.yLabel("Count")
+    )
   );
-  const runs = Array.from(result, d => d.run_id);
-  return Inputs.select(runs, { label: "Run", value: runs[0] });
 }
-
-vg.plot(
-  vg.rectY(
-    vg.from("recon_errors", {
-      filterBy: vg.sql`run_id = '${selectedReconRun}'`
-    }),
-    {
-      x: vg.bin("error"),
-      y: vg.count(),
-      fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
-      insetLeft: 0.5,
-      insetRight: 0.5
-    }
-  ),
-  vg.width(680),
-  vg.height(350),
-  vg.colorLegend(true),
-  vg.colorDomain(["normal", "attack"]),
-  vg.colorRange(["#3fb950", "#f85149"]),
-  vg.xLabel("Reconstruction Error"),
-  vg.yLabel("Count")
-)
 ```
 
 # Knowledge Distillation
@@ -760,72 +738,64 @@ viewof selectedKdMetric = Inputs.select(
 
 ```{ojs}
 //| title: "CKA Similarity (Teacher-Student Layer Alignment)"
-
-viewof selectedCkaRun = {
-  const result = await vg.coordinator().query(
-    vg.sql`SELECT DISTINCT run_id FROM cka_similarity ORDER BY run_id`
+{
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "cka_similarity", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.cell(
+        vg.from("cka_similarity", { filterBy: sel }),
+        {
+          x: "student_layer",
+          y: "teacher_layer",
+          fill: "similarity",
+          inset: 0.5
+        }
+      ),
+      vg.width(400),
+      vg.height(300),
+      vg.colorScheme("viridis"),
+      vg.colorLegend(true),
+      vg.colorLabel("CKA Similarity"),
+      vg.xLabel("Student Layer"),
+      vg.yLabel("Teacher Layer")
+    )
   );
-  const runs = Array.from(result, d => d.run_id);
-  return Inputs.select(runs, { label: "Run", value: runs[0] });
 }
-
-vg.plot(
-  vg.cell(
-    vg.from("cka_similarity", {
-      filterBy: vg.sql`run_id = '${selectedCkaRun}'`
-    }),
-    {
-      x: "student_layer",
-      y: "teacher_layer",
-      fill: "similarity",
-      inset: 0.5
-    }
-  ),
-  vg.width(400),
-  vg.height(300),
-  vg.colorScheme("viridis"),
-  vg.colorLegend(true),
-  vg.colorLabel("CKA Similarity"),
-  vg.xLabel("Student Layer"),
-  vg.yLabel("Teacher Layer")
-)
 ```
 
 ## Row {height=50%}
 
 ```{ojs}
+//| output: false
+embRunSel = vg.Selection.single()
+```
+
+```{ojs}
 //| title: "UMAP Embeddings (VGAE)"
-
-viewof selectedEmbRun = {
-  const result = await vg.coordinator().query(
-    vg.sql`SELECT DISTINCT run_id FROM embeddings WHERE model = 'vgae' ORDER BY run_id`
-  );
-  const runs = Array.from(result, d => d.run_id);
-  return Inputs.select(runs, { label: "Run", value: runs[0] });
-}
-
-vg.plot(
-  vg.dot(
-    vg.from("embeddings", {
-      filterBy: vg.sql`run_id = '${selectedEmbRun}' AND model = 'vgae'`
-    }),
-    {
-      x: "x",
-      y: "y",
-      fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
-      r: 2,
-      opacity: 0.5
-    }
-  ),
-  vg.width(600),
-  vg.height(350),
-  vg.colorLegend(true),
-  vg.colorDomain(["normal", "attack"]),
-  vg.colorRange(["#3fb950", "#f85149"]),
-  vg.xLabel("UMAP 1"),
-  vg.xAxis(null),
-  vg.yLabel("UMAP 2"),
-  vg.yAxis(null)
+vg.vconcat(
+  vg.menu({ from: "embeddings_vgae", column: "run_id", label: "Run", as: embRunSel }),
+  vg.plot(
+    vg.dot(
+      vg.from("embeddings_vgae", { filterBy: embRunSel }),
+      {
+        x: "x",
+        y: "y",
+        fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+        r: 2,
+        opacity: 0.5
+      }
+    ),
+    vg.width(600),
+    vg.height(350),
+    vg.colorLegend(true),
+    vg.colorDomain(["normal", "attack"]),
+    vg.colorRange(["#3fb950", "#f85149"]),
+    vg.xLabel("UMAP 1"),
+    vg.xAxis(null),
+    vg.yLabel("UMAP 2"),
+    vg.yAxis(null)
+  )
 )
 ```
 
@@ -833,9 +803,7 @@ vg.plot(
 //| title: "UMAP Embeddings (GAT)"
 vg.plot(
   vg.dot(
-    vg.from("embeddings", {
-      filterBy: vg.sql`run_id = '${selectedEmbRun}' AND model = 'gat'`
-    }),
+    vg.from("embeddings_gat", { filterBy: embRunSel }),
     {
       x: "x",
       y: "y",
