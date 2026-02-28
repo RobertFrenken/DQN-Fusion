@@ -30,14 +30,6 @@ await loadTable("dqn_policy", FileAttachment("data/dqn_policy.parquet"));
 await loadTable("cka_similarity", FileAttachment("data/cka_similarity.parquet"));
 await loadTable("embeddings", FileAttachment("data/embeddings.parquet"));
 
-// Create model-specific views for embedding plots
-await vg.coordinator().exec(
-  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_vgae AS SELECT * FROM embeddings WHERE model = 'vgae'`
-);
-await vg.coordinator().exec(
-  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_gat AS SELECT * FROM embeddings WHERE model = 'gat'`
-);
-
 // --- Static JSON data ---
 datasets_json = FileAttachment("data/datasets.json").json()
 kd_transfer_json = FileAttachment("data/kd_transfer.json").json()
@@ -768,6 +760,12 @@ viewof selectedKdMetric = Inputs.select(
 
 ```{ojs}
 //| output: false
+await vg.coordinator().exec(
+  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_vgae AS SELECT * FROM embeddings WHERE model = 'vgae'`
+);
+await vg.coordinator().exec(
+  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_gat AS SELECT * FROM embeddings WHERE model = 'gat'`
+);
 embRunSel = vg.Selection.single()
 ```
 
