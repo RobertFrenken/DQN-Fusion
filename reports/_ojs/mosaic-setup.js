@@ -10,15 +10,43 @@
  * and you get "t.addEventListener is not a function".
  */
 
+const CDN_URL = "https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm";
+
 async function initMosaic() {
-  const mod = await import("https://cdn.jsdelivr.net/npm/@uwdata/vgplot@0.21.1/+esm");
+  console.log(`[mosaic-setup] Loading vgplot from ${CDN_URL}`);
+  const mod = await import(CDN_URL);
+  console.log("[mosaic-setup] vgplot module loaded, initializing DuckDB-WASM...");
   const wasm = mod.wasmConnector();
   await wasm.getDuckDB();
+  console.log("[mosaic-setup] DuckDB-WASM initialized, connecting coordinator...");
   mod.coordinator().databaseConnector(wasm);
+  console.log("[mosaic-setup] Mosaic ready");
   return mod;
 }
 
-const vg = await initMosaic();
+let vg;
+try {
+  vg = await initMosaic();
+} catch (error) {
+  console.error("[mosaic-setup] Failed to initialize Mosaic/vgplot:", error);
+
+  // Create a proxy that throws a descriptive error on any property access,
+  // so downstream OJS cells get a useful message instead of "vg is not defined".
+  const handler = {
+    get(_, prop) {
+      if (prop === Symbol.toPrimitive || prop === "toString" || prop === "valueOf") {
+        return () => "[mosaic-setup: initialization failed]";
+      }
+      throw new Error(
+        `[mosaic-setup] Cannot use vg.${String(prop)}() — Mosaic initialization failed.\n` +
+        `Root cause: ${error.message}\n` +
+        `Check: (1) CDN reachable? (2) Page served over HTTP, not file://? ` +
+        `(3) Browser console for network errors.`
+      );
+    }
+  };
+  vg = new Proxy({}, handler);
+}
 
 /**
  * Load a Parquet file (via FileAttachment URL) into a DuckDB table.

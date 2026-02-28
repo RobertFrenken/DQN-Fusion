@@ -2,6 +2,8 @@
 title: "Appendix"
 ---
 
+{{< include _setup.qmd >}}
+
 ## Experimental Setup
 
 #### Implementation Details

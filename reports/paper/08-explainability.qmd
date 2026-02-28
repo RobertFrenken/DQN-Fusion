@@ -2,6 +2,8 @@
 title: "Explainability"
 ---
 
+{{< include _setup.qmd >}}
+
 ## Explainability
 
 ### UMAP Analysis

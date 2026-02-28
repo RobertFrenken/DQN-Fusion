@@ -8,8 +8,6 @@ author:
   - name: Qadeer Ahmed
     affiliation: The Ohio State University
 bibliography: references.bib
-include-before-body:
-  - _setup.qmd
 format:
   html:
     toc: true

@@ -1,4 +1,5 @@
 ```{ojs}
+//| echo: false
 //| output: false
 
 // --- Mosaic vgplot + DuckDB-WASM init (shared across paper chapters) ---
