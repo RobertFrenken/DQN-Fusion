@@ -15,70 +15,68 @@ Raw CAN-graph data projected via UMAP shows loose clustering that indicates limi
 Despite binary supervision (attack vs. normal), the learned embedding space forms well-separated clusters aligned with specific attack types (DoS, Fuzzy, Gear, RPM). This emergent multi-class structure demonstrates that our model captures high-level semantic patterns in CAN traffic and generalizes across attack categories without explicit multi-class labels. The clear cluster separation in embedding space, absent in raw features, validates the GAT's ability to learn discriminative representations from graph-structured temporal data.
 
 ```{ojs}
-//| output: false
-await loadTable("embeddings", FileAttachment("../data/embeddings.parquet"));
-await vg.coordinator().exec(
-  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_vgae AS SELECT * FROM embeddings WHERE model = 'vgae'`
-);
-await vg.coordinator().exec(
-  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_gat AS SELECT * FROM embeddings WHERE model = 'gat'`
-);
-embRunSel = vg.Selection.single()
-```
-
-```{ojs}
 //| label: fig-umap-vgae
 //| fig-cap: "UMAP projection of VGAE latent embeddings. Normal samples (green) and attack samples (red) show separation patterns learned by the autoencoder without explicit labels."
-vg.vconcat(
-  vg.menu({ from: "embeddings_vgae", column: "run_id", label: "Run", as: embRunSel }),
-  vg.plot(
-    vg.dot(
-      vg.from("embeddings_vgae", { filterBy: embRunSel }),
-      {
-        x: "x",
-        y: "y",
-        fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
-        r: 2,
-        opacity: 0.5
-      }
-    ),
-    vg.width(600),
-    vg.height(350),
-    vg.colorLegend(true),
-    vg.colorDomain(["normal", "attack"]),
-    vg.colorRange(["#3fb950", "#f85149"]),
-    vg.xLabel("UMAP 1"),
-    vg.xAxis(null),
-    vg.yLabel("UMAP 2"),
-    vg.yAxis(null)
-  )
-)
+{
+  await loadTable("embeddings", FileAttachment("../data/embeddings.parquet"));
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "embeddings", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.dot(
+        vg.from("embeddings", { filterBy: sel }),
+        {
+          x: "x",
+          y: "y",
+          fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+          r: 2,
+          opacity: 0.5
+        }
+      ),
+      vg.width(600),
+      vg.height(350),
+      vg.colorLegend(true),
+      vg.colorDomain(["normal", "attack"]),
+      vg.colorRange(["#3fb950", "#f85149"]),
+      vg.xLabel("UMAP 1"),
+      vg.xAxis(null),
+      vg.yLabel("UMAP 2"),
+      vg.yAxis(null)
+    )
+  );
+}
 ```
 
 ```{ojs}
 //| label: fig-umap-gat
 //| fig-cap: "UMAP projection of GAT penultimate-layer embeddings. The supervised classifier produces well-separated clusters, with emergent multi-class structure despite binary training."
-vg.plot(
-  vg.dot(
-    vg.from("embeddings_gat", { filterBy: embRunSel }),
-    {
-      x: "x",
-      y: "y",
-      fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
-      r: 2,
-      opacity: 0.5
-    }
-  ),
-  vg.width(600),
-  vg.height(350),
-  vg.colorLegend(true),
-  vg.colorDomain(["normal", "attack"]),
-  vg.colorRange(["#3fb950", "#f85149"]),
-  vg.xLabel("UMAP 1"),
-  vg.xAxis(null),
-  vg.yLabel("UMAP 2"),
-  vg.yAxis(null)
-)
+{
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "embeddings", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.dot(
+        vg.from("embeddings", { filterBy: sel }),
+        {
+          x: "x",
+          y: "y",
+          fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+          r: 2,
+          opacity: 0.5
+        }
+      ),
+      vg.width(600),
+      vg.height(350),
+      vg.colorLegend(true),
+      vg.colorDomain(["normal", "attack"]),
+      vg.colorRange(["#3fb950", "#f85149"]),
+      vg.xLabel("UMAP 1"),
+      vg.xAxis(null),
+      vg.yLabel("UMAP 2"),
+      vg.yAxis(null)
+    )
+  );
+}
 ```
 
 ### Composite VGAE Reconstruction Error

@@ -759,67 +759,65 @@ viewof selectedKdMetric = Inputs.select(
 ## Row {height=50%}
 
 ```{ojs}
-//| output: false
-await vg.coordinator().exec(
-  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_vgae AS SELECT * FROM embeddings WHERE model = 'vgae'`
-);
-await vg.coordinator().exec(
-  vg.sql`CREATE OR REPLACE TEMP VIEW embeddings_gat AS SELECT * FROM embeddings WHERE model = 'gat'`
-);
-embRunSel = vg.Selection.single()
-```
-
-```{ojs}
 //| title: "UMAP Embeddings (VGAE)"
-vg.vconcat(
-  vg.menu({ from: "embeddings_vgae", column: "run_id", label: "Run", as: embRunSel }),
-  vg.plot(
-    vg.dot(
-      vg.from("embeddings_vgae", { filterBy: embRunSel }),
-      {
-        x: "x",
-        y: "y",
-        fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
-        r: 2,
-        opacity: 0.5
-      }
-    ),
-    vg.width(600),
-    vg.height(350),
-    vg.colorLegend(true),
-    vg.colorDomain(["normal", "attack"]),
-    vg.colorRange(["#3fb950", "#f85149"]),
-    vg.xLabel("UMAP 1"),
-    vg.xAxis(null),
-    vg.yLabel("UMAP 2"),
-    vg.yAxis(null)
-  )
-)
+{
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "embeddings", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.dot(
+        vg.from("embeddings", { filterBy: sel }),
+        {
+          x: "x",
+          y: "y",
+          fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+          r: 2,
+          opacity: 0.5
+        }
+      ),
+      vg.width(600),
+      vg.height(350),
+      vg.colorLegend(true),
+      vg.colorDomain(["normal", "attack"]),
+      vg.colorRange(["#3fb950", "#f85149"]),
+      vg.xLabel("UMAP 1"),
+      vg.xAxis(null),
+      vg.yLabel("UMAP 2"),
+      vg.yAxis(null)
+    )
+  );
+}
 ```
 
 ```{ojs}
 //| title: "UMAP Embeddings (GAT)"
-vg.plot(
-  vg.dot(
-    vg.from("embeddings_gat", { filterBy: embRunSel }),
-    {
-      x: "x",
-      y: "y",
-      fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
-      r: 2,
-      opacity: 0.5
-    }
-  ),
-  vg.width(600),
-  vg.height(350),
-  vg.colorLegend(true),
-  vg.colorDomain(["normal", "attack"]),
-  vg.colorRange(["#3fb950", "#f85149"]),
-  vg.xLabel("UMAP 1"),
-  vg.xAxis(null),
-  vg.yLabel("UMAP 2"),
-  vg.yAxis(null)
-)
+{
+  const sel = vg.Selection.single();
+  return vg.vconcat(
+    vg.menu({ from: "embeddings", column: "run_id", label: "Run", as: sel }),
+    vg.plot(
+      vg.dot(
+        vg.from("embeddings", { filterBy: sel }),
+        {
+          x: "x",
+          y: "y",
+          fill: vg.sql`CASE WHEN label = 0 THEN 'normal' ELSE 'attack' END`,
+          r: 2,
+          opacity: 0.5
+        }
+      ),
+      vg.width(600),
+      vg.height(350),
+      vg.colorLegend(true),
+      vg.colorDomain(["normal", "attack"]),
+      vg.colorRange(["#3fb950", "#f85149"]),
+      vg.xLabel("UMAP 1"),
+      vg.xAxis(null),
+      vg.yLabel("UMAP 2"),
+      vg.yAxis(null)
+    )
+  );
+}
 ```
 
 # Graph Structure
