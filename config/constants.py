@@ -3,12 +3,13 @@
 These are NOT hyperparameters (those live in PipelineConfig).
 These are structural/environmental constants that rarely change.
 """
+
 from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Versioning
 # ---------------------------------------------------------------------------
-PREPROCESSING_VERSION = "1.1.0"  # Bump when graph construction logic changes
+PREPROCESSING_VERSION = "1.2.0"  # Bump when graph construction logic changes
 
 # ---------------------------------------------------------------------------
 # Filesystem paths
@@ -20,7 +21,7 @@ CATALOG_PATH = Path(__file__).parent / "datasets.yaml"
 # ---------------------------------------------------------------------------
 DEFAULT_WINDOW_SIZE = 100
 DEFAULT_STRIDE = 100
-EXCLUDED_ATTACK_TYPES = ['suppress', 'masquerade']
+EXCLUDED_ATTACK_TYPES = ["suppress", "masquerade"]
 MAX_DATA_BYTES = 8
 NODE_FEATURE_COUNT = 11  # CAN_ID + 8 data bytes + count + position
 EDGE_FEATURE_COUNT = 11  # Streamlined edge features
@@ -47,14 +48,3 @@ import os
 SLURM_ACCOUNT = os.getenv("KD_GAT_SLURM_ACCOUNT", "PAS3209")
 SLURM_PARTITION = os.getenv("KD_GAT_SLURM_PARTITION", "gpu")
 SLURM_GPU_TYPE = os.getenv("KD_GAT_GPU_TYPE", "v100")
-
-# ---------------------------------------------------------------------------
-# RAPIDS / GPU acceleration
-# ---------------------------------------------------------------------------
-RAPIDS_AVAILABLE = False
-try:
-    import cuml  # noqa: F401
-    RAPIDS_AVAILABLE = True
-except ImportError:
-    pass
-

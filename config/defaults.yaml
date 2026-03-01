@@ -85,6 +85,27 @@ preprocessing:
   window_size: 100
   stride: 100
 
+# Pipeline DAG
+stages:
+  - autoencoder
+  - curriculum
+  - fusion
+  - evaluation
+
+variants:
+  - name: large
+    scale: large
+    auxiliaries: none
+    needs_teacher: false
+  - name: small_kd
+    scale: small
+    auxiliaries: kd_standard
+    needs_teacher: true
+  - name: small_nokd
+    scale: small
+    auxiliaries: none
+    needs_teacher: false
+
 experiment_root: experimentruns
 device: cuda
 num_workers: 8

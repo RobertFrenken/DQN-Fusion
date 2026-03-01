@@ -10,12 +10,17 @@
 Each stage runs as a subprocess for clean CUDA context.
 Ray handles DAG scheduling and per-dataset fan-out.
 
+Pipeline variants are now config-driven via PipelineConfig.variants.
+The default variant set (large, small_kd, small_nokd) preserves the
+original hardcoded behavior.
+
 Usage:
     python -m pipeline.cli flow --dataset hcrl_sa
     python -m pipeline.cli flow --dataset hcrl_sa --scale large
     python -m pipeline.cli flow --eval-only --dataset hcrl_sa
     python -m pipeline.cli flow --local  # Ray local mode
 """
+
 from __future__ import annotations
 
 import json
@@ -39,6 +44,14 @@ _BENCHMARK_LOG = os.environ.get("KD_GAT_BENCHMARK_LOG", "benchmark_timing.jsonl"
 
 # Track when the last stage ended so we can measure inter-stage gaps.
 _last_stage_end: float | None = None
+
+# Stage name → (model_type, stage_cli_name)
+_STAGE_DISPATCH = {
+    "autoencoder": ("vgae", "autoencoder"),
+    "curriculum": ("gat", "curriculum"),
+    "fusion": ("dqn", "fusion"),
+    "evaluation": ("vgae", "evaluation"),
+}
 
 
 def _query_gpu_utilization() -> dict[str, float | None]:
@@ -79,6 +92,7 @@ def _write_benchmark_record(record: dict) -> None:
 # Subprocess dispatch
 # ---------------------------------------------------------------------------
 
+
 def _run_stage(
     stage: str,
     model: str,
@@ -103,11 +117,18 @@ def _run_stage(
     global _last_stage_end
 
     cmd = [
-        _PY, "-m", "pipeline.cli", stage,
-        "--model", model,
-        "--scale", scale,
-        "--dataset", dataset,
-        "--auxiliaries", auxiliaries,
+        _PY,
+        "-m",
+        "pipeline.cli",
+        stage,
+        "--model",
+        model,
+        "--scale",
+        scale,
+        "--dataset",
+        dataset,
+        "--auxiliaries",
+        auxiliaries,
     ]
     if teacher_path:
         cmd.extend(["--teacher-path", teacher_path])
@@ -121,7 +142,11 @@ def _run_stage(
         elapsed = time.monotonic() - t0
         log.info(
             "Stage %s/%s/%s completed in %.1fs (dataset=%s)",
-            model, scale, stage, elapsed, dataset,
+            model,
+            scale,
+            stage,
+            elapsed,
+            dataset,
         )
         return result
 
@@ -168,10 +193,13 @@ def _run_stage(
     _write_benchmark_record(record)
 
     log.info(
-        "Stage %s/%s/%s completed in %.1fs "
-        "(spawn=%.3fs, exec=%.1fs, gap=%.3fs, dataset=%s)",
-        model, scale, stage, total_time,
-        spawn_overhead, execution_time,
+        "Stage %s/%s/%s completed in %.1fs (spawn=%.3fs, exec=%.1fs, gap=%.3fs, dataset=%s)",
+        model,
+        scale,
+        stage,
+        total_time,
+        spawn_overhead,
+        execution_time,
         inter_stage_gap if inter_stage_gap is not None else 0.0,
         dataset,
     )
@@ -181,6 +209,7 @@ def _run_stage(
 # ---------------------------------------------------------------------------
 # Ray remote tasks
 # ---------------------------------------------------------------------------
+
 
 @ray.remote(num_gpus=1)
 def task_preprocess(dataset: str) -> None:
@@ -196,13 +225,18 @@ def task_preprocess(dataset: str) -> None:
 
 def _make_stage_task(stage: str, model: str):
     """Factory for Ray remote tasks that train a model and return its checkpoint path."""
+
     @ray.remote(num_gpus=1)
-    def task(dataset: str, scale: str, auxiliaries: str = "none", teacher_path: str | None = None) -> str:
+    def task(
+        dataset: str, scale: str, auxiliaries: str = "none", teacher_path: str | None = None
+    ) -> str:
         _run_stage(stage, model, scale, dataset, auxiliaries, teacher_path)
         from config.resolver import resolve
         from config import checkpoint_path
+
         cfg = resolve(model, scale, auxiliaries=auxiliaries, dataset=dataset)
         return str(checkpoint_path(cfg, stage))
+
     task.__name__ = f"task_{model}"
     return task
 
@@ -210,6 +244,12 @@ def _make_stage_task(stage: str, model: str):
 task_vgae = _make_stage_task("autoencoder", "vgae")
 task_gat = _make_stage_task("curriculum", "gat")
 task_dqn = _make_stage_task("fusion", "dqn")
+
+_STAGE_TASKS = {
+    "autoencoder": task_vgae,
+    "curriculum": task_gat,
+    "fusion": task_dqn,
+}
 
 
 @ray.remote(num_gpus=1)
@@ -219,131 +259,172 @@ def task_eval(dataset: str, scale: str, auxiliaries: str = "none") -> None:
 
 
 # ---------------------------------------------------------------------------
-# Pipeline variants (sequential chains via ObjectRef dependencies)
+# Config-driven variant pipeline
 # ---------------------------------------------------------------------------
 
-def large_pipeline(dataset: str) -> dict[str, str]:
-    """Large-scale teacher pipeline (no KD). Returns checkpoint paths."""
-    vgae_ref = task_vgae.remote(dataset, "large")
-    vgae_ckpt = ray.get(vgae_ref)
 
-    gat_ref = task_gat.remote(dataset, "large")
-    gat_ckpt = ray.get(gat_ref)
+def _get_teacher_ckpts(dataset: str) -> dict[str, str]:
+    """Load teacher checkpoint paths from existing large variant runs."""
+    from config.resolver import resolve
+    from config import checkpoint_path
 
-    dqn_ref = task_dqn.remote(dataset, "large")
-    dqn_ckpt = ray.get(dqn_ref)
-
-    ray.get(task_eval.remote(dataset, "large"))
-
-    return {"vgae": vgae_ckpt, "gat": gat_ckpt, "dqn": dqn_ckpt}
-
-
-def small_kd_pipeline(dataset: str, teacher_ckpts: dict[str, str]) -> None:
-    """Small-scale KD pipeline (distilled from large teacher)."""
-    vgae_ref = task_vgae.remote(
-        dataset, "small",
-        auxiliaries="kd_standard",
-        teacher_path=teacher_ckpts["vgae"],
-    )
-    ray.get(vgae_ref)
-
-    gat_ref = task_gat.remote(
-        dataset, "small",
-        auxiliaries="kd_standard",
-        teacher_path=teacher_ckpts["gat"],
-    )
-    ray.get(gat_ref)
-
-    dqn_ref = task_dqn.remote(
-        dataset, "small",
-        auxiliaries="kd_standard",
-        teacher_path=teacher_ckpts["dqn"],
-    )
-    ray.get(dqn_ref)
-
-    ray.get(task_eval.remote(dataset, "small", auxiliaries="kd_standard"))
+    teacher_paths = {}
+    for model, stage in [("vgae", "autoencoder"), ("gat", "curriculum"), ("dqn", "fusion")]:
+        cfg = resolve(model, "large", dataset=dataset)
+        tp = checkpoint_path(cfg, stage)
+        if not tp.exists():
+            raise FileNotFoundError(
+                f"Teacher checkpoint not found: {tp}. Run with --scale large first."
+            )
+        teacher_paths[model] = str(tp)
+    return teacher_paths
 
 
-def small_nokd_pipeline(dataset: str) -> None:
-    """Small-scale ablation pipeline (no KD, no teacher)."""
-    ray.get(task_vgae.remote(dataset, "small"))
-    ray.get(task_gat.remote(dataset, "small"))
-    ray.get(task_dqn.remote(dataset, "small"))
-    ray.get(task_eval.remote(dataset, "small"))
+def variant_pipeline(
+    dataset: str,
+    variant_name: str,
+    scale: str,
+    stages: list[str],
+    auxiliaries: str = "none",
+    teacher_ckpts: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Execute a config-driven stage chain for a single variant.
+
+    Returns a dict of {stage_name: checkpoint_path} for stages that
+    produce checkpoints (autoencoder, curriculum, fusion).
+    """
+    ckpts: dict[str, str] = {}
+
+    for stage_name in stages:
+        if stage_name == "evaluation":
+            ray.get(task_eval.remote(dataset, scale, auxiliaries=auxiliaries))
+            continue
+
+        task = _STAGE_TASKS.get(stage_name)
+        if task is None:
+            log.warning("Unknown stage '%s' in variant '%s', skipping", stage_name, variant_name)
+            continue
+
+        # Determine teacher path for this stage's model type
+        teacher_path = None
+        if teacher_ckpts and auxiliaries != "none":
+            model_type, _ = _STAGE_DISPATCH[stage_name]
+            teacher_path = teacher_ckpts.get(model_type)
+
+        ckpt = ray.get(task.remote(dataset, scale, auxiliaries, teacher_path))
+        ckpts[stage_name] = ckpt
+
+    return ckpts
 
 
 @ray.remote
-def _small_nokd_pipeline_remote(dataset: str) -> None:
-    """Remote wrapper for small_nokd_pipeline.
-
-    Allows dataset_pipeline to launch small_nokd concurrently with
-    large_pipeline + small_kd_pipeline since small_nokd has no dependency
-    on teacher checkpoints. On single-GPU, Ray still serializes the GPU
-    tasks; on multi-GPU clusters, this enables true parallelism.
-    """
-    small_nokd_pipeline(dataset)
+def _variant_pipeline_remote(
+    dataset: str,
+    variant_name: str,
+    scale: str,
+    stages: list[str],
+    auxiliaries: str = "none",
+    teacher_ckpts: dict[str, str] | None = None,
+) -> dict[str, str]:
+    """Remote wrapper for variant_pipeline."""
+    return variant_pipeline(dataset, variant_name, scale, stages, auxiliaries, teacher_ckpts)
 
 
 # ---------------------------------------------------------------------------
 # Per-dataset orchestration
 # ---------------------------------------------------------------------------
 
+
 @ray.remote
 def dataset_pipeline(dataset: str, scale: str | None = None) -> None:
-    """All variants for a single dataset.
+    """All variants for a single dataset, driven by PipelineConfig.variants.
 
-    When running all variants (scale=None), small_nokd_pipeline launches
-    concurrently with large_pipeline. It has no dependency on teacher
-    checkpoints, so it can overlap with large + small_kd on multi-GPU
-    clusters. On single-GPU, Ray serializes the GPU tasks automatically.
+    When running all variants (scale=None), variants with needs_teacher=False
+    launch concurrently with the teacher variant. Variants with
+    needs_teacher=True wait for the teacher's checkpoint paths.
     """
+    from config.resolver import resolve
+
     log.info("=== Pipeline for dataset: %s ===", dataset)
+
+    # Load variant config from defaults
+    cfg = resolve("vgae", "large", dataset=dataset)
+    variants = cfg.variants
 
     # Preprocess (shared by all variants)
     ray.get(task_preprocess.remote(dataset))
 
-    # Launch small_nokd early when running all variants — it has no
-    # dependency on large pipeline outputs (no teacher checkpoints needed).
-    nokd_ref = None
-    if scale is None:
-        nokd_ref = _small_nokd_pipeline_remote.remote(dataset)
-        log.info("Launched small_nokd concurrently for %s", dataset)
+    # Filter variants by scale if specified
+    _scale_to_variant = {
+        "large": "large",
+        "small_kd": "small_kd",
+        "small_nokd": "small_nokd",
+    }
+    if scale is not None:
+        target_name = _scale_to_variant.get(scale, scale)
+        variants = [v for v in variants if v.name == target_name]
 
-    if scale is None or scale == "large":
-        teacher_ckpts = large_pipeline(dataset)
+    # Separate into teacher (first non-needs_teacher variant, usually "large")
+    # and dependent/independent variants
+    teacher_variant = None
+    independent_variants = []
+    dependent_variants = []
 
-        # Small KD depends on large teacher checkpoints
-        if scale is None or scale == "small_kd":
-            small_kd_pipeline(dataset, teacher_ckpts)
+    for v in variants:
+        if not v.needs_teacher and teacher_variant is None and v.scale == "large":
+            teacher_variant = v
+        elif v.needs_teacher:
+            dependent_variants.append(v)
+        else:
+            independent_variants.append(v)
 
-    elif scale == "small_kd":
-        # Running small_kd alone — teacher must already exist
-        from config.resolver import resolve
-        from config import checkpoint_path
+    # Launch independent variants concurrently (no teacher dependency)
+    independent_refs = []
+    for v in independent_variants:
+        ref = _variant_pipeline_remote.remote(
+            dataset,
+            v.name,
+            v.scale,
+            v.stages,
+            v.auxiliaries,
+        )
+        independent_refs.append(ref)
+        log.info("Launched %s concurrently for %s", v.name, dataset)
 
-        teacher_paths = {}
-        for model, stage in [("vgae", "autoencoder"), ("gat", "curriculum"), ("dqn", "fusion")]:
-            cfg = resolve(model, "large", dataset=dataset)
-            tp = checkpoint_path(cfg, stage)
-            if not tp.exists():
-                raise FileNotFoundError(
-                    f"Teacher checkpoint not found: {tp}. "
-                    f"Run with --scale large first."
-                )
-            teacher_paths[model] = str(tp)
-        small_kd_pipeline(dataset, teacher_paths)
+    # Run teacher variant (blocking — dependent variants need its checkpoints)
+    teacher_ckpts = None
+    if teacher_variant is not None:
+        teacher_ckpts = variant_pipeline(
+            dataset,
+            teacher_variant.name,
+            teacher_variant.scale,
+            teacher_variant.stages,
+            teacher_variant.auxiliaries,
+        )
 
-    # Join the concurrent small_nokd task if we launched it early.
-    if nokd_ref is not None:
-        ray.get(nokd_ref)
-    elif scale == "small_nokd":
-        # Running small_nokd alone (explicit --scale small_nokd)
-        small_nokd_pipeline(dataset)
+    # Run dependent variants (they need teacher checkpoints)
+    for v in dependent_variants:
+        if teacher_ckpts is None:
+            # Teacher must already exist on disk
+            teacher_ckpts = _get_teacher_ckpts(dataset)
+        variant_pipeline(
+            dataset,
+            v.name,
+            v.scale,
+            v.stages,
+            v.auxiliaries,
+            teacher_ckpts=teacher_ckpts,
+        )
+
+    # Join independent variants
+    if independent_refs:
+        ray.get(independent_refs)
 
 
 # ---------------------------------------------------------------------------
 # Top-level entry points
 # ---------------------------------------------------------------------------
+
 
 def train_pipeline(
     datasets: list[str] | None = None,
@@ -366,6 +447,7 @@ def train_pipeline(
 
     if datasets is None:
         from config.paths import get_datasets
+
         datasets = get_datasets()
 
     # Initialize Ray
@@ -392,6 +474,7 @@ def eval_pipeline(
 
     if datasets is None:
         from config.paths import get_datasets
+
         datasets = get_datasets()
 
     if not ray.is_initialized():

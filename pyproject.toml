@@ -36,7 +36,6 @@ dependencies = [
 [project.optional-dependencies]
 dev = ["pytest>=7.0.0", "httpx>=0.27", "ruff>=0.4", "duckdb>=1.0.0"]
 baselines = ["pygod>=1.1"]
-rapids = ["cudf-cu12>=24.12", "cuml-cu12>=24.12", "cupy-cuda12x>=13.0"]
 
 [project.scripts]
 kd-gat = "pipeline.cli:main"

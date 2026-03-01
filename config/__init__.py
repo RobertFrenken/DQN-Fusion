@@ -5,6 +5,7 @@ Usage:
     from config.resolver import resolve, list_models, list_auxiliaries
     from config.constants import NODE_FEATURE_COUNT, MMAP_TENSOR_LIMIT
 """
+
 from .schema import (
     PipelineConfig,
     VGAEArchitecture,
@@ -14,6 +15,7 @@ from .schema import (
     TrainingConfig,
     FusionConfig,
     PreprocessingConfig,
+    VariantConfig,
 )
 from .resolver import (
     resolve,

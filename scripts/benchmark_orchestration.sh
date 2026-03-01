@@ -6,7 +6,7 @@
 #SBATCH --ntasks=1
 #SBATCH --cpus-per-task=8
 #SBATCH --mem=85G
-#SBATCH --time=02:00:00
+#SBATCH --time=06:00:00
 #SBATCH --job-name=bench-orch
 #SBATCH --output=slurm_logs/bench_orch_%j.out
 #SBATCH --error=slurm_logs/bench_orch_%j.err
@@ -40,7 +40,7 @@ set +a
 source scripts/stage_data.sh --cache
 
 # --- Benchmark config ---
-DATASET="${1:-hcrl_sa}"
+DATASET="${1:-hcrl_ch}"
 BENCHMARK_LOG="slurm_logs/benchmark_timing_${SLURM_JOB_ID}.jsonl"
 
 echo "=== Orchestration Benchmark ==="

@@ -11,6 +11,7 @@ The ``shift(-1)`` temporal adjacency is the most critical implicit
 assumption: message N connects to message N+1. This is CAN-specific
 and does NOT belong in the GraphEngine.
 """
+
 from __future__ import annotations
 
 import logging
@@ -21,7 +22,13 @@ from typing import Sequence
 import pandas as pd
 
 from config.constants import EXCLUDED_ATTACK_TYPES, MAX_DATA_BYTES
-from ..schema import IRSchema, CAN_BUS_SCHEMA, feature_columns
+from ..schema import (
+    IRSchema,
+    CAN_BUS_SCHEMA,
+    CAN_BUS_SCHEMA_WITH_ATTACK_TYPE,
+    COL_ATTACK_TYPE,
+    feature_columns,
+)
 from ..vocabulary import EntityVocabulary
 from .base import DomainAdapter
 
@@ -29,6 +36,20 @@ log = logging.getLogger(__name__)
 
 # Sentinel for hex character validation
 _HEX_CHARS = frozenset("0123456789abcdefABCDEF")
+
+# Attack type string → integer code mapping
+ATTACK_TYPE_CODES: dict[str, int] = {
+    "normal": 0,
+    "dos": 1,
+    "fuzzing": 2,
+    "gear_spoofing": 3,
+    "rpm_spoofing": 4,
+    "suppress": 5,
+    "masquerade": 6,
+    "mixed": 7,
+    "unknown": 8,
+}
+ATTACK_TYPE_NAMES: dict[int, str] = {v: k for k, v in ATTACK_TYPE_CODES.items()}
 
 
 def _safe_hex_to_int(value) -> int | None:
@@ -55,18 +76,25 @@ class CANBusAdapter(DomainAdapter):
         Number of CSV rows to process per chunk (for memory efficiency).
     excluded_attacks : sequence of str
         Attack type substrings to exclude from file discovery.
+    include_attack_type : bool
+        If True, include an ``attack_type`` column in the IR output.
+        The attack type is inferred from the parent directory name.
     """
 
     def __init__(
         self,
         chunk_size: int = 5000,
         excluded_attacks: Sequence[str] = EXCLUDED_ATTACK_TYPES,
+        include_attack_type: bool = False,
     ):
         self._chunk_size = chunk_size
         self._excluded_attacks = list(excluded_attacks)
+        self._include_attack_type = include_attack_type
 
     @property
     def schema(self) -> IRSchema:
+        if self._include_attack_type:
+            return CAN_BUS_SCHEMA_WITH_ATTACK_TYPE
         return CAN_BUS_SCHEMA
 
     # ------------------------------------------------------------------
@@ -119,6 +147,46 @@ class CANBusAdapter(DomainAdapter):
     # Raw → IR conversion
     # ------------------------------------------------------------------
 
+    @staticmethod
+    def infer_attack_type(file_path: str | Path) -> str:
+        """Infer attack type from directory name.
+
+        Maps known subdirectory patterns to attack type names:
+        - train_01_attack_free / train_ → "normal"
+        - test_01_DoS → "dos"
+        - test_02_fuzzing → "fuzzing"
+        - test_03_gear_spoofing → "gear_spoofing"
+        - test_04_rpm_spoofing → "rpm_spoofing"
+        - test_05_suppress → "suppress"
+        - test_06_masquerade → "masquerade"
+        - test_*_known_vehicle_known_attack → "mixed"
+        - train_02_with_attacks → "mixed"
+
+        Falls back to "unknown" if no pattern matches.
+        """
+        dirname = Path(file_path).parent.name.lower()
+        if "attack_free" in dirname:
+            return "normal"
+        if "dos" in dirname:
+            return "dos"
+        if "fuzzing" in dirname or "fuzzy" in dirname:
+            return "fuzzing"
+        if "gear_spoofing" in dirname or "gear" in dirname:
+            return "gear_spoofing"
+        if "rpm_spoofing" in dirname or "rpm" in dirname:
+            return "rpm_spoofing"
+        if "suppress" in dirname:
+            return "suppress"
+        if "masquerade" in dirname:
+            return "masquerade"
+        if "with_attacks" in dirname:
+            return "mixed"
+        if "known" in dirname or "unknown" in dirname:
+            return "mixed"
+        if "train" in dirname:
+            return "normal"
+        return "unknown"
+
     def read_and_convert(
         self,
         file_path: str | Path,
@@ -133,21 +201,30 @@ class CANBusAdapter(DomainAdapter):
         4. Convert hex to int, apply vocabulary encoding
         5. Normalize payload bytes to [0, 1]
         6. Rename to IR column layout
+        7. (Optional) Add attack_type column from directory name
         """
         chunks = self._read_chunks(str(file_path))
         if not chunks:
             return pd.DataFrame(columns=self.schema.columns)
 
+        attack_type_code = None
+        if self._include_attack_type:
+            attack_type_name = self.infer_attack_type(file_path)
+            attack_type_code = ATTACK_TYPE_CODES.get(attack_type_name, 0)
+
         ir_chunks = []
         for chunk in chunks:
             ir = self._chunk_to_ir(chunk, vocab)
             if not ir.empty:
+                if self._include_attack_type and attack_type_code is not None:
+                    ir[COL_ATTACK_TYPE] = attack_type_code
                 ir_chunks.append(ir)
 
         if not ir_chunks:
             return pd.DataFrame(columns=self.schema.columns)
 
-        return pd.concat(ir_chunks, ignore_index=True)
+        result = pd.concat(ir_chunks, ignore_index=True)
+        return result[self.schema.columns]
 
     # ------------------------------------------------------------------
     # Internal helpers
@@ -158,7 +235,10 @@ class CANBusAdapter(DomainAdapter):
         chunks = []
         try:
             reader = pd.read_csv(
-                csv_path, chunksize=self._chunk_size, engine="python", dtype=str,
+                csv_path,
+                chunksize=self._chunk_size,
+                engine="python",
+                dtype=str,
             )
             for chunk in reader:
                 chunk.columns = ["Timestamp", "arbitration_id", "data_field", "attack"]

@@ -5,19 +5,22 @@ Usage:
     python -m pipeline.cli curriculum  --model gat --scale small --auxiliaries kd_standard --dataset hcrl_sa
     python -m pipeline.cli fusion      --config path/to/config.json
 """
+
 from __future__ import annotations
 
 import torch.multiprocessing as mp
+
 # Must be called before any CUDA or multiprocessing usage.
 # Prevents "Cannot re-initialize CUDA in forked subprocess" errors
 # when DataLoader workers collate tensors after CUDA has been initialized
 # in the main process (e.g. by _score_difficulty in the curriculum stage).
-mp.set_start_method('spawn', force=True)
+mp.set_start_method("spawn", force=True)
 
 import argparse
 import logging
 import os
-from datetime import datetime
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from config import PipelineConfig, STAGES, config_path, run_id, stage_dir
@@ -37,21 +40,26 @@ def _build_parser() -> argparse.ArgumentParser:
         description="KD-GAT training pipeline",
     )
     p.add_argument(
-        "stage", choices=list(STAGES.keys()) + ["flow"],
+        "stage",
+        choices=list(STAGES.keys()) + ["flow"],
         help="Training stage to run, or 'flow' to run full pipeline via Ray",
     )
 
     # Config source
     src = p.add_mutually_exclusive_group()
     src.add_argument(
-        "--config", type=Path, default=None,
+        "--config",
+        type=Path,
+        default=None,
         help="Load a frozen config JSON (e.g. from a previous run)",
     )
 
     # Identity flags (used by resolver)
     p.add_argument("--model", type=str, default="vgae", help="Model type: vgae, gat, dqn")
     p.add_argument("--scale", type=str, default="large", help="Model scale: large, small")
-    p.add_argument("--auxiliaries", type=str, default="none", help="Auxiliary config: none, kd_standard")
+    p.add_argument(
+        "--auxiliaries", type=str, default="none", help="Auxiliary config: none, kd_standard"
+    )
     p.add_argument("--dataset", type=str, default=None)
     p.add_argument("--seed", type=int, default=None)
 
@@ -63,19 +71,43 @@ def _build_parser() -> argparse.ArgumentParser:
     p.add_argument("--run-test", type=_parse_bool, default=None)
 
     # KD shorthand: --teacher-path sets auxiliaries + model_path
-    p.add_argument("--teacher-path", type=str, default=None,
-                    help="Shorthand: implies kd_standard aux with given model_path")
+    p.add_argument(
+        "--teacher-path",
+        type=str,
+        default=None,
+        help="Shorthand: implies kd_standard aux with given model_path",
+    )
 
     # Flow subcommand options
-    p.add_argument("--eval-only", action="store_true", default=False,
-                    help="(flow) Re-run evaluation only, skip training")
-    p.add_argument("--local", action="store_true", default=False,
-                    help="(flow) Use Ray local mode instead of cluster")
+    p.add_argument(
+        "--eval-only",
+        action="store_true",
+        default=False,
+        help="(flow) Re-run evaluation only, skip training",
+    )
+    p.add_argument(
+        "--local",
+        action="store_true",
+        default=False,
+        help="(flow) Use Ray local mode instead of cluster",
+    )
+    p.add_argument(
+        "--dry-run",
+        action="store_true",
+        default=False,
+        help="(flow) Print the stage chain without executing",
+    )
 
     # Nested overrides via dot-path: --training.lr 0.001, --vgae.latent-dim 16
-    p.add_argument("--override", "-O", nargs=2, action="append", default=[],
-                    metavar=("KEY", "VALUE"),
-                    help="Nested override as 'section.field value' (e.g. -O training.lr 0.001)")
+    p.add_argument(
+        "--override",
+        "-O",
+        nargs=2,
+        action="append",
+        default=[],
+        metavar=("KEY", "VALUE"),
+        help="Nested override as 'section.field value' (e.g. -O training.lr 0.001)",
+    )
 
     return p
 
@@ -120,8 +152,25 @@ def _run_flow(args: argparse.Namespace, log: logging.Logger) -> None:
     scale = args.scale if args.scale in _flow_scales else None
     # Check if user actually passed --scale or if it's the default
     import sys
+
     if "--scale" not in sys.argv:
         scale = None
+
+    # Dry-run: print the stage chain without executing
+    if args.dry_run:
+        from config.resolver import resolve
+
+        cfg = resolve("vgae", "large", dataset=args.dataset or "hcrl_ch")
+        variants = cfg.variants
+        if scale is not None:
+            variants = [v for v in variants if v.name == scale]
+        log.info("Dry-run: datasets=%s, scale=%s", datasets, scale)
+        for v in variants:
+            dep = " (needs teacher)" if v.needs_teacher else ""
+            log.info("  Variant '%s' (scale=%s, aux=%s)%s:", v.name, v.scale, v.auxiliaries, dep)
+            for s in v.stages:
+                log.info("    → %s", s)
+        return
 
     from .orchestration.ray_pipeline import train_pipeline, eval_pipeline
 
@@ -161,6 +210,7 @@ def _wandb_log_metrics(result: dict) -> None:
     """Log final result metrics to the active W&B run."""
     try:
         import wandb
+
         if wandb.run is None:
             return
         flat: dict[str, float] = {}
@@ -178,13 +228,25 @@ def _wandb_log_metrics(result: dict) -> None:
 
 
 def _sync_lakehouse(
-    cfg: PipelineConfig, stage: str, run_name: str,
-    result: object = None, success: bool = True,
+    cfg: PipelineConfig,
+    stage: str,
+    run_name: str,
+    result: object = None,
+    success: bool = True,
     failure_reason: str | None = None,
+    *,
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    duration_seconds: float | None = None,
+    peak_gpu_mb: float | None = None,
+    slurm_job_id: str | None = None,
+    gpu_name: str | None = None,
+    batch_size_used: int | None = None,
 ) -> None:
     """Fire-and-forget sync to datalake (Parquet)."""
     try:
         from .lakehouse import sync_to_lakehouse
+
         sync_to_lakehouse(
             run_id=run_name,
             dataset=cfg.dataset,
@@ -195,6 +257,13 @@ def _sync_lakehouse(
             metrics=result if isinstance(result, dict) else None,
             success=success,
             failure_reason=failure_reason,
+            started_at=started_at,
+            completed_at=completed_at,
+            duration_seconds=duration_seconds,
+            peak_gpu_mb=peak_gpu_mb,
+            slurm_job_id=slurm_job_id,
+            gpu_name=gpu_name,
+            batch_size_used=batch_size_used,
         )
     except Exception as e:
         logging.getLogger("pipeline").debug("Lakehouse sync skipped: %s", e)
@@ -204,6 +273,7 @@ def _finish_wandb() -> None:
     """Finish the active W&B run if one exists."""
     try:
         import wandb
+
         if wandb.run is not None:
             wandb.finish()
     except Exception:
@@ -231,8 +301,15 @@ def main(argv: list[str] | None = None) -> None:
         log.info("Loaded frozen config: %s", args.config)
     else:
         # Build overrides dict
-        _OVERRIDE_FIELDS = ("dataset", "seed", "experiment_root", "device",
-                            "num_workers", "mp_start_method", "run_test")
+        _OVERRIDE_FIELDS = (
+            "dataset",
+            "seed",
+            "experiment_root",
+            "device",
+            "num_workers",
+            "mp_start_method",
+            "run_test",
+        )
         overrides = {f: getattr(args, f) for f in _OVERRIDE_FIELDS if getattr(args, f) is not None}
 
         # Handle --teacher-path shorthand
@@ -246,6 +323,7 @@ def main(argv: list[str] | None = None) -> None:
         dot_overrides = _parse_dot_overrides(args.override)
         if dot_overrides:
             from config.resolver import _deep_merge
+
             _deep_merge(overrides, dot_overrides)
 
         cfg = resolve(args.model, args.scale, auxiliaries=aux_name, **overrides)
@@ -275,22 +353,71 @@ def main(argv: list[str] | None = None) -> None:
     # ---- W&B init ----
     _wandb_run = _init_wandb(cfg, args.stage, run_name)
 
+    # ---- Collect environment metadata ----
+    slurm_job_id = os.environ.get("SLURM_JOB_ID")
+    gpu_name = None
+    try:
+        import torch
+
+        if torch.cuda.is_available():
+            gpu_name = torch.cuda.get_device_name(0)
+            torch.cuda.reset_peak_memory_stats()
+    except Exception:
+        pass
+
     # ---- Dispatch ----
+    started_at = datetime.now(timezone.utc).isoformat()
+    t_start = time.monotonic()
     try:
         from .stages import STAGE_FNS
+
         result = STAGE_FNS[args.stage](cfg)
-        log.info("Stage '%s' complete. Result: %s", args.stage, result)
+
+        t_end = time.monotonic()
+        completed_at = datetime.now(timezone.utc).isoformat()
+        duration_seconds = t_end - t_start
+
+        # Capture GPU peak memory
+        peak_gpu_mb = None
+        try:
+            import torch
+
+            if torch.cuda.is_available():
+                peak_gpu_mb = torch.cuda.max_memory_allocated() / (1024**2)
+        except Exception:
+            pass
+
+        log.info(
+            "Stage '%s' complete (%.1fs, peak_gpu=%.0fMB). Result: %s",
+            args.stage,
+            duration_seconds,
+            peak_gpu_mb or 0.0,
+            result,
+        )
 
         # Log final metrics to W&B
         if _wandb_run is not None and isinstance(result, dict):
             _wandb_log_metrics(result)
 
         # Sync to datalake (fire-and-forget)
-        _sync_lakehouse(cfg, args.stage, run_name, result)
+        _sync_lakehouse(
+            cfg,
+            args.stage,
+            run_name,
+            result,
+            started_at=started_at,
+            completed_at=completed_at,
+            duration_seconds=duration_seconds,
+            peak_gpu_mb=peak_gpu_mb,
+            slurm_job_id=slurm_job_id,
+            gpu_name=gpu_name,
+            batch_size_used=cfg.training.batch_size,
+        )
 
         # Register artifacts in datalake (fire-and-forget)
         try:
             from .lakehouse import register_artifacts
+
             register_artifacts(run_name, sdir)
         except Exception as e:
             log.debug("Artifact registration skipped: %s", e)
@@ -298,19 +425,36 @@ def main(argv: list[str] | None = None) -> None:
         # Success → delete archive
         if archive and archive.exists():
             import shutil
+
             shutil.rmtree(archive, ignore_errors=True)
 
         log.info("Run completed successfully")
 
     except Exception as e:
+        t_end = time.monotonic()
+        completed_at = datetime.now(timezone.utc).isoformat()
+        duration_seconds = t_end - t_start
         # Failure → restore archive
         if archive and archive.exists():
             if sdir.exists():
                 import shutil
+
                 shutil.rmtree(sdir, ignore_errors=True)
             archive.rename(sdir)
             log.warning("Restored archive after failure: %s", sdir)
-        _sync_lakehouse(cfg, args.stage, run_name, None, success=False, failure_reason=str(e))
+        _sync_lakehouse(
+            cfg,
+            args.stage,
+            run_name,
+            None,
+            success=False,
+            failure_reason=str(e),
+            started_at=started_at,
+            completed_at=completed_at,
+            duration_seconds=duration_seconds,
+            slurm_job_id=slurm_job_id,
+            gpu_name=gpu_name,
+        )
         log.error("Run failed: %s", str(e))
         raise
 

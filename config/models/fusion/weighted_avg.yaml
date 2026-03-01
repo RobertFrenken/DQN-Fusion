@@ -1,0 +1,4 @@
+# Weighted average fusion (simplest baseline)
+fusion:
+  method: weighted_avg
+  lr: 0.01

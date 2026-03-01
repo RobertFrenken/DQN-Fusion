@@ -1,0 +1,8 @@
+# MLP supervised fusion baseline
+fusion:
+  method: mlp
+  mlp_hidden_dims:
+    - 64
+    - 32
+  mlp_max_epochs: 100
+  lr: 0.001

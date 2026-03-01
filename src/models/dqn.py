@@ -1,4 +1,5 @@
 import logging
+from abc import ABC, abstractmethod
 from collections import deque
 from typing import Dict, List, Optional, Tuple
 
@@ -10,6 +11,38 @@ import torch.optim as optim
 log = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Fusion Agent ABC
+# ---------------------------------------------------------------------------
+
+
+class FusionAgent(ABC):
+    """Abstract base class for fusion agents.
+
+    All fusion agents operate on the same N-D state vector produced by
+    the model registry's extractors (VGAE 8-D + GAT 7-D = 15-D).
+    """
+
+    @abstractmethod
+    def train_on_cache(
+        self,
+        train_states: torch.Tensor,
+        train_labels: torch.Tensor,
+        val_states: torch.Tensor,
+        val_labels: torch.Tensor,
+        cfg,
+    ) -> float:
+        """Train the agent on cached predictions. Returns best validation accuracy."""
+
+    @abstractmethod
+    def state_dict(self) -> dict:
+        """Return serializable state dict for checkpointing."""
+
+    @abstractmethod
+    def fuse(self, state_features: np.ndarray) -> int:
+        """Given a state vector, return a fused binary prediction (0 or 1)."""
+
+
 class QNetwork(nn.Module):
     """Q-network with configurable depth and width."""
 
@@ -18,20 +51,23 @@ class QNetwork(nn.Module):
         layers = []
         in_dim = state_dim
         for _ in range(num_layers):
-            layers.extend([
-                nn.Linear(in_dim, hidden_dim),
-                nn.LayerNorm(hidden_dim),
-                nn.ReLU(),
-                nn.Dropout(0.2),
-            ])
+            layers.extend(
+                [
+                    nn.Linear(in_dim, hidden_dim),
+                    nn.LayerNorm(hidden_dim),
+                    nn.ReLU(),
+                    nn.Dropout(0.2),
+                ]
+            )
             in_dim = hidden_dim
         layers.append(nn.Linear(in_dim, action_dim))
         self.net = nn.Sequential(*layers)
-        
+
     @classmethod
     def from_config(cls, cfg) -> "QNetwork":
         """Construct from a PipelineConfig."""
         from .registry import fusion_state_dim
+
         return cls(
             state_dim=fusion_state_dim(),
             action_dim=cfg.fusion.alpha_steps,
@@ -42,16 +78,30 @@ class QNetwork(nn.Module):
     def forward(self, x):
         return self.net(x)
 
+
 class EnhancedDQNFusionAgent:
     """
     Enhanced DQN agent for dynamic fusion of GAT and VGAE outputs.
     Includes Double DQN, proper target updates, and validation.
     """
-    
-    def __init__(self, alpha_steps=21, lr=1e-3, gamma=0.9, epsilon=0.2,
-                 epsilon_decay=0.995, min_epsilon=0.01, buffer_size=50000,
-                 batch_size=128, target_update_freq=100, device='cpu', *,
-                 state_dim, hidden_dim=128, num_layers=3):
+
+    def __init__(
+        self,
+        alpha_steps=21,
+        lr=1e-3,
+        gamma=0.9,
+        epsilon=0.2,
+        epsilon_decay=0.995,
+        min_epsilon=0.01,
+        buffer_size=50000,
+        batch_size=128,
+        target_update_freq=100,
+        device="cpu",
+        *,
+        state_dim,
+        hidden_dim=128,
+        num_layers=3,
+    ):
 
         # Action and state space
         self.alpha_values = np.linspace(0, 1, alpha_steps)
@@ -70,32 +120,39 @@ class EnhancedDQNFusionAgent:
         self.buffer_size = buffer_size
 
         # Networks
-        self.q_network = QNetwork(state_dim, self.action_dim, hidden_dim, num_layers).to(self.device)
-        self.target_network = QNetwork(state_dim, self.action_dim, hidden_dim, num_layers).to(self.device)
+        self.q_network = QNetwork(state_dim, self.action_dim, hidden_dim, num_layers).to(
+            self.device
+        )
+        self.target_network = QNetwork(state_dim, self.action_dim, hidden_dim, num_layers).to(
+            self.device
+        )
         self.target_network.load_state_dict(self.q_network.state_dict())
-        
+
         # Optimizer and loss
         self.optimizer = optim.AdamW(self.q_network.parameters(), lr=lr, weight_decay=1e-5)
-        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(self.optimizer, patience=1000, factor=0.8)
+        self.scheduler = optim.lr_scheduler.ReduceLROnPlateau(
+            self.optimizer, patience=1000, factor=0.8
+        )
         self.loss_fn = nn.SmoothL1Loss()  # Huber loss for stability
-        
+
         # Experience replay
         self.replay_buffer = deque(maxlen=self.buffer_size)
-        
+
         # Training tracking
         self.training_step = 0
         self.update_counter = 0
         self.reward_history = []
         self.loss_history = []
-        
+
         # Validation tracking
         self.validation_scores = []
-        self.best_validation_score = -float('inf')
+        self.best_validation_score = -float("inf")
         self.patience_counter = 0
         self.max_patience = 5000
-        
+
         # Derive feature indices from registry (no hardcoded offsets)
         from .registry import feature_layout
+
         layout = feature_layout()
         vgae_start, vgae_dim, _ = layout["vgae"]
         gat_start, gat_dim, _ = layout["gat"]
@@ -126,9 +183,10 @@ class EnhancedDQNFusionAgent:
             state_features[idx] = np.clip(state_features[idx], 0.0, 1.0)
 
         return state_features.astype(np.float32)
-        
 
-    def select_action(self, state_features: np.ndarray, training: bool = True) -> Tuple[float, int, np.ndarray]:
+    def select_action(
+        self, state_features: np.ndarray, training: bool = True
+    ) -> Tuple[float, int, np.ndarray]:
         """Select action using epsilon-greedy policy.
 
         Args:
@@ -170,9 +228,9 @@ class EnhancedDQNFusionAgent:
 
         return anomaly_score, gat_prob
 
-    def compute_fusion_reward(self, prediction: int, true_label: int,
-                             state_features: np.ndarray,
-                             alpha: float) -> float:
+    def compute_fusion_reward(
+        self, prediction: int, true_label: int, state_features: np.ndarray, alpha: float
+    ) -> float:
         """Enhanced reward function.
 
         Args:
@@ -228,12 +286,13 @@ class EnhancedDQNFusionAgent:
 
         return total_reward + balance_bonus
 
-    def store_experience(self, state: np.ndarray, action_idx: int, reward: float, 
-                        next_state: np.ndarray, done: bool):
+    def store_experience(
+        self, state: np.ndarray, action_idx: int, reward: float, next_state: np.ndarray, done: bool
+    ):
         """Store experience in replay buffer."""
         state = state.astype(np.float32) if state.dtype != np.float32 else state
         next_state = next_state.astype(np.float32) if next_state.dtype != np.float32 else next_state
-        
+
         experience = (state, action_idx, reward, next_state, done)
         self.replay_buffer.append(experience)
 
@@ -241,47 +300,49 @@ class EnhancedDQNFusionAgent:
         """Enhanced training step with Double DQN."""
         if len(self.replay_buffer) < self.batch_size:
             return None
-            
+
         # Sample random batch
         batch_indices = np.random.choice(len(self.replay_buffer), self.batch_size, replace=False)
         batch = [self.replay_buffer[idx] for idx in batch_indices]
-        
+
         states, actions, rewards, next_states, dones = zip(*batch)
-        
+
         # Convert to tensors
         states = torch.tensor(np.array(states), dtype=torch.float32).to(self.device)
         actions = torch.tensor(actions, dtype=torch.long).to(self.device)
         rewards = torch.tensor(rewards, dtype=torch.float32).to(self.device)
         next_states = torch.tensor(np.array(next_states), dtype=torch.float32).to(self.device)
         dones = torch.tensor(dones, dtype=torch.float32).to(self.device)
-        
+
         # Current Q-values
         current_q_values = self.q_network(states).gather(1, actions.unsqueeze(1)).squeeze(1)
-        
+
         # Double DQN: use main network for action selection, target for evaluation
         with torch.no_grad():
             next_actions = self.q_network(next_states).max(dim=1)[1]
-            next_q_values = self.target_network(next_states).gather(1, next_actions.unsqueeze(1)).squeeze(1)
+            next_q_values = (
+                self.target_network(next_states).gather(1, next_actions.unsqueeze(1)).squeeze(1)
+            )
             target_q_values = rewards + self.gamma * next_q_values * (1 - dones)
-        
+
         # Compute loss and optimize
         loss = self.loss_fn(current_q_values, target_q_values)
-        
+
         self.optimizer.zero_grad()
         loss.backward()
         torch.nn.utils.clip_grad_norm_(self.q_network.parameters(), max_norm=1.0)
         self.optimizer.step()
-        
+
         # Update target network
         self.update_counter += 1
         if self.update_counter % self.target_update_freq == 0:
             self.update_target_network()
-        
+
         # Track training metrics
         self.training_step += 1
         self.loss_history.append(loss.item())
         self.reward_history.append(rewards.mean().item())
-        
+
         return loss.item()
 
     def update_target_network(self):
@@ -304,11 +365,15 @@ class EnhancedDQNFusionAgent:
         total_reward = 0
         alpha_values_used = []
 
-        sample_data = validation_data[:num_samples] if len(validation_data) >= num_samples else validation_data
+        sample_data = (
+            validation_data[:num_samples]
+            if len(validation_data) >= num_samples
+            else validation_data
+        )
 
         if not sample_data:
             self.q_network.train()
-            return {'accuracy': 0.0, 'avg_reward': 0.0, 'avg_alpha': 0.0, 'alpha_std': 0.0}
+            return {"accuracy": 0.0, "avg_reward": 0.0, "avg_alpha": 0.0, "alpha_std": 0.0}
 
         for state_features, true_label in sample_data:
             # Select action
@@ -323,24 +388,24 @@ class EnhancedDQNFusionAgent:
             prediction = 1 if fused_score > 0.5 else 0
 
             # Calculate metrics
-            correct += (prediction == true_label)
+            correct += prediction == true_label
             reward = self.compute_fusion_reward(prediction, true_label, state_features, alpha)
             total_reward += reward
 
         self.q_network.train()
 
         validation_results = {
-            'accuracy': correct / len(sample_data),
-            'avg_reward': total_reward / len(sample_data),
-            'avg_alpha': np.mean(alpha_values_used),
-            'alpha_std': np.std(alpha_values_used)
+            "accuracy": correct / len(sample_data),
+            "avg_reward": total_reward / len(sample_data),
+            "avg_alpha": np.mean(alpha_values_used),
+            "alpha_std": np.std(alpha_values_used),
         }
 
         # Update learning rate based on validation
-        self.scheduler.step(validation_results['avg_reward'])
+        self.scheduler.step(validation_results["avg_reward"])
 
         # Early stopping check
-        current_score = validation_results['accuracy'] + 0.1 * validation_results['avg_reward']
+        current_score = validation_results["accuracy"] + 0.1 * validation_results["avg_reward"]
         if current_score > self.best_validation_score:
             self.best_validation_score = current_score
             self.patience_counter = 0
@@ -349,3 +414,181 @@ class EnhancedDQNFusionAgent:
 
         self.validation_scores.append(validation_results)
         return validation_results
+
+
+# ---------------------------------------------------------------------------
+# MLP Fusion Agent
+# ---------------------------------------------------------------------------
+
+
+class MLPFusionNetwork(nn.Module):
+    """Simple MLP for binary classification from fusion state vectors."""
+
+    def __init__(self, state_dim: int, hidden_dims: tuple[int, ...] = (64, 32)):
+        super().__init__()
+        layers: list[nn.Module] = []
+        in_dim = state_dim
+        for h in hidden_dims:
+            layers.extend([nn.Linear(in_dim, h), nn.ReLU(), nn.Dropout(0.2)])
+            in_dim = h
+        layers.append(nn.Linear(in_dim, 1))
+        self.net = nn.Sequential(*layers)
+
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.net(x).squeeze(-1)
+
+
+class MLPFusionAgent(FusionAgent):
+    """Supervised MLP baseline: learns binary classification directly from state vectors.
+
+    Same 15-D state as DQN, but trained with BCE loss instead of RL episodes.
+    """
+
+    def __init__(
+        self,
+        state_dim: int,
+        hidden_dims: tuple[int, ...] = (64, 32),
+        lr: float = 0.001,
+        device: str = "cpu",
+    ):
+        self.device = device
+        self.model = MLPFusionNetwork(state_dim, hidden_dims).to(device)
+        self.optimizer = optim.Adam(self.model.parameters(), lr=lr)
+        self.loss_fn = nn.BCEWithLogitsLoss()
+
+    def train_on_cache(self, train_states, train_labels, val_states, val_labels, cfg) -> float:
+        max_epochs = cfg.fusion.mlp_max_epochs
+        batch_size = cfg.dqn.batch_size
+        best_acc = 0.0
+
+        for epoch in range(max_epochs):
+            self.model.train()
+            idx = torch.randperm(len(train_states))
+            epoch_loss = 0.0
+            n_batches = 0
+
+            for start in range(0, len(train_states), batch_size):
+                batch_idx = idx[start : start + batch_size]
+                states = train_states[batch_idx].to(self.device)
+                labels = train_labels[batch_idx].float().to(self.device)
+
+                logits = self.model(states)
+                loss = self.loss_fn(logits, labels)
+
+                self.optimizer.zero_grad()
+                loss.backward()
+                self.optimizer.step()
+                epoch_loss += loss.item()
+                n_batches += 1
+
+            # Validation
+            if (epoch + 1) % 10 == 0:
+                acc = self._evaluate(val_states, val_labels)
+                log.info(
+                    "MLP epoch %d/%d  loss=%.4f  val_acc=%.4f",
+                    epoch + 1,
+                    max_epochs,
+                    epoch_loss / max(n_batches, 1),
+                    acc,
+                )
+                if acc > best_acc:
+                    best_acc = acc
+
+        return best_acc
+
+    def _evaluate(self, states: torch.Tensor, labels: torch.Tensor) -> float:
+        self.model.eval()
+        with torch.no_grad():
+            logits = self.model(states.to(self.device))
+            preds = (logits > 0).long()
+            correct = (preds == labels.to(self.device)).sum().item()
+        return correct / len(labels)
+
+    def state_dict(self) -> dict:
+        return {"model": self.model.state_dict()}
+
+    def fuse(self, state_features: np.ndarray) -> int:
+        self.model.eval()
+        with torch.no_grad():
+            t = torch.tensor(state_features, dtype=torch.float32).unsqueeze(0).to(self.device)
+            logit = self.model(t)
+            return 1 if logit.item() > 0 else 0
+
+
+# ---------------------------------------------------------------------------
+# Weighted Average Fusion Agent
+# ---------------------------------------------------------------------------
+
+
+class WeightedAvgFusionAgent(FusionAgent):
+    """Simplest baseline: learns a single scalar alpha per model.
+
+    If this matches DQN's F1, the RL approach is unjustified.
+    Fusion: score = (1 - sigmoid(w)) * vgae_conf + sigmoid(w) * gat_conf
+    """
+
+    def __init__(self, device: str = "cpu"):
+        self.device = device
+        self.weight = nn.Parameter(torch.zeros(1, device=device))
+        self.optimizer = optim.Adam([self.weight], lr=0.01)
+        self.loss_fn = nn.BCELoss()
+
+        from .registry import feature_layout
+
+        layout = feature_layout()
+        self._vgae_conf_idx = layout["vgae"][2]
+        self._gat_conf_idx = layout["gat"][2]
+
+    def train_on_cache(self, train_states, train_labels, val_states, val_labels, cfg) -> float:
+        max_epochs = cfg.fusion.mlp_max_epochs
+        best_acc = 0.0
+
+        for epoch in range(max_epochs):
+            alpha = torch.sigmoid(self.weight)
+            vgae_conf = train_states[:, self._vgae_conf_idx].to(self.device)
+            gat_conf = train_states[:, self._gat_conf_idx].to(self.device)
+            scores = (1 - alpha) * vgae_conf + alpha * gat_conf
+            scores = torch.clamp(scores, 1e-7, 1 - 1e-7)
+            labels = train_labels.float().to(self.device)
+
+            loss = self.loss_fn(scores, labels)
+            self.optimizer.zero_grad()
+            loss.backward()
+            self.optimizer.step()
+
+            if (epoch + 1) % 10 == 0:
+                acc = self._evaluate(val_states, val_labels)
+                a = torch.sigmoid(self.weight).item()
+                log.info(
+                    "WeightedAvg epoch %d/%d  loss=%.4f  val_acc=%.4f  alpha=%.3f",
+                    epoch + 1,
+                    max_epochs,
+                    loss.item(),
+                    acc,
+                    a,
+                )
+                if acc > best_acc:
+                    best_acc = acc
+
+        return best_acc
+
+    def _evaluate(self, states: torch.Tensor, labels: torch.Tensor) -> float:
+        with torch.no_grad():
+            alpha = torch.sigmoid(self.weight)
+            vgae_conf = states[:, self._vgae_conf_idx].to(self.device)
+            gat_conf = states[:, self._gat_conf_idx].to(self.device)
+            scores = (1 - alpha) * vgae_conf + alpha * gat_conf
+            preds = (scores > 0.5).long()
+            correct = (preds == labels.to(self.device)).sum().item()
+        return correct / len(labels)
+
+    def state_dict(self) -> dict:
+        return {"weight": self.weight.detach().cpu(), "alpha": torch.sigmoid(self.weight).item()}
+
+    def fuse(self, state_features: np.ndarray) -> int:
+        with torch.no_grad():
+            alpha = torch.sigmoid(self.weight).item()
+            vgae_conf = state_features[self._vgae_conf_idx]
+            gat_conf = state_features[self._gat_conf_idx]
+            score = (1 - alpha) * vgae_conf + alpha * gat_conf
+            return 1 if score > 0.5 else 0

@@ -32,7 +32,7 @@ PyTorch version ←→ PyG extension wheels (torch-scatter, torch-sparse, torch-
 | torch-sparse | 0.6.18+pt28cu126 | same flat index |
 | torch-cluster | 1.6.3+pt28cu126 | same flat index |
 | torch-geometric | 2.7.0 | PyPI |
-| RAPIDS (optional) | 24.12+ | Separate conda env (no pip wheels) |
+| RAPIDS | Not integrated — removed. Single uv env. |
 
 ## How to Upgrade Torch
 

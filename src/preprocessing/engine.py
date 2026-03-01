@@ -10,6 +10,7 @@ Phase 3.3: Edge and node feature computation is fully vectorized using
 ``np.unique(return_inverse=True)`` + ``np.add.at`` scatter operations,
 replacing the O(E×W) and O(N×W) Python loops.
 """
+
 from __future__ import annotations
 
 import logging
@@ -93,24 +94,33 @@ class GraphEngine:
         # Unique edges, counts, and inverse mapping for scatter ops
         edges = np.column_stack((source, target))
         unique_edges, edge_inverse, edge_counts = np.unique(
-            edges, axis=0, return_inverse=True, return_counts=True,
+            edges,
+            axis=0,
+            return_inverse=True,
+            return_counts=True,
         )
 
         # Node mapping (dense re-indexing)
         nodes = np.unique(np.concatenate((source, target)))
         node_to_idx = {node: idx for idx, node in enumerate(nodes)}
 
-        edge_index = np.array(
-            [[node_to_idx[src], node_to_idx[tgt]] for src, tgt in unique_edges]
-        ).T
+        edge_index = np.array([[node_to_idx[src], node_to_idx[tgt]] for src, tgt in unique_edges]).T
         edge_index = torch.tensor(edge_index, dtype=torch.long)
 
         # Features (vectorized)
         edge_features = self._compute_edge_features_vectorized(
-            window, source, target, unique_edges, edge_counts, edge_inverse, nodes,
+            window,
+            source,
+            target,
+            unique_edges,
+            edge_counts,
+            edge_inverse,
+            nodes,
         )
         node_features = self._compute_node_features_vectorized(
-            window, nodes, source,
+            window,
+            nodes,
+            source,
         )
 
         edge_attr = torch.tensor(edge_features, dtype=torch.float)
@@ -118,7 +128,46 @@ class GraphEngine:
         label_value = 1 if np.any(labels == 1) else 0
         y = torch.tensor(label_value, dtype=torch.long)
 
-        return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
+        data = Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
+
+        # Per-node binary labels (attack=1, normal=0) via scatter-max
+        node_to_idx = {node: idx for idx, node in enumerate(nodes)}
+        num_nodes = len(nodes)
+        node_labels = np.zeros(num_nodes, dtype=np.int64)
+        for row_idx in range(len(source)):
+            nidx = node_to_idx[source[row_idx]]
+            if labels[row_idx] == 1:
+                node_labels[nidx] = 1
+        data.node_y = torch.tensor(node_labels, dtype=torch.long)
+
+        # Attack type metadata (graph-level and per-node)
+        col_at = s.col_attack_type
+        if col_at is not None:
+            attack_types = window[:, col_at].astype(np.int64)
+            # Graph-level: dominant non-normal attack type, or 0 if all normal
+            attack_counts = np.bincount(attack_types)
+            if len(attack_counts) > 1:
+                # Zero out normal (code 0) to find dominant attack type
+                attack_counts_no_normal = attack_counts.copy()
+                attack_counts_no_normal[0] = 0
+                if attack_counts_no_normal.sum() > 0:
+                    data.attack_type = torch.tensor(
+                        int(np.argmax(attack_counts_no_normal)), dtype=torch.long
+                    )
+                else:
+                    data.attack_type = torch.tensor(0, dtype=torch.long)
+            else:
+                data.attack_type = torch.tensor(0, dtype=torch.long)
+
+            # Per-node attack type via scatter (take max code per node)
+            node_attack_type = np.zeros(num_nodes, dtype=np.int64)
+            for row_idx in range(len(source)):
+                nidx = node_to_idx[source[row_idx]]
+                if attack_types[row_idx] > node_attack_type[nidx]:
+                    node_attack_type[nidx] = attack_types[row_idx]
+            data.node_attack_type = torch.tensor(node_attack_type, dtype=torch.long)
+
+        return data
 
     def _compute_edge_features_vectorized(
         self,
@@ -196,7 +245,7 @@ class GraphEngine:
                 interval_count = np.zeros(E, dtype=np.float64)
 
                 np.add.at(interval_sum, valid_groups, valid_intervals)
-                np.add.at(interval_sq_sum, valid_groups, valid_intervals ** 2)
+                np.add.at(interval_sq_sum, valid_groups, valid_intervals**2)
                 np.add.at(interval_count, valid_groups, 1.0)
 
                 has_intervals = interval_count > 0
@@ -290,9 +339,7 @@ class GraphEngine:
         # Compute means where count > 0
         has_data = occurrence_counts > 0
         for col in range(feat_end):
-            node_features[has_data, col] = (
-                feature_sums[has_data, col] / occurrence_counts[has_data]
-            )
+            node_features[has_data, col] = feature_sums[has_data, col] / occurrence_counts[has_data]
 
         # For target-only nodes (no source occurrences), set entity_id directly
         target_only = ~has_data
@@ -309,9 +356,9 @@ class GraphEngine:
         # --- Normalized occurrence counts ---
         c_min, c_max = occurrence_counts.min(), occurrence_counts.max()
         if c_max > c_min:
-            node_features[:, -2] = (
-                (occurrence_counts - c_min) / (c_max - c_min)
-            ).astype(np.float32)
+            node_features[:, -2] = ((occurrence_counts - c_min) / (c_max - c_min)).astype(
+                np.float32
+            )
         else:
             node_features[:, -2] = occurrence_counts.astype(np.float32)
 

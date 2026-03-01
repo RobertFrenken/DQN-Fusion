@@ -24,6 +24,7 @@ hcrl_ch:
     - "test_02_fuzzing"
     - "test_03_gear_spoofing"
     - "test_04_rpm_spoofing"
+  attack_types: [dos, fuzzing, gear_spoofing, rpm_spoofing]
   added_by: "rf15"
 
 hcrl_sa:
@@ -44,6 +45,7 @@ hcrl_sa:
     - "test_02_unknown_vehicle_known_attack"
     - "test_03_known_vehicle_unknown_attack"
     - "test_04_unknown_vehicle_unknown_attack"
+  attack_types: [mixed]
   added_by: "rf15"
 
 set_01:
@@ -66,6 +68,7 @@ set_01:
     - "test_04_unknown_vehicle_unknown_attack"
     - "test_05_suppress"
     - "test_06_masquerade"
+  attack_types: [mixed, suppress, masquerade]
   added_by: "rf15"
 
 set_02:
@@ -88,6 +91,7 @@ set_02:
     - "test_04_unknown_vehicle_unknown_attack"
     - "test_05_suppress"
     - "test_06_masquerade"
+  attack_types: [mixed, suppress, masquerade]
   added_by: "rf15"
 
 set_03:
@@ -110,6 +114,7 @@ set_03:
     - "test_04_unknown_vehicle_unknown_attack"
     - "test_05_suppress"
     - "test_06_masquerade"
+  attack_types: [mixed, suppress, masquerade]
   added_by: "rf15"
 
 set_04:
@@ -132,4 +137,5 @@ set_04:
     - "test_04_unknown_vehicle_unknown_attack"
     - "test_05_suppress"
     - "test_06_masquerade"
+  attack_types: [mixed, suppress, masquerade]
   added_by: "rf15"

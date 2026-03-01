@@ -1,6 +1,6 @@
 # Current State
 
-**Date**: 2026-02-25
+**Date**: 2026-03-01
 **Branch**: `main`
 
 ## Ecosystem Status
@@ -10,107 +10,56 @@
 | Component | Details |
 |-----------|---------|
 | **Config system** | Pydantic v2 frozen models + YAML composition. `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`. 6 datasets in `config/datasets.yaml`. |
-| **Training pipeline** | All 72 runs complete (6 datasets × 12 configs: 3 stages × {large, small, small+KD}). CLI: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>` |
+| **Training pipeline** | 72 legacy validation runs archived to `data/datalake_archive/`. CLI: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>` |
 | **Ray orchestration** | `train_pipeline()` and `eval_pipeline()` via Ray remote tasks + SLURM. `--local` flag for Ray local mode. Subprocess-per-stage dispatch (intentional — CUDA context isolation). `small_nokd` runs concurrently with `large`. Benchmark mode via `KD_GAT_BENCHMARK=1`. |
 | **SLURM integration** | Pitzer cluster. GPU (2x V100 per node, 362GB RAM, PAS3209) + CPU partitions. |
 | **Graph caching** | All 6 datasets cached with test scenarios (`processed_graphs.pt` + `test_*.pt`). DynamicBatchSampler for variable-size graphs. |
 | **DVC tracking** | Raw data + cache tracked. S3 remote + local scratch remote configured. |
-| **Export pipeline** | 8 lightweight exporters (~2s, login node safe) → `reports/data/`: leaderboard, runs, metrics, metric catalog, datasets, KD transfer, training curves, model sizes. Heavy analysis (UMAP, attention, CKA, etc.) in notebooks. |
-| **Datalake** | Parquet-based structured storage in `data/datalake/` (runs, metrics, configs, artifacts, training curves). DuckDB analytics views. S3 backup via `aws s3 sync` in SLURM epilog. |
+| **Export pipeline** | 8 lightweight exporters (~2s, login node safe) → `reports/data/`. Heavy analysis in notebooks. |
+| **Datalake** | Parquet-based structured storage in `data/datalake/` (runs, metrics, configs, artifacts, training curves). DuckDB analytics views. S3 backup via SLURM epilog. |
 | **Quarto site** | Dashboard + paper + slides rendered via Quarto. Auto-deployed to GitHub Pages via GitHub Actions on push to main. |
-| **Test suite** | 108 tests (88 passed, 20 skipped). All passing on CPU fallback after RAPIDS integration. |
+| **Test suite** | 108 tests (88 passed, 20 skipped). All passing on CPU fallback. |
 | **CI/CD** | GitHub Actions CI: lint → test → quarto-build → deploy (Actions-based Pages). All 4 jobs green. |
 
 ### Partially Working (Yellow)
 
 | Component | Issue |
 |-----------|-------|
-| **W&B tracking** | 77 online runs; offline runs may need sync. Run `wandb sync wandb/offline-run-*`. |
-| **RAPIDS GPU acceleration** | Phase 1 integrated (cuML PCA/UMAP/TSNE in export, cudf.pandas in preprocessing). Fallback to CPU verified. Needs `gnn-rapids` conda env setup (`bash scripts/setup_rapids_env.sh`) and GPU partition testing. |
+| **W&B tracking** | 77 online runs; 3 offline runs moved to `data/datalake_archive/wandb/`. |
 | **Paper figures** | Mosaic figures deployed with vgplot@0.21.1 CDN. Paper chapters use `{{< include _setup.qmd >}}` for OJS init. Pending runtime verification in browser. |
-| **Inference server** | `pipeline/serve.py` exists (`/predict`, `/health`). Untested with current 72-run checkpoints. |
+| **Inference server** | `pipeline/serve.py` exists (`/predict`, `/health`). Untested with current checkpoints. |
 
-### Missing (Gray)
+### Not Integrated
 
-| Component | Impact |
+| Component | Status |
 |-----------|--------|
-| **gnn-rapids conda env** | Setup script exists but env not yet created. Run `bash scripts/setup_rapids_env.sh` on a GPU node. |
-| **RAPIDS Phase 2** | Vectorized `safe_hex_to_int()` (currently falls back to CPU under cudf.pandas due to `.apply()` with Python control flow). |
+| **RAPIDS GPU acceleration** | Removed. pip wheels conflict with PyTorch cu128 + PyG cu126. Single uv env is the answer. |
 
-## RAPIDS Integration (Phase 1)
+## Next Phase: Research Platform
 
-Added 2026-02-20 (`a2cdcc2`). Zero-code-change GPU acceleration with CPU fallback:
+The codebase is transitioning from validation (72 runs, binary classification) to a research platform with expanded scope:
 
-| File | Change |
-|------|--------|
-| `config/constants.py` | `RAPIDS_AVAILABLE` flag (try import cuml) |
-| `pipeline/export.py` | cuML PCA/UMAP/TSNE with sklearn fallback in `_reduce_embeddings()` |
-| `src/preprocessing/preprocessing.py` | `cudf.pandas.install()` at module level for transparent DataFrame acceleration |
-| `pyproject.toml` | `[project.optional-dependencies] rapids = [cudf-cu12, cuml-cu12, cupy-cuda12x]` |
-| `scripts/setup_rapids_env.sh` | New: creates `gnn-rapids` conda env (RAPIDS 24.12 + CUDA 12.4) |
-| `scripts/preprocess_gpu_slurm.sh` | New: GPU preprocessing SLURM script |
-| `pipeline/export.py` | RAPIDS cuML PCA/UMAP/TSNE with sklearn fallback in `_reduce_embeddings()` |
+- **Data-driven Ray DAG** — Config-driven stage chain replaces hardcoded 3-variant functions (Phase 2)
+- **Attack-type metadata** — Graphs carry attack-type labels as metadata for future node-level classification (Phase 3)
+- **Pluggable fusion** — DQN, MLP, and weighted average fusion methods selectable via config (Phase 4)
+- **Resource tracking** — Every run self-documents wall-clock time, GPU peak memory, SLURM job ID (Phase 5)
+- **Profiling jobs** — Orchestration benchmark + conv_type profiling to close cuGraph decision gate (Phase 6)
 
-## Experiment Runs
+## Archived Legacy Runs
 
-All 6 datasets × 12 configs = 72 runs on disk in `experimentruns/`:
+72 validation runs (6 datasets × 12 configs) archived to `data/datalake_archive/`:
+- `runs.parquet`, `metrics.parquet`, `configs.parquet`, `artifacts.parquet`
+- `training_curves/` (36 Parquet files)
+- `artifacts/` (5 subdirs: attention_weights, cka_similarity, dqn_policy, embeddings, recon_errors)
+- `wandb/` (3 offline runs)
+
+Run directories remain in `experimentruns/` (2.7 GB). New runs will write to `data/datalake/` (fresh).
 
 **Per dataset (12 runs each):**
 - `vgae_{large,small,small_kd}_autoencoder` (3 VGAE)
 - `gat_{large,small,small_kd}_curriculum` (3 GAT)
 - `dqn_{large,small,small_kd}_fusion` (3 DQN)
 - `eval_{large,small,small_kd}_evaluation` (3 Eval)
-
-**Eval artifacts per run:** `metrics.json`, `config.json`, `embeddings.npz`, `dqn_policy.json`, `attention_weights.npz`, `explanations.npz` (when `run_explainer=True`)
-
-| Dataset | Runs | Eval Artifacts |
-|---------|------|----------------|
-| hcrl_ch | 12 | metrics + embeddings + policy + attention |
-| hcrl_sa | 12 | metrics + embeddings + policy + attention |
-| set_01  | 12 | metrics + embeddings + policy + attention |
-| set_02  | 12 | metrics + embeddings + policy + attention |
-| set_03  | 12 | metrics + embeddings + policy + attention |
-| set_04  | 12 | metrics + embeddings + policy + attention |
-
-## Recently Completed
-
-- **Pipeline evolution plan complete** (2026-02-25):
-  - WS1 (Prefect cleanup): All stale Prefect/Dask/Snakemake references removed. `.snakemake/` deleted.
-  - WS2 (Orchestration research): Decision document at `~/plans/orchestration-redesign-decision.md`. Concurrent `small_nokd` variant refactored. Benchmark instrumentation added. R1 benchmark submitted (job 44398773). R2 pending R1 results.
-  - WS3 (Datalake consolidation): All 6 phases complete — migration script, Parquet writes, analytics views, export integration, CLI registration, documentation.
-  - Cleanup: ECOSYSTEM.md Diagram 5 fixed (path + datalake). 5 stale git stashes dropped. `.claude/settings.local.json` cleaned.
-- **Paper OJS include fix** (2026-02-27):
-  - `include-before-body` in `_metadata.yml` was inserting `_setup.qmd` as raw HTML — OJS cells never compiled, causing "vg is not defined" in all paper chapters
-  - Replaced with `{{< include _setup.qmd >}}` shortcode in chapters 04, 05, 06, 08, 10
-  - Added `echo: false` to `_setup.qmd` so setup code is invisible in rendered output
-  - Added error handling + Proxy fallback to `mosaic-setup.js` for actionable runtime errors
-- **Mosaic vgplot API rewrite** (2026-02-26):
-  - All `vg.plot()` calls in `dashboard.qmd` (10) and `paper/08-explainability.qmd` (6) rewritten from broken options-object pattern to correct v0.21.1 function-call directive pattern
-  - Fixed `vg.binX()` (never existed in Mosaic) → `vg.bin()`/`vg.count()`
-  - Fixed VARCHAR timestamp subtraction with `CAST(... AS TIMESTAMP)`
-  - Added `scrolling: true` to dashboard to fix squished layout
-  - Report data Parquet files (~5 MB) committed to git for deployment
-- **CI deploy fix** (2026-02-26):
-  - Fixed vgplot CDN: `@uwdata/vgplot@0.11.1` (404) → `@0.21.1` across 4 files
-  - Switched GitHub Pages from legacy Jekyll (`docs/`) to Actions-based deployment (`upload-pages-artifact` + `deploy-pages`)
-  - Converted paper `{python}` table blocks to native Quarto markdown tables (removes Jupyter CI dependency)
-  - Cleaned 10 ruff F401 unused import violations across 7 files
-  - All 4 CI jobs green: lint, test, quarto-build, deploy
-- **Quarto migration complete** (2026-02-25):
-  - Deleted legacy D3 dashboard (`docs/dashboard/`), old stub chapters, export scripts
-  - Ported 9 interactive Mosaic figures from `dashboard.qmd` into paper chapters
-  - Updated CI: removed js-syntax + docs-site-build jobs, added quarto-build + deploy
-  - Navbar now points to `paper/` chapters. Landing page (`index.qmd`) updated.
-- **Phase 5: Advanced Enhancements** (2026-02-23):
-  - 5.1 GNNExplainer integration (`src/explain.py`, evaluation wiring, export, dashboard panel)
-  - 5.4 Trial-based batch size auto-tuning (binary search in `pipeline/memory.py`)
-  - 5.3 cuGraph decision gate Phase A (profiling scripts + `scripts/analyze_profile.py`)
-  - 5.2 Temporal graph classification (`TemporalGrouper`, `TemporalGraphClassifier`, `train_temporal` stage)
-- **RAPIDS Phase 1** (2026-02-20): GPU-accelerated dimensionality reduction + preprocessing with CPU fallback. 108 tests passing.
-- **Dashboard rework** (2026-02-17/18): S3 data source migration, embedding panel fix, timestamp support, color theme update
-- **Export bug fixes** (2026-02-18): `_scan_runs` config.json parsing, `training_curves` index.json generation
-- **PR #2 merged** (2026-02-18): Full platform migration from Snakemake/SQLite to W&B/Ray/S3
-- **72 training runs complete** across 6 datasets × 12 configurations
 
 ## Data Flow
 
@@ -119,7 +68,7 @@ Raw CAN CSVs (6 datasets, 10.8 GB, DVC)
   → Graph Cache (processed_graphs.pt + test_*.pt, DVC)
     → Training Pipeline (VGAE → GAT → DQN, large + small + small-KD)
       → Evaluation (metrics + embeddings + attention + policy)
-        → W&B (77 online) | Datalake (Parquet) | experimentruns/ (72 on disk)
+        → W&B (77 online) | Datalake (Parquet) | experimentruns/ (on disk)
           → Export Pipeline (8 lightweight exporters → reports/data/)
             → Quarto Site (dashboard + paper + slides)
               → GitHub Pages (auto-deploy via GitHub Actions on push to main)
@@ -132,4 +81,3 @@ Raw CAN CSVs (6 datasets, 10.8 GB, DVC)
 - **Ray temp**: `/fs/scratch/PAS1266/.ray/`
 - **W&B**: Project `kd-gat` (offline on compute nodes, sync later)
 - **Reports**: `reports/` (Quarto site — auto-deployed to GitHub Pages)
-- **Conda**: `gnn-rapids` (GPU, not yet created — for RAPIDS only)

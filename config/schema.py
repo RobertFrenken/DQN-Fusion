@@ -3,6 +3,7 @@
 One frozen BaseModel per concern. Nested composition. Declarative validation.
 JSON serialization via model_dump_json / model_validate_json.
 """
+
 from __future__ import annotations
 
 import json
@@ -48,6 +49,7 @@ class DQNArchitecture(BaseModel, frozen=True):
 
 class AuxiliaryConfig(BaseModel, frozen=True):
     """One auxiliary loss modifier (KD, PINN, etc.). Flat with defaults."""
+
     type: Literal["kd"] = "kd"  # Extend Literal as new auxiliaries are added
     model_path: str = ""
     alpha: float = Field(0.7, ge=0, le=1)
@@ -104,6 +106,7 @@ class TrainingConfig(BaseModel, frozen=True):
 
 
 class FusionConfig(BaseModel, frozen=True):
+    method: Literal["dqn", "mlp", "weighted_avg"] = "dqn"
     episodes: int = Field(500, ge=1)
     max_samples: int = Field(150_000, ge=1)
     max_val_samples: int = Field(30_000, ge=1)
@@ -112,6 +115,9 @@ class FusionConfig(BaseModel, frozen=True):
     gpu_training_steps: int = Field(16, ge=1)
     lr: float = Field(0.001, gt=0)
     alpha_steps: int = Field(21, ge=1)
+    # MLP-specific
+    mlp_hidden_dims: tuple[int, ...] = (64, 32)
+    mlp_max_epochs: int = Field(100, ge=1)
 
 
 class PreprocessingConfig(BaseModel, frozen=True):
@@ -128,6 +134,18 @@ class TemporalConfig(BaseModel, frozen=True):
     temporal_layers: int = Field(2, ge=1)
     freeze_spatial: bool = True
     spatial_lr_factor: float = Field(0.1, gt=0, le=1.0)
+
+
+class VariantConfig(BaseModel, frozen=True):
+    """A pipeline variant (e.g. large teacher, small KD, small ablation)."""
+
+    name: str
+    scale: str = "large"
+    auxiliaries: str = "none"
+    needs_teacher: bool = False
+    stages: list[str] = Field(
+        default=["autoencoder", "curriculum", "fusion", "evaluation"],
+    )
 
 
 class PipelineConfig(BaseModel, frozen=True):
@@ -150,6 +168,20 @@ class PipelineConfig(BaseModel, frozen=True):
     fusion: FusionConfig = FusionConfig()
     preprocessing: PreprocessingConfig = PreprocessingConfig()
     temporal: TemporalConfig = TemporalConfig()
+
+    # --- Pipeline DAG ---
+    stages: list[str] = Field(
+        default=["autoencoder", "curriculum", "fusion", "evaluation"],
+    )
+    variants: list[VariantConfig] = Field(
+        default=[
+            VariantConfig(name="large", scale="large", needs_teacher=False),
+            VariantConfig(
+                name="small_kd", scale="small", auxiliaries="kd_standard", needs_teacher=True
+            ),
+            VariantConfig(name="small_nokd", scale="small", needs_teacher=False),
+        ]
+    )
 
     # --- Infrastructure ---
     schema_version: str = "1.0.0"
@@ -248,17 +280,30 @@ class PipelineConfig(BaseModel, frozen=True):
                 pass  # handled below
             elif k == "modality":
                 pass  # dropped (no longer in schema)
-            elif k in {"dataset", "model_type", "scale", "seed",
-                        "experiment_root", "device", "num_workers",
-                        "mp_start_method", "run_test"}:
+            elif k in {
+                "dataset",
+                "model_type",
+                "scale",
+                "seed",
+                "experiment_root",
+                "device",
+                "num_workers",
+                "mp_start_method",
+                "run_test",
+            }:
                 nested[k] = v
             else:
                 # Remaining training fields not caught above
                 if k in training_field_names:
                     training[k] = v
                 # Fusion fields without prefix (from old flat format)
-                elif k in {"episode_sample_size", "training_step_interval",
-                            "gpu_training_steps", "max_val_samples", "alpha_steps"}:
+                elif k in {
+                    "episode_sample_size",
+                    "training_step_interval",
+                    "gpu_training_steps",
+                    "max_val_samples",
+                    "alpha_steps",
+                }:
                     fusion[k] = v
 
         # Map old fusion_ prefix fields
@@ -274,29 +319,64 @@ class PipelineConfig(BaseModel, frozen=True):
                 if f in src and f not in dest:
                     dest[f] = src[f]
 
-        _migrate_fields(flat, training, (
-            "curriculum_start_ratio", "curriculum_end_ratio",
-            "difficulty_percentile", "use_vgae_mining",
-            "difficulty_cache_update", "curriculum_memory_multiplier",
-            "log_teacher_student_comparison",
-        ))
-        _migrate_fields(flat, training, (
-            "use_scheduler", "scheduler_type", "scheduler_t_max",
-            "scheduler_step_size", "scheduler_gamma",
-        ))
-        _migrate_fields(flat, training, (
-            "gradient_checkpointing", "use_teacher_cache",
-            "clear_cache_every_n", "offload_teacher_to_cpu",
-            "optimize_batch_size", "safety_factor",
-            "memory_estimation", "accumulate_grad_batches",
-            "save_top_k", "monitor_metric", "monitor_mode",
-            "log_every_n_steps", "test_every_n_epochs",
-            "deterministic", "cudnn_benchmark",
-        ))
-        _migrate_fields(flat, training, (
-            "lr", "max_epochs", "batch_size", "patience",
-            "weight_decay", "gradient_clip", "precision",
-        ))
+        _migrate_fields(
+            flat,
+            training,
+            (
+                "curriculum_start_ratio",
+                "curriculum_end_ratio",
+                "difficulty_percentile",
+                "use_vgae_mining",
+                "difficulty_cache_update",
+                "curriculum_memory_multiplier",
+                "log_teacher_student_comparison",
+            ),
+        )
+        _migrate_fields(
+            flat,
+            training,
+            (
+                "use_scheduler",
+                "scheduler_type",
+                "scheduler_t_max",
+                "scheduler_step_size",
+                "scheduler_gamma",
+            ),
+        )
+        _migrate_fields(
+            flat,
+            training,
+            (
+                "gradient_checkpointing",
+                "use_teacher_cache",
+                "clear_cache_every_n",
+                "offload_teacher_to_cpu",
+                "optimize_batch_size",
+                "safety_factor",
+                "memory_estimation",
+                "accumulate_grad_batches",
+                "save_top_k",
+                "monitor_metric",
+                "monitor_mode",
+                "log_every_n_steps",
+                "test_every_n_epochs",
+                "deterministic",
+                "cudnn_benchmark",
+            ),
+        )
+        _migrate_fields(
+            flat,
+            training,
+            (
+                "lr",
+                "max_epochs",
+                "batch_size",
+                "patience",
+                "weight_decay",
+                "gradient_clip",
+                "precision",
+            ),
+        )
 
         if vgae:
             nested["vgae"] = vgae

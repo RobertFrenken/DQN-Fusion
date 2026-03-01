@@ -11,7 +11,10 @@ Column layout (order matters for numpy conversion):
     source_id      – dense integer ID of the edge source node
     target_id      – dense integer ID of the edge target node
     label          – binary label (0=normal, 1=attack)
+    attack_type    – integer-coded attack type (0=normal, 1+=attack subtypes)
+                     Optional: only present when include_attack_type=True
 """
+
 from __future__ import annotations
 
 import logging
@@ -27,6 +30,7 @@ COL_ENTITY_ID = "entity_id"
 COL_SOURCE_ID = "source_id"
 COL_TARGET_ID = "target_id"
 COL_LABEL = "label"
+COL_ATTACK_TYPE = "attack_type"
 
 
 def feature_columns(n: int) -> list[str]:
@@ -42,15 +46,20 @@ class IRSchema:
     ----------
     num_features : int
         Number of continuous feature columns (``feature_0`` … ``feature_{n-1}``).
+    include_attack_type : bool
+        If True, include an ``attack_type`` column after ``label``.
     """
 
     num_features: int
+    include_attack_type: bool = False
     _required_prefix: list[str] = field(init=False, repr=False)
     _required_suffix: list[str] = field(init=False, repr=False)
 
     def __post_init__(self):
         prefix = [COL_ENTITY_ID] + feature_columns(self.num_features)
         suffix = [COL_SOURCE_ID, COL_TARGET_ID, COL_LABEL]
+        if self.include_attack_type:
+            suffix.append(COL_ATTACK_TYPE)
         object.__setattr__(self, "_required_prefix", prefix)
         object.__setattr__(self, "_required_suffix", suffix)
 
@@ -79,6 +88,13 @@ class IRSchema:
     def col_label(self) -> int:
         """Numpy column index for label."""
         return len(self._required_prefix) + 2
+
+    @property
+    def col_attack_type(self) -> int | None:
+        """Numpy column index for attack_type, or None if not included."""
+        if not self.include_attack_type:
+            return None
+        return len(self._required_prefix) + 3
 
     def validate(self, df: pd.DataFrame, *, strict: bool = True) -> pd.DataFrame:
         """Validate that *df* conforms to the IR schema.
@@ -112,9 +128,7 @@ class IRSchema:
             if extra:
                 errors.append(f"Unexpected columns: {sorted(extra)}")
             if not missing and not extra:
-                errors.append(
-                    f"Column order mismatch: expected {expected}, got {list(df.columns)}"
-                )
+                errors.append(f"Column order mismatch: expected {expected}, got {list(df.columns)}")
 
         if errors:
             msg = "IR schema validation failed:\n  " + "\n  ".join(errors)
@@ -153,6 +167,9 @@ class IRSchema:
 
 # Default schema for the CAN bus domain (8 data bytes → 8 features)
 CAN_BUS_SCHEMA = IRSchema(num_features=8)
+
+# CAN bus schema with attack type metadata
+CAN_BUS_SCHEMA_WITH_ATTACK_TYPE = IRSchema(num_features=8, include_attack_type=True)
 
 # Default schema for network flow domain (35 flow features)
 NETWORK_FLOW_SCHEMA = IRSchema(num_features=35)

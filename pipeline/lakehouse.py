@@ -8,6 +8,7 @@ Downstream consumption:
     duckdb -c "SELECT * FROM 'data/datalake/runs.parquet'"
     duckdb data/datalake/analytics.duckdb  # pre-built views
 """
+
 from __future__ import annotations
 
 import logging
@@ -20,14 +21,24 @@ _DATALAKE_ROOT = Path("data/datalake")
 
 # Core metrics to extract from nested metrics.json
 _CORE_METRIC_COLS = [
-    "accuracy", "precision", "recall", "f1", "specificity",
-    "balanced_accuracy", "mcc", "fpr", "fnr", "auc", "n_samples",
+    "accuracy",
+    "precision",
+    "recall",
+    "f1",
+    "specificity",
+    "balanced_accuracy",
+    "mcc",
+    "fpr",
+    "fnr",
+    "auc",
+    "n_samples",
 ]
 
 
 # ---------------------------------------------------------------------------
 # Parquet datalake writes (primary)
 # ---------------------------------------------------------------------------
+
 
 def _append_to_datalake(
     run_id: str,
@@ -39,6 +50,14 @@ def _append_to_datalake(
     metrics: dict | None,
     success: bool,
     failure_reason: str | None,
+    *,
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    duration_seconds: float | None = None,
+    peak_gpu_mb: float | None = None,
+    slurm_job_id: str | None = None,
+    gpu_name: str | None = None,
+    batch_size_used: int | None = None,
 ) -> bool:
     """Append run + metrics to datalake Parquet files via DuckDB."""
     try:
@@ -57,15 +76,35 @@ def _append_to_datalake(
         con = duckdb.connect()
 
         # Upsert run record
-        con.execute(f"""
+        con.execute(
+            f"""
             INSERT INTO '{datalake}/runs.parquet'
             BY NAME (SELECT
                 ? AS run_id, ? AS dataset, ? AS model_type, ? AS scale,
                 ? AS stage, ? AS has_kd, '' AS auxiliaries, ? AS success,
-                ? AS completed_at, ? AS started_at, NULL AS duration_seconds,
+                ? AS completed_at, ? AS started_at, ? AS duration_seconds,
+                ? AS peak_gpu_mb, ? AS slurm_job_id, ? AS gpu_name,
+                ? AS batch_size_used,
                 NULL AS data_version, NULL AS wandb_run_id, 'pipeline' AS source
             )
-        """, [run_id, dataset, model_type, scale, stage, has_kd, success, now, now])
+        """,
+            [
+                run_id,
+                dataset,
+                model_type,
+                scale,
+                stage,
+                has_kd,
+                success,
+                completed_at or now,
+                started_at or now,
+                duration_seconds,
+                peak_gpu_mb,
+                slurm_job_id,
+                gpu_name,
+                batch_size_used,
+            ],
+        )
 
         # Append metrics if evaluation stage
         if metrics:
@@ -145,6 +184,7 @@ def register_artifacts(run_id: str, run_dir: Path) -> bool:
 # Public API
 # ---------------------------------------------------------------------------
 
+
 def sync_to_lakehouse(
     run_id: str,
     dataset: str,
@@ -155,6 +195,14 @@ def sync_to_lakehouse(
     metrics: dict | None = None,
     success: bool = True,
     failure_reason: str | None = None,
+    *,
+    started_at: str | None = None,
+    completed_at: str | None = None,
+    duration_seconds: float | None = None,
+    peak_gpu_mb: float | None = None,
+    slurm_job_id: str | None = None,
+    gpu_name: str | None = None,
+    batch_size_used: int | None = None,
 ) -> bool:
     """Append run results to datalake (Parquet). Returns True on success.
 
@@ -163,6 +211,20 @@ def sync_to_lakehouse(
     never fail because of a lakehouse sync issue.
     """
     return _append_to_datalake(
-        run_id, dataset, model_type, scale, stage, has_kd,
-        metrics, success, failure_reason,
+        run_id,
+        dataset,
+        model_type,
+        scale,
+        stage,
+        has_kd,
+        metrics,
+        success,
+        failure_reason,
+        started_at=started_at,
+        completed_at=completed_at,
+        duration_seconds=duration_seconds,
+        peak_gpu_mb=peak_gpu_mb,
+        slurm_job_id=slurm_job_id,
+        gpu_name=gpu_name,
+        batch_size_used=batch_size_used,
     )
