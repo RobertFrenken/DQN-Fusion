@@ -15,8 +15,8 @@
 # GPU idle gaps, and per-stage wall times.
 #
 # Usage:
-#   sbatch scripts/benchmark_orchestration.sh
-#   sbatch scripts/benchmark_orchestration.sh hcrl_ch   # smaller dataset
+#   sbatch scripts/profiling/benchmark_orchestration.sh
+#   sbatch scripts/profiling/benchmark_orchestration.sh hcrl_ch   # smaller dataset
 #
 # Produces benchmark_timing.jsonl with per-stage JSONL records.
 # Phase R2 analysis is pending R1 benchmark data from this script.
@@ -37,7 +37,7 @@ source .env
 set +a
 
 # Stage data to fast storage
-source scripts/stage_data.sh --cache
+source scripts/data/stage_data.sh --cache
 
 # --- Benchmark config ---
 DATASET="${1:-hcrl_ch}"
@@ -108,4 +108,4 @@ print(f'Stages: {len(records)}')
 fi
 
 # --- Post-job ---
-source scripts/job_epilog.sh
+source scripts/slurm/job_epilog.sh

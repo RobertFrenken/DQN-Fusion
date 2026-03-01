@@ -5,9 +5,9 @@ Standalone script — not part of the main pipeline. Requires the `baselines`
 optional dependency group: ``uv pip install -e ".[baselines]"``
 
 Usage:
-    python scripts/run_pygod_baselines.py --dataset hcrl_sa
-    python scripts/run_pygod_baselines.py --dataset hcrl_sa --models dominant,ocgnn
-    python scripts/run_pygod_baselines.py --dataset hcrl_sa --wandb
+    python scripts/profiling/run_pygod_baselines.py --dataset hcrl_sa
+    python scripts/profiling/run_pygod_baselines.py --dataset hcrl_sa --models dominant,ocgnn
+    python scripts/profiling/run_pygod_baselines.py --dataset hcrl_sa --wandb
 """
 from __future__ import annotations
 

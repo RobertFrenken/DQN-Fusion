@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Submit each test file as a separate SLURM job for parallel execution.
-# Usage: bash scripts/run_tests_parallel.sh [extra pytest args]
+# Usage: bash scripts/slurm/run_tests_parallel.sh [extra pytest args]
 set -euo pipefail
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 mkdir -p "$PROJECT_DIR/slurm_logs"

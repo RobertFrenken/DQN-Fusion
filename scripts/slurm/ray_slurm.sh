@@ -14,11 +14,11 @@
 # Ray-based pipeline execution on SLURM.
 #
 # For single-node (default):
-#   sbatch scripts/ray_slurm.sh flow --dataset hcrl_sa
-#   sbatch scripts/ray_slurm.sh autoencoder --model vgae --scale large --dataset hcrl_sa
+#   sbatch scripts/slurm/ray_slurm.sh flow --dataset hcrl_sa
+#   sbatch scripts/slurm/ray_slurm.sh autoencoder --model vgae --scale large --dataset hcrl_sa
 #
 # For multi-node (pass extra #SBATCH --nodes=N):
-#   sbatch --nodes=2 scripts/ray_slurm.sh flow --dataset hcrl_sa
+#   sbatch --nodes=2 scripts/slurm/ray_slurm.sh flow --dataset hcrl_sa
 #
 # The script uses `ray start` on single-node jobs and `ray symmetric-run`
 # for multi-node (Ray 2.49+).
@@ -39,7 +39,7 @@ source .env
 set +a
 
 # Stage data to fast storage
-source scripts/stage_data.sh --cache
+source scripts/data/stage_data.sh --cache
 
 echo "=== Ray Pipeline ==="
 echo "Job ID:    ${SLURM_JOB_ID}"
@@ -81,9 +81,9 @@ fi
 
 # Report orphaned/failed runs (informational only)
 echo "Checking for orphaned runs..."
-bash scripts/cleanup_orphans.sh --dry-run || true
+bash scripts/data/cleanup_orphans.sh --dry-run || true
 
 # GPU utilization report
-source scripts/job_epilog.sh
+source scripts/slurm/job_epilog.sh
 
 exit $EXIT_CODE

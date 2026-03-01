@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Post-job GPU utilization report.
 # Source this at the end of SLURM job scripts:
-#   source scripts/job_epilog.sh
+#   source scripts/slurm/job_epilog.sh
 #
 # Reads nvidia-smi accounting data to report peak GPU utilization and memory.
 

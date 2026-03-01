@@ -14,8 +14,8 @@
 # Profile GAT (no edge_attr) vs TransformerConv (with edge_attr) to decide
 # whether cuGraph acceleration is worthwhile.
 #
-# Usage: sbatch scripts/profile_conv_type.sh [dataset] [scale]
-# Then:  python scripts/analyze_profile.py
+# Usage: sbatch scripts/profiling/profile_conv_type.sh [dataset] [scale]
+# Then:  python scripts/profiling/analyze_profile.py
 
 set -euo pipefail
 
@@ -57,5 +57,5 @@ python -m graphids.pipeline.cli curriculum \
     -O training.patience 999
 
 echo ""
-echo "=== Profiling complete. Run: python scripts/analyze_profile.py ==="
+echo "=== Profiling complete. Run: python scripts/profiling/analyze_profile.py ==="
 echo "Date: $(date)"

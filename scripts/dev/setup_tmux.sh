@@ -3,9 +3,9 @@
 # Each session = one WaveTerm tab. No splits — WaveTerm handles layout.
 #
 # Usage:
-#   bash scripts/setup_tmux.sh              # Create all sessions
-#   bash scripts/setup_tmux.sh -a claude    # Attach to a session
-#   bash scripts/setup_tmux.sh -l           # List sessions
+#   bash scripts/dev/setup_tmux.sh              # Create all sessions
+#   bash scripts/dev/setup_tmux.sh -a claude    # Attach to a session
+#   bash scripts/dev/setup_tmux.sh -l           # List sessions
 set -euo pipefail
 
 PROJECT_ROOT="/users/PAS2022/rf15/KD-GAT"

@@ -2,7 +2,7 @@
 """Generate cartesian product of CLI commands for hyperparameter sweeps.
 
 Usage:
-    python scripts/generate_sweep.py \
+    python scripts/dev/generate_sweep.py \
         --stage autoencoder --model vgae --scale large --dataset hcrl_sa \
         --sweep "training.lr=0.001,0.0005" "vgae.latent_dim=8,16,32" \
         --output /tmp/sweep_commands.txt

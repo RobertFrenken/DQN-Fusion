@@ -6,9 +6,9 @@
 #         →   $TMPDIR/kd-gat-data/ (local SSD, per-job, fastest)
 #
 # Usage:
-#   source scripts/stage_data.sh           # default: stage raw + cache
-#   source scripts/stage_data.sh --cache   # cache only (for training jobs)
-#   source scripts/stage_data.sh --raw     # raw only (for preprocessing jobs)
+#   source scripts/data/stage_data.sh           # default: stage raw + cache
+#   source scripts/data/stage_data.sh --cache   # cache only (for training jobs)
+#   source scripts/data/stage_data.sh --raw     # raw only (for preprocessing jobs)
 #
 # After sourcing, KD_GAT_DATA_ROOT and KD_GAT_CACHE_ROOT point to the fastest
 # available copy. The calling SLURM script can use these env vars directly.

@@ -1,7 +1,7 @@
 #!/bin/bash
 # Build test graph caches — submits one SLURM job per dataset.
-# Usage: bash scripts/build_test_cache.sh                    # All datasets (set_01-04)
-#        bash scripts/build_test_cache.sh set_02 set_03      # Specific datasets
+# Usage: bash scripts/data/build_test_cache.sh                    # All datasets (set_01-04)
+#        bash scripts/data/build_test_cache.sh set_02 set_03      # Specific datasets
 
 set -euo pipefail
 

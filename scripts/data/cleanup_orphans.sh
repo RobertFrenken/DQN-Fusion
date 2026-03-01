@@ -10,9 +10,9 @@
 #   --delete              Permanently remove orphaned dirs (destructive!)
 #
 # Usage:
-#   bash scripts/cleanup_orphans.sh                # dry-run
-#   bash scripts/cleanup_orphans.sh --archive      # archive orphans
-#   bash scripts/cleanup_orphans.sh --delete       # delete orphans
+#   bash scripts/data/cleanup_orphans.sh                # dry-run
+#   bash scripts/data/cleanup_orphans.sh --archive      # archive orphans
+#   bash scripts/data/cleanup_orphans.sh --delete       # delete orphans
 
 set -euo pipefail
 

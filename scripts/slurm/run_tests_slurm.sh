@@ -2,9 +2,9 @@
 # Submit pytest to a SLURM compute node (cpu partition, no GPU needed).
 #
 # Usage:
-#   bash scripts/run_tests_slurm.sh                       # all slurm-marked tests
-#   bash scripts/run_tests_slurm.sh -k "test_full_pipeline"  # specific test
-#   bash scripts/run_tests_slurm.sh -m slurm              # only slurm-marked
+#   bash scripts/slurm/run_tests_slurm.sh                       # all slurm-marked tests
+#   bash scripts/slurm/run_tests_slurm.sh -k "test_full_pipeline"  # specific test
+#   bash scripts/slurm/run_tests_slurm.sh -m slurm              # only slurm-marked
 set -euo pipefail
 
 PROJECT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
