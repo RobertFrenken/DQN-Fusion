@@ -57,10 +57,10 @@ if [[ "${SLURM_NNODES:-1}" -gt 1 ]]; then
     # Each node starts a Ray worker; the first node becomes the head.
     ray symmetric-run \
         --num-nodes="${SLURM_NNODES}" \
-        -- python -m pipeline.cli "${ENTRYPOINT_ARGS[@]}"
+        -- python -m graphids.pipeline.cli "${ENTRYPOINT_ARGS[@]}"
 else
     # Single-node: start Ray locally, run entrypoint directly
-    python -m pipeline.cli "${ENTRYPOINT_ARGS[@]}"
+    python -m graphids.pipeline.cli "${ENTRYPOINT_ARGS[@]}"
 fi
 
 EXIT_CODE=$?

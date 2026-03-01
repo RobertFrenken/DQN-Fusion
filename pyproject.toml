@@ -38,10 +38,10 @@ dev = ["pytest>=7.0.0", "httpx>=0.27", "ruff>=0.4", "duckdb>=1.0.0"]
 baselines = ["pygod>=1.1"]
 
 [project.scripts]
-kd-gat = "pipeline.cli:main"
+graphids = "graphids.pipeline.cli:main"
 
 [tool.hatch.build.targets.wheel]
-packages = ["config", "pipeline", "src"]
+packages = ["graphids"]
 
 [tool.uv.sources]
 torch-scatter = { index = "pyg-cu126" }
@@ -71,5 +71,5 @@ ignore = ["E501", "E402", "E741", "W291", "W292", "W293", "F541", "F841"]
 [tool.ruff.lint.per-file-ignores]
 "__init__.py" = ["F401"]
 "tests/*" = ["F401"]
-"pipeline/stages/*" = ["F401"]
-"pipeline/orchestration/*" = ["F401"]
+"graphids/pipeline/stages/*" = ["F401"]
+"graphids/pipeline/orchestration/*" = ["F401"]

@@ -7,9 +7,10 @@ Usage:
         --sweep "training.lr=0.001,0.0005" "vgae.latent_dim=8,16,32" \
         --output /tmp/sweep_commands.txt
 
-Generates one `python -m pipeline.cli ...` command per parameter combination,
+Generates one `python -m graphids.pipeline.cli ...` command per parameter combination,
 suitable for parallel-command-processor or xargs.
 """
+
 from __future__ import annotations
 
 import argparse
@@ -33,10 +34,10 @@ def main():
     p.add_argument("--dataset", required=True)
     p.add_argument("--auxiliaries", default="none")
     p.add_argument("--teacher-path", default=None)
-    p.add_argument("--sweep", nargs="+", required=True,
-                    help="Sweep specs: 'key=val1,val2' (cartesian product)")
-    p.add_argument("--output", default=None,
-                    help="Output file (default: stdout)")
+    p.add_argument(
+        "--sweep", nargs="+", required=True, help="Sweep specs: 'key=val1,val2' (cartesian product)"
+    )
+    p.add_argument("--output", default=None, help="Output file (default: stdout)")
     args = p.parse_args()
 
     # Parse sweep specs
@@ -49,11 +50,18 @@ def main():
 
     # Base command
     base = [
-        sys.executable, "-m", "pipeline.cli", args.stage,
-        "--model", args.model,
-        "--scale", args.scale,
-        "--dataset", args.dataset,
-        "--auxiliaries", args.auxiliaries,
+        sys.executable,
+        "-m",
+        "graphids.pipeline.cli",
+        args.stage,
+        "--model",
+        args.model,
+        "--scale",
+        args.scale,
+        "--dataset",
+        args.dataset,
+        "--auxiliaries",
+        args.auxiliaries,
     ]
     if args.teacher_path:
         base.extend(["--teacher-path", args.teacher_path])

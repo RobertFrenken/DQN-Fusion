@@ -11,13 +11,13 @@ import pytest
 import torch
 from torch_geometric.data import Data
 
-from config import resolve
-from src.models.fusion_features import (
+from graphids.config import resolve
+from graphids.core.models.fusion_features import (
     FusionFeatureExtractor,
     VGAEFusionExtractor,
     GATFusionExtractor,
 )
-from src.models.registry import get as registry_get
+from graphids.core.models.registry import get as registry_get
 from tests.conftest import NUM_IDS, IN_CHANNELS, SMOKE_OVERRIDES, _make_graph
 
 

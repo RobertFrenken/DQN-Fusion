@@ -32,7 +32,7 @@ _ROOT = Path(__file__).resolve().parent.parent
 if str(_ROOT) not in sys.path:
     sys.path.insert(0, str(_ROOT))
 
-from config import resolve, data_dir, cache_dir
+from graphids.config import resolve, data_dir, cache_dir
 
 log = logging.getLogger(__name__)
 
@@ -42,7 +42,7 @@ SUPPORTED_MODELS = ("dominant", "ocgnn")
 def _load_graphs(dataset: str):
     """Load cached graph data via the project's data loading utils."""
     cfg = resolve("vgae", "large", dataset=dataset)
-    from src.training.datamodules import load_dataset
+    from graphids.core.training.datamodules import load_dataset
 
     train_data, val_data, num_ids = load_dataset(
         cfg.dataset,

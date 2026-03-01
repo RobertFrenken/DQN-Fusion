@@ -45,8 +45,8 @@ class TestConfigRoundTrip:
     """Config serialization must preserve every field exactly."""
 
     def test_save_load_identity(self, tmp_path):
-        from config import PipelineConfig
-        from config.resolver import resolve
+        from graphids.config import PipelineConfig
+        from graphids.config.resolver import resolve
         cfg = resolve("vgae", "small", dataset="set_01")
         p = tmp_path / "config.json"
         cfg.save(p)
@@ -54,8 +54,8 @@ class TestConfigRoundTrip:
         assert cfg == loaded
 
     def test_all_model_scale_round_trip(self, tmp_path):
-        from config.resolver import resolve, list_models
-        from config import PipelineConfig
+        from graphids.config.resolver import resolve, list_models
+        from graphids.config import PipelineConfig
         for model_type, scales in list_models().items():
             for scale in scales:
                 cfg = resolve(model_type, scale, dataset="hcrl_sa")
@@ -65,8 +65,8 @@ class TestConfigRoundTrip:
                 assert cfg == loaded, f"Round-trip failed for ({model_type}, {scale})"
 
     def test_tuple_survives_json(self, tmp_path):
-        from config import PipelineConfig
-        from config.schema import VGAEArchitecture
+        from graphids.config import PipelineConfig
+        from graphids.config.schema import VGAEArchitecture
         cfg = PipelineConfig(vgae=VGAEArchitecture(hidden_dims=(100, 50, 25)))
         p = tmp_path / "cfg.json"
         cfg.save(p)
@@ -77,7 +77,7 @@ class TestConfigRoundTrip:
     def test_legacy_flat_json_loads(self, tmp_path):
         """Old flat config.json files must still load correctly."""
         import json
-        from config import PipelineConfig
+        from graphids.config import PipelineConfig
         flat = {
             "dataset": "hcrl_sa", "model_size": "student", "seed": 42,
             "lr": 0.001, "max_epochs": 300, "batch_size": 4096, "patience": 50,
@@ -107,8 +107,8 @@ class TestModelMatchesConfig:
     """Every config param must actually affect the model it controls."""
 
     def test_vgae_dims_from_config(self):
-        from config.resolver import resolve
-        from src.models.vgae import GraphAutoencoderNeighborhood
+        from graphids.config.resolver import resolve
+        from graphids.core.models.vgae import GraphAutoencoderNeighborhood
 
         for scale in ("large", "small"):
             cfg = resolve("vgae", scale)
@@ -129,8 +129,8 @@ class TestModelMatchesConfig:
             )
 
     def test_gat_dims_from_config(self):
-        from config.resolver import resolve
-        from src.models.gat import GATWithJK
+        from graphids.config.resolver import resolve
+        from graphids.core.models.gat import GATWithJK
 
         for scale in ("large", "small"):
             cfg = resolve("gat", scale)
@@ -151,8 +151,8 @@ class TestModelMatchesConfig:
 
     def test_dqn_dims_from_config(self):
         """dqn.hidden and dqn.layers must actually change QNetwork architecture."""
-        from config.resolver import resolve
-        from src.models.dqn import QNetwork
+        from graphids.config.resolver import resolve
+        from graphids.core.models.dqn import QNetwork
 
         large_cfg = resolve("dqn", "large")
         small_cfg = resolve("dqn", "small")
@@ -173,8 +173,8 @@ class TestModelMatchesConfig:
 
     def test_dqn_agent_uses_config_batch_size(self):
         """Agent must use the config batch_size, not override it."""
-        from src.models.dqn import EnhancedDQNFusionAgent
-        from src.models.registry import fusion_state_dim
+        from graphids.core.models.dqn import EnhancedDQNFusionAgent
+        from graphids.core.models.registry import fusion_state_dim
         agent = EnhancedDQNFusionAgent(
             batch_size=64, buffer_size=500, device='cpu',
             state_dim=fusion_state_dim(),
@@ -191,9 +191,9 @@ class TestCheckpointRoundTrip:
     """Saving then loading a model must reproduce identical weights."""
 
     def test_vgae_checkpoint_roundtrip(self, tmp_path):
-        from config.resolver import resolve
-        from config import PipelineConfig
-        from src.models.vgae import GraphAutoencoderNeighborhood
+        from graphids.config.resolver import resolve
+        from graphids.config import PipelineConfig
+        from graphids.core.models.vgae import GraphAutoencoderNeighborhood
 
         cfg = resolve("vgae", "small")
         model = GraphAutoencoderNeighborhood(
@@ -219,8 +219,8 @@ class TestCheckpointRoundTrip:
             assert torch.equal(p1, p2), f"Weight mismatch in {n1}"
 
     def test_gat_checkpoint_roundtrip(self, tmp_path):
-        from config.resolver import resolve
-        from src.models.gat import GATWithJK
+        from graphids.config.resolver import resolve
+        from graphids.core.models.gat import GATWithJK
 
         cfg = resolve("gat", "large")
         model = GATWithJK(
@@ -248,8 +248,8 @@ class TestCheckpointRoundTrip:
             assert torch.equal(p1, p2), f"Weight mismatch in {n1}"
 
     def test_dqn_checkpoint_roundtrip(self, tmp_path):
-        from config.resolver import resolve
-        from src.models.dqn import QNetwork
+        from graphids.config.resolver import resolve
+        from graphids.core.models.dqn import QNetwork
 
         cfg = resolve("dqn", "large")
         net = QNetwork(15, cfg.fusion.alpha_steps,
@@ -268,8 +268,8 @@ class TestCheckpointRoundTrip:
 
     def test_wrong_dims_crash_loudly(self, tmp_path):
         """Loading a checkpoint into a model with wrong dims must raise, not silently corrupt."""
-        from config.resolver import resolve
-        from src.models.vgae import GraphAutoencoderNeighborhood
+        from graphids.config.resolver import resolve
+        from graphids.core.models.vgae import GraphAutoencoderNeighborhood
 
         large_cfg = resolve("vgae", "large")
         small_cfg = resolve("vgae", "small")
@@ -303,8 +303,8 @@ class TestTeacherLoading:
 
     def _save_teacher(self, tmp_path, model_type):
         """Save a teacher model + config to a temp directory."""
-        from config.resolver import resolve
-        from config import stage_dir, checkpoint_path, config_path
+        from graphids.config.resolver import resolve
+        from graphids.config import stage_dir, checkpoint_path, config_path
 
         stage_map = {"vgae": "autoencoder", "gat": "curriculum", "dqn": "fusion"}
         stage = stage_map[model_type]
@@ -314,7 +314,7 @@ class TestTeacherLoading:
         sd.mkdir(parents=True, exist_ok=True)
 
         if model_type == "vgae":
-            from src.models.vgae import GraphAutoencoderNeighborhood
+            from graphids.core.models.vgae import GraphAutoencoderNeighborhood
             model = GraphAutoencoderNeighborhood(
                 num_ids=NUM_IDS, in_channels=IN_CHANNELS,
                 hidden_dims=list(cfg.vgae.hidden_dims), latent_dim=cfg.vgae.latent_dim,
@@ -323,7 +323,7 @@ class TestTeacherLoading:
             )
             torch.save(model.state_dict(), checkpoint_path(cfg, stage))
         elif model_type == "gat":
-            from src.models.gat import GATWithJK
+            from graphids.core.models.gat import GATWithJK
             model = GATWithJK(
                 num_ids=NUM_IDS, in_channels=IN_CHANNELS,
                 hidden_channels=cfg.gat.hidden, out_channels=2,
@@ -334,7 +334,7 @@ class TestTeacherLoading:
             )
             torch.save(model.state_dict(), checkpoint_path(cfg, stage))
         elif model_type == "dqn":
-            from src.models.dqn import QNetwork
+            from graphids.core.models.dqn import QNetwork
             net = QNetwork(15, cfg.fusion.alpha_steps,
                            hidden_dim=cfg.dqn.hidden, num_layers=cfg.dqn.layers)
             torch.save({"q_network": net.state_dict()}, checkpoint_path(cfg, stage))
@@ -343,8 +343,8 @@ class TestTeacherLoading:
         return str(checkpoint_path(cfg, stage))
 
     def test_vgae_teacher_loads_own_dims(self, tmp_path):
-        from config.resolver import resolve
-        from pipeline.stages.utils import load_teacher
+        from graphids.config.resolver import resolve
+        from graphids.pipeline.stages.utils import load_teacher
 
         teacher_path = self._save_teacher(tmp_path, "vgae")
         student_cfg = resolve("vgae", "small")
@@ -353,8 +353,8 @@ class TestTeacherLoading:
         assert teacher is not None
 
     def test_gat_teacher_loads_own_dims(self, tmp_path):
-        from config.resolver import resolve
-        from pipeline.stages.utils import load_teacher
+        from graphids.config.resolver import resolve
+        from graphids.pipeline.stages.utils import load_teacher
 
         teacher_path = self._save_teacher(tmp_path, "gat")
         student_cfg = resolve("gat", "small")
@@ -363,8 +363,8 @@ class TestTeacherLoading:
         assert teacher is not None
 
     def test_dqn_teacher_loads_own_dims(self, tmp_path):
-        from config.resolver import resolve
-        from pipeline.stages.utils import load_teacher
+        from graphids.config.resolver import resolve
+        from graphids.pipeline.stages.utils import load_teacher
 
         teacher_path = self._save_teacher(tmp_path, "dqn")
         student_cfg = resolve("dqn", "small")
@@ -374,9 +374,9 @@ class TestTeacherLoading:
 
     def test_missing_teacher_config_raises(self, tmp_path):
         """Missing teacher config.json must raise, not silently fall back."""
-        from config.resolver import resolve
-        from pipeline.stages.utils import load_teacher
-        from src.models.vgae import GraphAutoencoderNeighborhood
+        from graphids.config.resolver import resolve
+        from graphids.pipeline.stages.utils import load_teacher
+        from graphids.core.models.vgae import GraphAutoencoderNeighborhood
 
         cfg = resolve("vgae", "large")
         model = GraphAutoencoderNeighborhood(
@@ -399,9 +399,9 @@ class TestPathConstruction:
     """Path logic must be consistent between config-based and string-based variants."""
 
     def test_aux_suffix(self):
-        from config import PipelineConfig
-        from config.schema import AuxiliaryConfig
-        from config import run_id, checkpoint_path
+        from graphids.config import PipelineConfig
+        from graphids.config.schema import AuxiliaryConfig
+        from graphids.config import run_id, checkpoint_path
 
         large = PipelineConfig(model_type="vgae", scale="large", dataset="hcrl_sa")
         small_kd = PipelineConfig(
@@ -419,8 +419,8 @@ class TestPathConstruction:
 
     def test_checkpoint_path_matches_str_variant(self):
         """PipelineConfig checkpoint_path must produce the same string as checkpoint_path_str."""
-        from config import PipelineConfig, checkpoint_path, checkpoint_path_str
-        from config.schema import AuxiliaryConfig
+        from graphids.config import PipelineConfig, checkpoint_path, checkpoint_path_str
+        from graphids.config.schema import AuxiliaryConfig
 
         cases = [
             ("vgae", "large", False),
@@ -444,8 +444,8 @@ class TestPathConstruction:
                 )
 
     def test_metrics_path_str(self):
-        from config import PipelineConfig, metrics_path, metrics_path_str
-        from config.schema import AuxiliaryConfig
+        from graphids.config import PipelineConfig, metrics_path, metrics_path_str
+        from graphids.config.schema import AuxiliaryConfig
 
         for model_type, scale, kd in [("vgae", "large", False), ("gat", "small", True)]:
             aux_list = [AuxiliaryConfig(type="kd")] if kd else []
@@ -459,7 +459,7 @@ class TestPathConstruction:
             assert py_path == str_path
 
     def test_benchmark_path_str(self):
-        from config import benchmark_path_str
+        from graphids.config import benchmark_path_str
         assert benchmark_path_str("hcrl_sa", "vgae", "large", "autoencoder") == \
             "experimentruns/hcrl_sa/vgae_large_autoencoder/benchmark.tsv"
         assert benchmark_path_str("set_01", "dqn", "small", "fusion", aux="kd") == \
@@ -474,9 +474,9 @@ class TestValidation:
     """Validator must catch missing files before SLURM submission."""
 
     def test_missing_teacher_checkpoint(self, tmp_path):
-        from config import PipelineConfig
-        from config.schema import AuxiliaryConfig
-        from pipeline.validate import validate
+        from graphids.config import PipelineConfig
+        from graphids.config.schema import AuxiliaryConfig
+        from graphids.pipeline.validate import validate
 
         cfg = PipelineConfig(
             dataset="hcrl_sa", model_type="vgae", scale="small",
@@ -487,9 +487,9 @@ class TestValidation:
             validate(cfg, "autoencoder")
 
     def test_missing_teacher_config(self, tmp_path):
-        from config import PipelineConfig
-        from config.schema import AuxiliaryConfig
-        from pipeline.validate import validate
+        from graphids.config import PipelineConfig
+        from graphids.config.schema import AuxiliaryConfig
+        from graphids.pipeline.validate import validate
 
         teacher_dir = tmp_path / "teacher_autoencoder"
         teacher_dir.mkdir(parents=True)
@@ -504,9 +504,9 @@ class TestValidation:
             validate(cfg, "autoencoder")
 
     def test_missing_prerequisite_config(self, tmp_path):
-        from config import PipelineConfig
-        from pipeline.validate import validate
-        from config import stage_dir
+        from graphids.config import PipelineConfig
+        from graphids.pipeline.validate import validate
+        from graphids.config import stage_dir
 
         cfg = PipelineConfig(
             dataset="hcrl_sa", model_type="gat", scale="large",
@@ -521,8 +521,8 @@ class TestValidation:
 
     def test_valid_config_passes(self, tmp_path):
         """A fully valid configuration must not raise."""
-        from config import PipelineConfig
-        from pipeline.validate import validate
+        from graphids.config import PipelineConfig
+        from graphids.pipeline.validate import validate
 
         data_path = Path("data/automotive/hcrl_sa")
         if not data_path.exists():
@@ -548,9 +548,9 @@ class TestFrozenConfigPropagation:
         load_frozen_cfg resolves "autoencoder" → model_type="vgae" automatically,
         so a GAT config can find the VGAE autoencoder config.
         """
-        from config.resolver import resolve
-        from config import config_path, stage_dir
-        from pipeline.stages.utils import load_frozen_cfg
+        from graphids.config.resolver import resolve
+        from graphids.config import config_path, stage_dir
+        from graphids.pipeline.stages.utils import load_frozen_cfg
 
         vgae_cfg = resolve(
             "vgae", "small", auxiliaries="kd_standard",
@@ -572,9 +572,9 @@ class TestFrozenConfigPropagation:
         assert frozen.vgae.latent_dim == 16
 
     def test_missing_frozen_config_raises(self, tmp_path):
-        from config import PipelineConfig
-        from pipeline.stages.utils import load_frozen_cfg
-        from config.schema import AuxiliaryConfig
+        from graphids.config import PipelineConfig
+        from graphids.pipeline.stages.utils import load_frozen_cfg
+        from graphids.config.schema import AuxiliaryConfig
 
         cfg = PipelineConfig(
             dataset="hcrl_sa", model_type="vgae", scale="small",
@@ -591,7 +591,7 @@ class TestFrozenConfigPropagation:
 
 class TestMmapConstant:
     def test_single_source_of_truth(self):
-        from config.constants import MMAP_TENSOR_LIMIT
+        from graphids.config.constants import MMAP_TENSOR_LIMIT
         assert isinstance(MMAP_TENSOR_LIMIT, int)
         assert MMAP_TENSOR_LIMIT > 0
 
@@ -604,28 +604,28 @@ class TestSchemaValidation:
     """Pydantic validates field constraints."""
 
     def test_invalid_model_type_raises(self):
-        from config import PipelineConfig
+        from graphids.config import PipelineConfig
         with pytest.raises(Exception):
             PipelineConfig(model_type="invalid_model")
 
     def test_invalid_scale_raises(self):
-        from config import PipelineConfig
+        from graphids.config import PipelineConfig
         with pytest.raises(Exception):
             PipelineConfig(scale="mega")
 
     def test_negative_lr_raises(self):
-        from config.schema import TrainingConfig
+        from graphids.config.schema import TrainingConfig
         with pytest.raises(Exception):
             TrainingConfig(lr=-0.001)
 
     def test_sub_configs_are_frozen(self):
-        from config import PipelineConfig
+        from graphids.config import PipelineConfig
         cfg = PipelineConfig()
         with pytest.raises(Exception):
             cfg.vgae.latent_dim = 999
 
     def test_resolver_list_models(self):
-        from config.resolver import list_models
+        from graphids.config.resolver import list_models
         models = list_models()
         assert "vgae" in models
         assert "gat" in models
@@ -634,14 +634,14 @@ class TestSchemaValidation:
         assert "small" in models["vgae"]
 
     def test_resolver_list_auxiliaries(self):
-        from config.resolver import list_auxiliaries
+        from graphids.config.resolver import list_auxiliaries
         aux = list_auxiliaries()
         assert "none" in aux
         assert "kd_standard" in aux
 
     def test_has_kd_property(self):
-        from config import PipelineConfig
-        from config.schema import AuxiliaryConfig
+        from graphids.config import PipelineConfig
+        from graphids.config.schema import AuxiliaryConfig
         cfg_no_kd = PipelineConfig()
         assert cfg_no_kd.has_kd is False
         assert cfg_no_kd.kd is None
@@ -651,6 +651,6 @@ class TestSchemaValidation:
         assert cfg_kd.kd.model_path == "/x"
 
     def test_active_arch(self):
-        from config import PipelineConfig
+        from graphids.config import PipelineConfig
         cfg = PipelineConfig(model_type="gat")
         assert cfg.active_arch == cfg.gat

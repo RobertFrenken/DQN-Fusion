@@ -29,9 +29,9 @@ class TestGATReturnEmbedding:
 
     @pytest.fixture
     def gat_model(self):
-        from config.resolver import resolve
+        from graphids.config.resolver import resolve
         cfg = resolve("gat", "small", dataset="hcrl_sa", **SMOKE_OVERRIDES)
-        from src.models.gat import GATWithJK
+        from graphids.core.models.gat import GATWithJK
         return GATWithJK.from_config(cfg, NUM_IDS, IN_CHANNELS)
 
     def test_return_embedding_tuple(self, gat_model):
@@ -78,8 +78,8 @@ class TestDQNComputeFusionReward:
 
     @pytest.fixture
     def agent(self):
-        from src.models.registry import fusion_state_dim
-        from src.models.dqn import EnhancedDQNFusionAgent
+        from graphids.core.models.registry import fusion_state_dim
+        from graphids.core.models.dqn import EnhancedDQNFusionAgent
         return EnhancedDQNFusionAgent(
             alpha_steps=11, lr=1e-3, gamma=0.9,
             state_dim=fusion_state_dim(),
@@ -112,7 +112,7 @@ class TestDQNComputeFusionReward:
         # State with high GAT confidence (high prob for class 1)
         high_conf = np.zeros(agent.state_dim, dtype=np.float32)
         # Set GAT logits to strongly predict attack (indices from layout)
-        from src.models.registry import feature_layout
+        from graphids.core.models.registry import feature_layout
         layout = feature_layout()
         gat_start = layout["gat"][0]
         # class 0 prob low, class 1 prob high
@@ -214,8 +214,8 @@ class TestCLIArchiveRestore:
 
     def test_archive_created_on_rerun(self, tmp_path):
         """When a stage dir has metrics.json, re-running should archive it."""
-        from config.resolver import resolve
-        from config import stage_dir
+        from graphids.config.resolver import resolve
+        from graphids.config import stage_dir
         from datetime import datetime
 
         cfg = resolve("vgae", "large", dataset="hcrl_sa",
@@ -240,8 +240,8 @@ class TestCLIArchiveRestore:
     def test_restore_on_failure(self, tmp_path):
         """On failure, archive should be restored to original path."""
         import shutil
-        from config.resolver import resolve
-        from config import stage_dir
+        from graphids.config.resolver import resolve
+        from graphids.config import stage_dir
         from datetime import datetime
 
         cfg = resolve("vgae", "large", dataset="hcrl_sa",
@@ -272,8 +272,8 @@ class TestCLIArchiveRestore:
     def test_archive_deleted_on_success(self, tmp_path):
         """On success, archive should be cleaned up."""
         import shutil
-        from config.resolver import resolve
-        from config import stage_dir
+        from graphids.config.resolver import resolve
+        from graphids.config import stage_dir
         from datetime import datetime
 
         cfg = resolve("vgae", "large", dataset="hcrl_sa",
@@ -306,7 +306,7 @@ class TestServeSmokeTest:
     def client(self):
         """Create a test client without loading real models."""
         from starlette.testclient import TestClient
-        from pipeline.serve import app
+        from graphids.pipeline.serve import app
         return TestClient(app)
 
     def test_health_returns_200(self, client):

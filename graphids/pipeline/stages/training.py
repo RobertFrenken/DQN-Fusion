@@ -1,0 +1,184 @@
+"""Training stages: autoencoder, curriculum, normal."""
+from __future__ import annotations
+
+import logging
+from pathlib import Path
+
+import torch
+import torch.nn.functional as F
+import pytorch_lightning as pl
+
+from graphids.config import PipelineConfig, checkpoint_path, config_path
+from ..memory import log_memory_state
+from .utils import (
+    load_data,
+    load_teacher,
+    make_projection,
+    make_trainer,
+    make_dataloader,
+    compute_optimal_batch_size,
+    compute_node_budget,
+    effective_batch_size,
+    load_model,
+    load_frozen_cfg,
+    cleanup,
+    graph_label,
+)
+from .modules import VGAEModule, GATModule, CurriculumDataModule
+
+log = logging.getLogger(__name__)
+
+
+def _training_preamble(cfg: PipelineConfig, stage_name: str):
+    """Shared setup for all training stages: log, seed, load data, resolve device."""
+    log.info("=== %s: %s / %s_%s ===", stage_name, cfg.dataset, cfg.model_type, cfg.scale)
+    pl.seed_everything(cfg.seed)
+    train_data, val_data, num_ids, in_ch = load_data(cfg)
+    device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+    return train_data, val_data, num_ids, in_ch, device
+
+
+def _resolve_batch_config(cfg, model, train_data, teacher=None):
+    """Compute batch size and optional dynamic batching node budget."""
+    if cfg.training.optimize_batch_size:
+        bs = compute_optimal_batch_size(model, train_data, cfg, teacher=teacher)
+    else:
+        bs = effective_batch_size(cfg)
+    max_nodes = None
+    if cfg.training.dynamic_batching:
+        max_nodes = compute_node_budget(bs, cfg)
+        if max_nodes:
+            log.info("Dynamic batching: max_num_nodes=%d (batch_size=%d × p95)", max_nodes, bs)
+        else:
+            log.info("Dynamic batching: no cache metadata, falling back to static batch_size=%d", bs)
+    return bs, max_nodes
+
+
+def train_autoencoder(cfg: PipelineConfig) -> Path:
+    """Train VGAE on graph reconstruction. Returns checkpoint path."""
+    train_data, val_data, num_ids, in_ch, device = _training_preamble(cfg, "AUTOENCODER")
+
+    # Optional KD: load teacher
+    teacher, projection = None, None
+    if cfg.has_kd and cfg.kd.model_path:
+        teacher = load_teacher(cfg.kd.model_path, "vgae", cfg, num_ids, in_ch, device)
+        from graphids.core.models.registry import get as registry_get
+        _tmp_student = registry_get("vgae").factory(cfg, num_ids, in_ch)
+        projection = make_projection(_tmp_student, teacher, "vgae", device)
+        del _tmp_student
+
+    module = VGAEModule(cfg, num_ids, in_ch, teacher=teacher, projection=projection)
+    bs, max_nodes = _resolve_batch_config(cfg, module.model, train_data, teacher=teacher)
+
+    log_memory_state("pre-dataloader")
+    train_dl = make_dataloader(train_data, cfg, bs, shuffle=True, max_num_nodes=max_nodes)
+    val_dl = make_dataloader(val_data, cfg, bs, shuffle=False, max_num_nodes=max_nodes)
+
+    trainer = make_trainer(cfg, "autoencoder")
+    trainer.fit(module, train_dl, val_dl)
+
+    ckpt = checkpoint_path(cfg, "autoencoder")
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(module.model.state_dict(), ckpt)
+    cfg.save(config_path(cfg, "autoencoder"))
+    log.info("Saved VGAE: %s", ckpt)
+    cleanup()
+    return ckpt
+
+
+def train_curriculum(cfg: PipelineConfig) -> Path:
+    """Train GAT with VGAE-guided curriculum learning. Returns checkpoint path."""
+    train_data, val_data, num_ids, in_ch, device = _training_preamble(cfg, "CURRICULUM")
+
+    # Load VGAE for difficulty scoring
+    vgae = load_model(cfg, "vgae", "autoencoder", num_ids, in_ch, device)
+
+    # Split and score
+    normals = [g for g in train_data if graph_label(g) == 0]
+    attacks = [g for g in train_data if graph_label(g) == 1]
+    scores = _score_difficulty(vgae, normals, device)
+    del vgae
+    cleanup()
+
+    # Optional KD: load teacher GAT
+    teacher = None
+    if cfg.has_kd and cfg.kd.model_path:
+        teacher = load_teacher(cfg.kd.model_path, "gat", cfg, num_ids, in_ch, device)
+
+    module = GATModule(cfg, num_ids, in_ch, teacher=teacher)
+    trainer = make_trainer(cfg, "curriculum")
+
+    dm = CurriculumDataModule(normals, attacks, scores, val_data, cfg)
+    trainer.fit(module, datamodule=dm)
+
+    ckpt = checkpoint_path(cfg, "curriculum")
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(module.model.state_dict(), ckpt)
+    cfg.save(config_path(cfg, "curriculum"))
+    log.info("Saved GAT: %s", ckpt)
+    cleanup()
+    return ckpt
+
+
+def train_normal(cfg: PipelineConfig) -> Path:
+    """Train GAT with standard cross-entropy (no curriculum). Returns checkpoint path."""
+    train_data, val_data, num_ids, in_ch, device = _training_preamble(cfg, "NORMAL")
+
+    # Optional KD: load teacher GAT
+    teacher = None
+    if cfg.has_kd and cfg.kd.model_path:
+        teacher = load_teacher(cfg.kd.model_path, "gat", cfg, num_ids, in_ch, device)
+
+    module = GATModule(cfg, num_ids, in_ch, teacher=teacher)
+    bs, max_nodes = _resolve_batch_config(cfg, module.model, train_data, teacher=teacher)
+
+    log_memory_state("pre-dataloader")
+    train_dl = make_dataloader(train_data, cfg, bs, shuffle=True, max_num_nodes=max_nodes)
+    val_dl = make_dataloader(val_data, cfg, bs, shuffle=False, max_num_nodes=max_nodes)
+
+    trainer = make_trainer(cfg, "normal")
+    trainer.fit(module, train_dl, val_dl)
+
+    ckpt = checkpoint_path(cfg, "normal")
+    ckpt.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(module.model.state_dict(), ckpt)
+    cfg.save(config_path(cfg, "normal"))
+    log.info("Saved GAT (normal): %s", ckpt)
+    cleanup()
+    return ckpt
+
+
+def _score_difficulty(vgae_model, graphs, device, chunk_size: int = 500) -> list[float]:
+    """Score each graph's reconstruction difficulty using trained VGAE.
+
+    Memory optimization: Processes graphs in chunks and clears GPU cache between
+    chunks to prevent memory accumulation on large datasets.
+    """
+    scores = []
+    vgae_model.eval()
+    total_chunks = (len(graphs) + chunk_size - 1) // chunk_size
+
+    for chunk_idx in range(total_chunks):
+        start = chunk_idx * chunk_size
+        end = min(start + chunk_size, len(graphs))
+        chunk_graphs = graphs[start:end]
+
+        with torch.no_grad():
+            for g in chunk_graphs:
+                g = g.clone().to(device)
+                batch_idx = (g.batch if hasattr(g, "batch") and g.batch is not None
+                             else torch.zeros(g.x.size(0), dtype=torch.long, device=device))
+                edge_attr = getattr(g, 'edge_attr', None)
+                cont, canid_logits, _, _, _ = vgae_model(g.x, g.edge_index, batch_idx, edge_attr=edge_attr)
+                recon = F.mse_loss(cont, g.x[:, 1:]).item()
+                canid = F.cross_entropy(canid_logits, g.x[:, 0].long()).item()
+                scores.append(recon + 0.1 * canid)
+                del g
+
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+
+        if (chunk_idx + 1) % 10 == 0:
+            log.info("Difficulty scoring: %d/%d chunks complete", chunk_idx + 1, total_chunks)
+
+    return scores

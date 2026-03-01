@@ -50,8 +50,8 @@ class TestAutoencoderE2E:
     """train_autoencoder produces checkpoint + config that load correctly."""
 
     def test_autoencoder_e2e(self, synth_data, exp_root):
-        from config import resolve, config_path
-        from pipeline.stages.training import train_autoencoder
+        from graphids.config import resolve, config_path
+        from graphids.pipeline.stages.training import train_autoencoder
 
         cfg = resolve(
             "vgae", "large",
@@ -67,9 +67,9 @@ class TestAutoencoderE2E:
         assert config_path(cfg, "autoencoder").exists(), "Config not saved"
 
         # Verify checkpoint loads back
-        from config import PipelineConfig
+        from graphids.config import PipelineConfig
         loaded_cfg = PipelineConfig.load(config_path(cfg, "autoencoder"))
-        from src.models.vgae import GraphAutoencoderNeighborhood
+        from graphids.core.models.vgae import GraphAutoencoderNeighborhood
         model = GraphAutoencoderNeighborhood(
             num_ids=NUM_IDS, in_channels=IN_CHANNELS,
             hidden_dims=list(loaded_cfg.vgae.hidden_dims),
@@ -86,8 +86,8 @@ class TestCurriculumE2E:
     """train_curriculum loads VGAE, trains GAT, saves checkpoint."""
 
     def test_curriculum_e2e(self, synth_data, exp_root):
-        from config import resolve, config_path
-        from pipeline.stages.training import train_autoencoder, train_curriculum
+        from graphids.config import resolve, config_path
+        from graphids.pipeline.stages.training import train_autoencoder, train_curriculum
 
         vgae_cfg = resolve(
             "vgae", "large",
@@ -108,9 +108,9 @@ class TestCurriculumE2E:
         assert ckpt.exists(), "GAT checkpoint not saved"
         assert config_path(gat_cfg, "curriculum").exists(), "GAT config not saved"
 
-        from config import PipelineConfig
+        from graphids.config import PipelineConfig
         loaded_cfg = PipelineConfig.load(config_path(gat_cfg, "curriculum"))
-        from src.models.gat import GATWithJK
+        from graphids.core.models.gat import GATWithJK
         model = GATWithJK(
             num_ids=NUM_IDS, in_channels=IN_CHANNELS,
             hidden_channels=loaded_cfg.gat.hidden, out_channels=2,
@@ -127,9 +127,9 @@ class TestFusionE2E:
     """train_fusion loads VGAE+GAT, trains DQN, saves checkpoint."""
 
     def test_fusion_e2e(self, synth_data, exp_root):
-        from config import resolve, config_path
-        from pipeline.stages.training import train_autoencoder, train_curriculum
-        from pipeline.stages.fusion import train_fusion
+        from graphids.config import resolve, config_path
+        from graphids.pipeline.stages.training import train_autoencoder, train_curriculum
+        from graphids.pipeline.stages.fusion import train_fusion
 
         vgae_cfg = resolve(
             "vgae", "large",
@@ -171,10 +171,10 @@ class TestFullPipelineE2E:
     """Full 3-stage pipeline + evaluation in sequence."""
 
     def test_full_pipeline(self, synth_data, exp_root):
-        from config import resolve, stage_dir
-        from pipeline.stages.training import train_autoencoder, train_curriculum
-        from pipeline.stages.fusion import train_fusion
-        from pipeline.stages.evaluation import evaluate
+        from graphids.config import resolve, stage_dir
+        from graphids.pipeline.stages.training import train_autoencoder, train_curriculum
+        from graphids.pipeline.stages.fusion import train_fusion
+        from graphids.pipeline.stages.evaluation import evaluate
 
         common = dict(
             dataset="test_ds", experiment_root=exp_root,

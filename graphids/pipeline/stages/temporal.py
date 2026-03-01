@@ -1,0 +1,281 @@
+"""Temporal graph classification stage.
+
+Loads a pretrained GAT spatial encoder, wraps it with a Transformer-based
+temporal head, and trains on sequences of consecutive graph snapshots.
+
+Uses contiguous time split (not random): first 80% train, last 20% val
+because temporal ordering matters for this task.
+"""
+from __future__ import annotations
+
+import json
+import logging
+from pathlib import Path
+
+import numpy as np
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import pytorch_lightning as pl
+from torch.utils.data import DataLoader, Dataset
+
+from graphids.config import PipelineConfig, stage_dir, checkpoint_path, config_path, metrics_path
+from .utils import (
+    load_data,
+    load_model,
+    make_trainer,
+    cleanup,
+    graph_label,
+)
+
+log = logging.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Dataset for temporal sequences
+# ---------------------------------------------------------------------------
+
+class TemporalGraphDataset(Dataset):
+    """PyTorch Dataset wrapping a list of GraphSequence objects."""
+
+    def __init__(self, sequences, device):
+        self.sequences = sequences
+        self.device = device
+
+    def __len__(self):
+        return len(self.sequences)
+
+    def __getitem__(self, idx):
+        seq = self.sequences[idx]
+        return seq.graphs, seq.y
+
+
+def collate_temporal(batch):
+    """Custom collate for temporal graph sequences.
+
+    Returns:
+        graph_sequences: list of lists of Data objects
+        labels: tensor of labels
+    """
+    graph_sequences = [item[0] for item in batch]
+    labels = torch.tensor([item[1] for item in batch], dtype=torch.long)
+    return graph_sequences, labels
+
+
+# ---------------------------------------------------------------------------
+# Lightning module
+# ---------------------------------------------------------------------------
+
+class TemporalLightningModule(pl.LightningModule):
+    """Lightning wrapper for TemporalGraphClassifier."""
+
+    def __init__(self, model, cfg: PipelineConfig):
+        super().__init__()
+        self.model = model
+        self.cfg = cfg
+
+    def forward(self, graph_sequences):
+        return self.model(graph_sequences)
+
+    def _shared_step(self, batch, stage: str):
+        graph_sequences, labels = batch
+        device = self.device
+
+        # Move graphs to device
+        moved_sequences = []
+        for seq in graph_sequences:
+            moved_sequences.append([g.clone().to(device) for g in seq])
+
+        logits = self.model(moved_sequences)
+        loss = F.cross_entropy(logits, labels.to(device))
+
+        preds = logits.argmax(dim=1)
+        acc = (preds == labels.to(device)).float().mean()
+
+        self.log(f"{stage}_loss", loss, prog_bar=True, batch_size=len(graph_sequences))
+        self.log(f"{stage}_acc", acc, prog_bar=True, batch_size=len(graph_sequences))
+        return loss
+
+    def training_step(self, batch, batch_idx):
+        return self._shared_step(batch, "train")
+
+    def validation_step(self, batch, batch_idx):
+        return self._shared_step(batch, "val")
+
+    def configure_optimizers(self):
+        t = self.cfg.training
+        tc = self.cfg.temporal
+
+        # Separate param groups for spatial encoder (low LR) and temporal head (full LR)
+        spatial_params = list(self.model.spatial_encoder.parameters())
+        temporal_params = [
+            p for n, p in self.model.named_parameters()
+            if not n.startswith("spatial_encoder") and p.requires_grad
+        ]
+
+        param_groups = []
+        if not tc.freeze_spatial and spatial_params:
+            param_groups.append({
+                "params": spatial_params,
+                "lr": t.lr * tc.spatial_lr_factor,
+            })
+        if temporal_params:
+            param_groups.append({
+                "params": temporal_params,
+                "lr": t.lr,
+            })
+
+        optimizer = torch.optim.AdamW(
+            param_groups if param_groups else self.model.parameters(),
+            lr=t.lr,
+            weight_decay=t.weight_decay,
+        )
+        return optimizer
+
+
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
+
+def train_temporal(cfg: PipelineConfig) -> dict:
+    """Train temporal graph classifier.
+
+    Loads pretrained GAT, wraps with temporal Transformer head, trains
+    on sequences of consecutive graph snapshots.
+    """
+    tc = cfg.temporal
+    if not tc.enabled:
+        log.warning("Temporal training called but temporal.enabled=False. Skipping.")
+        return {"status": "skipped", "reason": "temporal.enabled=False"}
+
+    log.info("=== TEMPORAL: %s / %s_%s (window=%d, stride=%d) ===",
+             cfg.dataset, cfg.model_type, cfg.scale, tc.temporal_window, tc.temporal_stride)
+    pl.seed_everything(cfg.seed)
+
+    # Load data (same as other stages)
+    train_data, val_data, num_ids, in_ch = load_data(cfg)
+    device = torch.device(cfg.device if torch.cuda.is_available() else "cpu")
+
+    # Load pretrained GAT
+    gat_stage = "curriculum"
+    gat = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
+    log.info("Loaded pretrained GAT from %s stage", gat_stage)
+
+    # Determine spatial embedding dimension by running a probe
+    with torch.no_grad():
+        probe_data = train_data[0].clone().to(device)
+        _, probe_emb = gat(probe_data, return_embedding=True)
+        spatial_dim = probe_emb.shape[-1]
+        del probe_data, probe_emb
+    log.info("Spatial embedding dim: %d", spatial_dim)
+
+    # Group into temporal sequences
+    from graphids.core.preprocessing.temporal import TemporalGrouper
+
+    grouper = TemporalGrouper(window=tc.temporal_window, stride=tc.temporal_stride)
+
+    # Contiguous time split: first 80% train, last 20% val
+    all_graphs = train_data + val_data
+    split_idx = int(len(all_graphs) * 0.8)
+    temporal_train_graphs = all_graphs[:split_idx]
+    temporal_val_graphs = all_graphs[split_idx:]
+
+    train_sequences = grouper.group(temporal_train_graphs)
+    val_sequences = grouper.group(temporal_val_graphs)
+
+    log.info("Temporal sequences: train=%d, val=%d (from %d total graphs)",
+             len(train_sequences), len(val_sequences), len(all_graphs))
+
+    if not train_sequences or not val_sequences:
+        log.error("Not enough graphs for temporal windowing")
+        return {"status": "failed", "reason": "insufficient graphs for windowing"}
+
+    # Create dataloaders
+    train_ds = TemporalGraphDataset(train_sequences, device)
+    val_ds = TemporalGraphDataset(val_sequences, device)
+
+    # Small batch size for temporal (sequences are heavy)
+    temporal_batch_size = max(1, min(32, len(train_sequences) // 10))
+
+    train_loader = DataLoader(
+        train_ds, batch_size=temporal_batch_size, shuffle=True,
+        collate_fn=collate_temporal, num_workers=0,
+    )
+    val_loader = DataLoader(
+        val_ds, batch_size=temporal_batch_size, shuffle=False,
+        collate_fn=collate_temporal, num_workers=0,
+    )
+
+    # Build temporal model
+    from graphids.core.models.temporal import TemporalGraphClassifier
+
+    temporal_model = TemporalGraphClassifier(
+        spatial_encoder=gat,
+        spatial_dim=spatial_dim,
+        temporal_hidden=tc.temporal_hidden,
+        temporal_heads=tc.temporal_heads,
+        temporal_layers=tc.temporal_layers,
+        max_seq_len=tc.temporal_window,
+        freeze_spatial=tc.freeze_spatial,
+        num_classes=2,
+    ).to(device)
+
+    total_params = sum(p.numel() for p in temporal_model.parameters())
+    trainable_params = sum(p.numel() for p in temporal_model.parameters() if p.requires_grad)
+    log.info("Temporal model: %d total params, %d trainable", total_params, trainable_params)
+
+    # Save frozen config
+    out = stage_dir(cfg, "temporal")
+    out.mkdir(parents=True, exist_ok=True)
+    cfg_out = config_path(cfg, "temporal")
+    cfg.save(cfg_out)
+
+    # Train
+    lit_module = TemporalLightningModule(temporal_model, cfg)
+    trainer = make_trainer(cfg, "temporal")
+    trainer.fit(lit_module, train_loader, val_loader)
+
+    # Save best model
+    best_ckpt = checkpoint_path(cfg, "temporal")
+    torch.save(temporal_model.state_dict(), best_ckpt)
+    log.info("Saved temporal model → %s", best_ckpt)
+
+    # Compute final metrics
+    temporal_model.eval()
+    all_preds, all_labels = [], []
+    with torch.no_grad():
+        for graph_sequences, labels in val_loader:
+            moved = [[g.clone().to(device) for g in seq] for seq in graph_sequences]
+            logits = temporal_model(moved)
+            preds = logits.argmax(dim=1)
+            all_preds.extend(preds.cpu().tolist())
+            all_labels.extend(labels.tolist())
+
+    from sklearn.metrics import (
+        accuracy_score, f1_score, precision_score, recall_score,
+        matthews_corrcoef, balanced_accuracy_score,
+    )
+
+    result = {
+        "temporal": {
+            "core": {
+                "accuracy": float(accuracy_score(all_labels, all_preds)),
+                "f1": float(f1_score(all_labels, all_preds, zero_division=0)),
+                "precision": float(precision_score(all_labels, all_preds, zero_division=0)),
+                "recall": float(recall_score(all_labels, all_preds, zero_division=0)),
+                "mcc": float(matthews_corrcoef(all_labels, all_preds)),
+                "balanced_accuracy": float(balanced_accuracy_score(all_labels, all_preds)),
+                "n_sequences": len(all_labels),
+                "window": tc.temporal_window,
+                "stride": tc.temporal_stride,
+            }
+        }
+    }
+
+    mp = metrics_path(cfg, "temporal")
+    mp.write_text(json.dumps(result, indent=2))
+    log.info("Temporal metrics: %s", {k: f"{v:.4f}" for k, v in result["temporal"]["core"].items()
+                                       if isinstance(v, float)})
+
+    cleanup()
+    return result

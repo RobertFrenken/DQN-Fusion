@@ -5,9 +5,7 @@ on:
     branches: [main]
     paths:
       - ".github/workflows/**"
-      - "config/**"
-      - "pipeline/**"
-      - "src/**"
+      - "graphids/**"
       - "tests/**"
       - "reports/**"
       - "pyproject.toml"
@@ -32,7 +30,7 @@ jobs:
         with:
           python-version: "3.11"
       - run: pip install ruff
-      - run: ruff check config/ pipeline/ src/ tests/
+      - run: ruff check graphids/ tests/
 
   test:
     runs-on: ubuntu-latest

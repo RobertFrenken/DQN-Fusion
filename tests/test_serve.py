@@ -7,7 +7,7 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from pipeline.serve import app, _models
+from graphids.pipeline.serve import app, _models
 
 
 @pytest.fixture()

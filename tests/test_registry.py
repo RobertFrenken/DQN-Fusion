@@ -7,10 +7,10 @@ from __future__ import annotations
 import pytest
 import torch.nn as nn
 
-from src.models.registry import (
+from graphids.core.models.registry import (
     ModelEntry, register, get, fusion_state_dim, extractors, _REGISTRY,
 )
-from src.models.fusion_features import (
+from graphids.core.models.fusion_features import (
     FusionFeatureExtractor, VGAEFusionExtractor, GATFusionExtractor,
 )
 
@@ -72,7 +72,7 @@ class TestFactory:
     """Verify factory functions produce nn.Module instances."""
 
     def test_vgae_factory(self):
-        from config import resolve
+        from graphids.config import resolve
         from tests.conftest import NUM_IDS, IN_CHANNELS, SMOKE_OVERRIDES
 
         cfg = resolve("vgae", "large", **SMOKE_OVERRIDES)
@@ -80,7 +80,7 @@ class TestFactory:
         assert isinstance(model, nn.Module)
 
     def test_gat_factory(self):
-        from config import resolve
+        from graphids.config import resolve
         from tests.conftest import NUM_IDS, IN_CHANNELS, SMOKE_OVERRIDES
 
         cfg = resolve("gat", "large", **SMOKE_OVERRIDES)
@@ -88,7 +88,7 @@ class TestFactory:
         assert isinstance(model, nn.Module)
 
     def test_dqn_factory(self):
-        from config import resolve
+        from graphids.config import resolve
         from tests.conftest import SMOKE_OVERRIDES
 
         cfg = resolve("dqn", "large", **SMOKE_OVERRIDES)

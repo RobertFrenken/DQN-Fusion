@@ -20,8 +20,8 @@ class TestVGAESmoke:
     """VGAE module trains and produces finite loss."""
 
     def test_trains(self):
-        from config import resolve
-        from pipeline.stages.modules import VGAEModule
+        from graphids.config import resolve
+        from graphids.pipeline.stages.modules import VGAEModule
 
         cfg = resolve("vgae", "large", **SMOKE_OVERRIDES)
         data = _make_dataset(20)
@@ -38,10 +38,10 @@ class TestVGAESmoke:
         assert torch.isfinite(trainer.callback_metrics["train_loss"])
 
     def test_kd_trains(self):
-        from config import resolve
-        from pipeline.stages.modules import VGAEModule
-        from pipeline.stages.utils import make_projection
-        from src.models.vgae import GraphAutoencoderNeighborhood
+        from graphids.config import resolve
+        from graphids.pipeline.stages.modules import VGAEModule
+        from graphids.pipeline.stages.utils import make_projection
+        from graphids.core.models.vgae import GraphAutoencoderNeighborhood
 
         teacher_cfg = resolve("vgae", "large", **SMOKE_OVERRIDES)
         student_cfg = resolve(
@@ -90,8 +90,8 @@ class TestGATSmoke:
     """GAT module trains and produces finite loss."""
 
     def test_trains(self):
-        from config import resolve
-        from pipeline.stages.modules import GATModule
+        from graphids.config import resolve
+        from graphids.pipeline.stages.modules import GATModule
 
         cfg = resolve("gat", "large", **SMOKE_OVERRIDES)
         data = _make_dataset(20)
@@ -108,9 +108,9 @@ class TestGATSmoke:
         assert torch.isfinite(trainer.callback_metrics["train_loss"])
 
     def test_kd_trains(self):
-        from config import resolve
-        from pipeline.stages.modules import GATModule
-        from src.models.gat import GATWithJK
+        from graphids.config import resolve
+        from graphids.pipeline.stages.modules import GATModule
+        from graphids.core.models.gat import GATWithJK
 
         teacher_cfg = resolve("gat", "large", **SMOKE_OVERRIDES)
         student_cfg = resolve(
@@ -144,7 +144,7 @@ class TestGATSmoke:
 
     def test_fc_layers_config(self):
         """GATWithJK should work with different num_fc_layers values."""
-        from src.models.gat import GATWithJK
+        from graphids.core.models.gat import GATWithJK
 
         g = _make_graph()
         g.batch = torch.zeros(g.x.size(0), dtype=torch.long)
@@ -168,8 +168,8 @@ class TestDQNSmoke:
 
     def test_trains(self):
         import numpy as np
-        from src.models.dqn import EnhancedDQNFusionAgent
-        from src.models.registry import fusion_state_dim
+        from graphids.core.models.dqn import EnhancedDQNFusionAgent
+        from graphids.core.models.registry import fusion_state_dim
 
         agent = EnhancedDQNFusionAgent(
             alpha_steps=21, lr=1e-3, gamma=0.99,

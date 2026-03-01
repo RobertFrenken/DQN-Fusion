@@ -1,14 +1,15 @@
 """Layer boundary enforcement tests.
 
-Verifies the 3-layer import hierarchy:
-    config/    (top)     — never imports from pipeline/ or src/
-    pipeline/  (middle)  — never has top-level imports from src/
-    src/       (bottom)  — never imports from pipeline/
+Verifies the 3-layer import hierarchy under graphids/:
+    config/    (top)     — never imports from pipeline/ or core/
+    pipeline/  (middle)  — never has top-level imports from core/
+    core/      (bottom)  — never imports from pipeline/
 
 Uses AST analysis (no runtime imports needed).
 
 Run:  python -m pytest tests/test_layer_boundaries.py -v
 """
+
 from __future__ import annotations
 
 import ast
@@ -17,10 +18,11 @@ from pathlib import Path
 import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
+PACKAGE_ROOT = PROJECT_ROOT / "graphids"
 
-CONFIG_DIR = PROJECT_ROOT / "config"
-PIPELINE_DIR = PROJECT_ROOT / "pipeline"
-SRC_DIR = PROJECT_ROOT / "src"
+CONFIG_DIR = PACKAGE_ROOT / "config"
+PIPELINE_DIR = PACKAGE_ROOT / "pipeline"
+CORE_DIR = PACKAGE_ROOT / "core"
 
 
 def _collect_python_files(directory: Path) -> list[Path]:
@@ -81,25 +83,31 @@ def _node_contains(parent: ast.AST, target: ast.AST) -> bool:
     return False
 
 
-def _modules_imported(filepath: Path, top_level_only: bool = False) -> set[str]:
-    """Return the set of root module names imported by a file."""
+def _subpackage_imported(filepath: Path, top_level_only: bool = False) -> set[str]:
+    """Return the set of graphids subpackage names imported by a file.
+
+    Extracts the second-level module name from graphids.X imports.
+    E.g. 'from graphids.config import ...' -> {'config'}
+         'from graphids.core.models import ...' -> {'core'}
+    """
     imports = _extract_imports(filepath)
     modules = set()
     for mod, is_top_level in imports:
         if top_level_only and not is_top_level:
             continue
-        root = mod.split(".")[0]
-        modules.add(root)
+        parts = mod.split(".")
+        if len(parts) >= 2 and parts[0] == "graphids":
+            modules.add(parts[1])  # "config", "pipeline", "core"
     return modules
 
 
 class TestConfigLayerBoundary:
-    """config/ must never import from pipeline/ or src/."""
+    """config/ must never import from pipeline/ or core/."""
 
     def test_config_no_pipeline_imports(self):
         violations = []
         for f in _collect_python_files(CONFIG_DIR):
-            mods = _modules_imported(f)
+            mods = _subpackage_imported(f)
             if "pipeline" in mods:
                 violations.append(str(f.relative_to(PROJECT_ROOT)))
         assert not violations, (
@@ -107,43 +115,41 @@ class TestConfigLayerBoundary:
             + "\n  ".join(violations)
         )
 
-    def test_config_no_src_imports(self):
+    def test_config_no_core_imports(self):
         violations = []
         for f in _collect_python_files(CONFIG_DIR):
-            mods = _modules_imported(f)
-            if "src" in mods:
+            mods = _subpackage_imported(f)
+            if "core" in mods:
                 violations.append(str(f.relative_to(PROJECT_ROOT)))
         assert not violations, (
-            f"config/ imports from src/ (violates layer boundary):\n  "
-            + "\n  ".join(violations)
+            f"config/ imports from core/ (violates layer boundary):\n  " + "\n  ".join(violations)
         )
 
 
-class TestSrcLayerBoundary:
-    """src/ must never import from pipeline/."""
+class TestCoreLayerBoundary:
+    """core/ must never import from pipeline/."""
 
-    def test_src_no_pipeline_imports(self):
+    def test_core_no_pipeline_imports(self):
         violations = []
-        for f in _collect_python_files(SRC_DIR):
-            mods = _modules_imported(f)
+        for f in _collect_python_files(CORE_DIR):
+            mods = _subpackage_imported(f)
             if "pipeline" in mods:
                 violations.append(str(f.relative_to(PROJECT_ROOT)))
         assert not violations, (
-            f"src/ imports from pipeline/ (violates layer boundary):\n  "
-            + "\n  ".join(violations)
+            f"core/ imports from pipeline/ (violates layer boundary):\n  " + "\n  ".join(violations)
         )
 
 
 class TestPipelineLayerBoundary:
-    """pipeline/ must not have top-level imports from src/ (lazy/function-local OK)."""
+    """pipeline/ must not have top-level imports from core/ (lazy/function-local OK)."""
 
-    def test_pipeline_no_toplevel_src_imports(self):
+    def test_pipeline_no_toplevel_core_imports(self):
         violations = []
         for f in _collect_python_files(PIPELINE_DIR):
-            mods = _modules_imported(f, top_level_only=True)
-            if "src" in mods:
+            mods = _subpackage_imported(f, top_level_only=True)
+            if "core" in mods:
                 violations.append(str(f.relative_to(PROJECT_ROOT)))
         assert not violations, (
-            f"pipeline/ has top-level imports from src/ (should be lazy/function-local):\n  "
+            f"pipeline/ has top-level imports from core/ (should be lazy/function-local):\n  "
             + "\n  ".join(violations)
         )

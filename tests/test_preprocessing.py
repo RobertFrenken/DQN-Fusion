@@ -17,13 +17,13 @@ import numpy as np
 import pandas as pd
 import torch
 
-from config.constants import NODE_FEATURE_COUNT, EDGE_FEATURE_COUNT
-from src.preprocessing.vocabulary import EntityVocabulary, _safe_hex_to_int
-from src.preprocessing.schema import IRSchema, CAN_BUS_SCHEMA
-from src.preprocessing.engine import GraphEngine
-from src.preprocessing.dataset import GraphDataset
-from src.preprocessing.adapters.can_bus import CANBusAdapter
-from src.preprocessing.parallel import process_dataset
+from graphids.config.constants import NODE_FEATURE_COUNT, EDGE_FEATURE_COUNT
+from graphids.core.preprocessing.vocabulary import EntityVocabulary, _safe_hex_to_int
+from graphids.core.preprocessing.schema import IRSchema, CAN_BUS_SCHEMA
+from graphids.core.preprocessing.engine import GraphEngine
+from graphids.core.preprocessing.dataset import GraphDataset
+from graphids.core.preprocessing.adapters.can_bus import CANBusAdapter
+from graphids.core.preprocessing.parallel import process_dataset
 from torch_geometric.data import Data
 
 
