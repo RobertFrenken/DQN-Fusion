@@ -5,7 +5,7 @@ Config is defined by four orthogonal concerns: **model_type** (architecture), **
 **Resolution order**: `defaults.yaml` → `models/{type}/{scale}.yaml` → `auxiliaries/{aux}.yaml` → CLI overrides → Pydantic validation → frozen.
 
 ```python
-from config import resolve, PipelineConfig
+from graphids.config import resolve, PipelineConfig
 cfg = resolve("vgae", "large", dataset="hcrl_sa")          # No KD
 cfg = resolve("gat", "small", auxiliaries="kd_standard")    # With KD
 cfg.vgae.latent_dim    # Nested sub-config access

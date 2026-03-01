@@ -18,15 +18,15 @@ You are an expert ML debugger specializing in PyTorch, PyTorch Lightning, and GN
 
 ## KD-GAT Codebase Structure
 
-- `src/models/` - Model definitions (GATWithJK, VGAE, DQN)
-- `src/training/` - Training loops and data modules
-- `src/preprocessing/` - Graph construction from CAN bus data
-- `config/schema.py` - Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`
-- `config/resolver.py` - YAML composition: `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`
-- `config/paths.py` - Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
-- `pipeline/stages/` - Training, fusion, evaluation modules (use nested config access: `cfg.vgae.latent_dim`, `cfg.gat.hidden`, etc.)
-- `pipeline/cli.py` - Entry point, W&B lifecycle, archive/restore on failure
-- `pipeline/orchestration/` - Ray orchestration (ray_pipeline, ray_slurm)
+- `graphids/core/models/` - Model definitions (GATWithJK, VGAE, DQN)
+- `graphids/core/training/` - Training loops and data modules
+- `graphids/core/preprocessing/` - Graph construction from CAN bus data
+- `graphids/config/schema.py` - Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`
+- `graphids/config/resolver.py` - YAML composition: `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`
+- `graphids/config/paths.py` - Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`
+- `graphids/pipeline/stages/` - Training, fusion, evaluation modules (use nested config access: `cfg.vgae.latent_dim`, `cfg.gat.hidden`, etc.)
+- `graphids/pipeline/cli.py` - Entry point, W&B lifecycle, archive/restore on failure
+- `graphids/pipeline/orchestration/` - Ray orchestration (ray_pipeline, ray_slurm)
 - `experimentruns/` - Experiment outputs and logs
 
 ## Common Issues to Check
@@ -35,7 +35,7 @@ You are an expert ML debugger specializing in PyTorch, PyTorch Lightning, and GN
 - NaN/Inf in loss → Check learning rate, gradient clipping, input normalization
 - CUDA OOM → Check batch size, model size, gradient checkpointing
 - Shape mismatch → Check node/edge feature dimensions (11 each)
-- Config mismatch → Verify config resolution: `from config import resolve; cfg = resolve("vgae", "large", dataset="hcrl_sa")`
+- Config mismatch → Verify config resolution: `from graphids.config import resolve; cfg = resolve("vgae", "large", dataset="hcrl_sa")`
 
 ### Data Issues
 - Empty graphs → Check preprocessing window size and stride

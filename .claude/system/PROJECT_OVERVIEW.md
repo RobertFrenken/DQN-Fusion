@@ -14,25 +14,25 @@ VGAE (unsupervised reconstruction) → GAT (supervised classification) → DQN (
                                      EVALUATION ←────── TEMPORAL (optional: GAT + Transformer)
 ```
 
-**Entry point**: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>`
+**Entry point**: `python -m graphids.pipeline.cli <stage> --model <type> --scale <size> --dataset <name>`
 
 ## Layered Architecture
 
 Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
-### Layer 1: `config/` (inert, declarative — no pipeline/ or src/ imports)
+### Layer 1: `graphids/config/` (inert, declarative — no pipeline/ or core/ imports)
 
 - `schema.py` — Pydantic v2 frozen models: `PipelineConfig`, `VGAEArchitecture`, `GATArchitecture`, `DQNArchitecture`, `AuxiliaryConfig`, `TrainingConfig`, `FusionConfig`, `PreprocessingConfig`, `TemporalConfig`. Legacy flat JSON loading via `_from_legacy_flat()` (for old config.json files — all dirs now use new naming).
 - `resolver.py` — YAML composition: `resolve(model_type, scale, auxiliaries="none", **cli_overrides)`, `list_models()`, `list_auxiliaries()`. Merge order: defaults → model_def → auxiliaries → CLI.
 - `paths.py` — Path layout: `{dataset}/{model_type}_{scale}_{stage}[_{aux}]`. String-based variants for flow tasks.
 - `constants.py` — Domain/infrastructure constants: feature counts, window sizes, SLURM defaults, memory limits
-- `__init__.py` — Re-exports for clean `from config import PipelineConfig, resolve, checkpoint_path` usage
+- `__init__.py` — Re-exports for clean `from graphids.config import PipelineConfig, resolve, checkpoint_path` usage
 - `defaults.yaml` — Global baseline config values
 - `datasets.yaml` — Dataset catalog (6 automotive datasets)
 - `models/{vgae,gat,dqn}/{large,small}.yaml` — Architecture × Scale definitions
 - `auxiliaries/{none,kd_standard}.yaml` — Loss modifier configs (composable)
 
-### Layer 2: `pipeline/` (orchestration — imports config/ freely, lazy imports from src/)
+### Layer 2: `graphids/pipeline/` (orchestration — imports graphids.config freely, lazy imports from graphids.core)
 
 - `cli.py` — Arg parser (`--model`/`--scale`/`--auxiliaries`), W&B run lifecycle (`wandb.init`/`wandb.finish`), S3 lakehouse sync, `STAGE_FNS` dispatch
 - `stages/` — Training logic split into modules:
@@ -51,11 +51,11 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 - `lakehouse.py` — Fire-and-forget sync to S3 (structured metrics as JSON)
 - `export.py` — Filesystem scanning → static JSON/Parquet export for Quarto reports
 
-### Layer 3: `src/` (domain — imports config.constants, never imports pipeline/)
+### Layer 3: `graphids/core/` (domain — imports graphids.config.constants, never imports graphids.pipeline)
 
 ## Model Registry
 
-`src/models/registry.py` centralizes model construction and fusion feature extraction.
+`graphids/core/models/registry.py` centralizes model construction and fusion feature extraction.
 
 **Registered models** (order matters — determines 15-D DQN state layout):
 
@@ -67,7 +67,7 @@ Three-layer import hierarchy (enforced by `tests/test_layer_boundaries.py`):
 
 **Usage**:
 ```python
-from src.models import get, fusion_state_dim, extractors
+from graphids.core.models import get, fusion_state_dim, extractors
 
 entry = get("vgae")                  # ModelEntry(model_type, factory, extractor)
 model = entry.factory(cfg, num_ids, in_ch)  # Construct model from config
@@ -77,23 +77,23 @@ pairs = extractors()                 # [("vgae", ext), ("gat", ext)] in registra
 
 **Adding a new model**: Register a `ModelEntry` in `registry.py` with a factory function (lazy import to avoid circular deps) and an optional `FusionFeatureExtractor` implementation.
 
-## Supporting Code: `src/`
+## Supporting Code: `graphids/core/`
 
-`pipeline/stages/` imports from these `src/` modules:
-- `src.models.vgae`, `src.models.gat`, `src.models.dqn`, `src.models.temporal` — model architectures
-- `src.explain` — GNNExplainer feature importance analysis
-- `src.training.datamodules` — `load_dataset()`, `load_test_scenarios()`
-- `src.preprocessing.preprocessing` — `GraphDataset`, graph construction
-- `src.preprocessing.temporal` — `TemporalGrouper`, `GraphSequence` (sliding window over ordered graphs)
+`graphids/pipeline/stages/` imports from these `graphids/core/` modules:
+- `graphids.core.models.vgae`, `graphids.core.models.gat`, `graphids.core.models.dqn`, `graphids.core.models.temporal` — model architectures
+- `graphids.core.explain` — GNNExplainer feature importance analysis
+- `graphids.core.training.datamodules` — `load_dataset()`, `load_test_scenarios()`
+- `graphids.core.preprocessing.preprocessing` — `GraphDataset`, graph construction
+- `graphids.core.preprocessing.temporal` — `TemporalGrouper`, `GraphSequence` (sliding window over ordered graphs)
 
-`load_dataset()` accepts direct `Path` arguments from `pipeline/paths.py`. No legacy adapters remain.
+`load_dataset()` accepts direct `Path` arguments from `graphids/pipeline/paths.py`. No legacy adapters remain.
 
 ## Config System
 
 Config defined by four orthogonal concerns: **model_type** (architecture), **scale** (capacity), **auxiliaries** (loss modifiers), **dataset**.
 
 ```python
-from config import resolve, PipelineConfig
+from graphids.config import resolve, PipelineConfig
 cfg = resolve("vgae", "large", dataset="hcrl_sa")          # No KD
 cfg = resolve("gat", "small", auxiliaries="kd_standard")    # With KD
 cfg.vgae.latent_dim    # Nested sub-config access
@@ -110,7 +110,7 @@ cfg.active_arch        # Architecture config for active model_type
 ## Data Pipeline
 
 ```
-config/datasets.yaml                # Dataset catalog (source of truth for dataset metadata)
+graphids/config/datasets.yaml       # Dataset catalog (source of truth for dataset metadata)
      ↓
 data/automotive/{dataset}/train_*/  →  data/cache/{dataset}/processed_graphs.pt
      (raw CSVs, DVC-tracked)              (PyG Data objects, DVC-tracked)
@@ -127,10 +127,10 @@ data/automotive/{dataset}/train_*/  →  data/cache/{dataset}/processed_graphs.p
 
 | Model | File | Large | Small | Ratio |
 |-------|------|-------|-------|-------|
-| `GraphAutoencoderNeighborhood` | `src/models/vgae.py` | (480,240,48) latent 48 | (80,40,16) latent 16 | ~4x |
-| `GATWithJK` | `src/models/gat.py` | hidden 48, 3 layers, 8 heads, fc_layers 1 (343k) | hidden 24, 2 layers, 4 heads, fc_layers 2 (65k) | 5.3x |
-| `EnhancedDQNFusionAgent` | `src/models/dqn.py` | hidden 576, 3 layers | hidden 160, 2 layers | ~13x |
-| `TemporalGraphClassifier` | `src/models/temporal.py` | Shared GAT + 2-layer Transformer (hidden 64, 4 heads) | — | opt-in |
+| `GraphAutoencoderNeighborhood` | `graphids/core/models/vgae.py` | (480,240,48) latent 48 | (80,40,16) latent 16 | ~4x |
+| `GATWithJK` | `graphids/core/models/gat.py` | hidden 48, 3 layers, 8 heads, fc_layers 1 (343k) | hidden 24, 2 layers, 4 heads, fc_layers 2 (65k) | 5.3x |
+| `EnhancedDQNFusionAgent` | `graphids/core/models/dqn.py` | hidden 576, 3 layers | hidden 160, 2 layers | ~13x |
+| `TemporalGraphClassifier` | `graphids/core/models/temporal.py` | Shared GAT + 2-layer Transformer (hidden 64, 4 heads) | — | opt-in |
 
 DQN state: 15D vector (VGAE 8D: errors + latent stats + confidence; GAT 7D: logits + embedding stats + confidence).
 
@@ -175,7 +175,7 @@ experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
 
 **S3 Lakehouse** (AWS):
 - Structured metrics as JSON at `s3://kd-gat/lakehouse/runs/`, queryable via DuckDB
-- Fire-and-forget sync from `pipeline/lakehouse.py`
+- Fire-and-forget sync from `graphids/pipeline/lakehouse.py`
 
 ## Quarto Reports & Dashboard
 
@@ -185,7 +185,7 @@ experimentruns/{dataset}/{model_type}_{scale}_{stage}[_{aux}]/
 
 **Slides:** `reports/slides.qmd` — Revealjs presentation.
 
-**Export pipeline**: `pipeline/export.py` → `export_all()` generates: leaderboard, per-run metrics, training curves, KD transfer, datasets, runs, metric catalog, graph samples, model sizes. Exports go directly to `reports/data/`.
+**Export pipeline**: `graphids/pipeline/export.py` → `export_all()` generates: leaderboard, per-run metrics, training curves, KD transfer, datasets, runs, metric catalog, graph samples, model sizes. Exports go directly to `reports/data/`.
 
 **Deployment:** GitHub Actions renders Quarto on push to main and deploys via `actions/deploy-pages` (Actions-based Pages). CI: lint → test → quarto-build → deploy.
 

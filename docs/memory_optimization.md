@@ -45,7 +45,7 @@ graphs = torch.load(cache_file, map_location='cpu', mmap=True)
 **Configuration**:
 ```bash
 # Enable via CLI
-python -m pipeline.cli autoencoder --preset vgae,student \
+python -m graphids.pipeline.cli autoencoder --preset vgae,student \
     --use-kd true \
     --teacher-path path/to/teacher.pt \
     --offload-teacher-to-cpu true

@@ -4,16 +4,16 @@
 
 Enforced by `tests/test_layer_boundaries.py`:
 
-1. **`config/`** (top): Never imports from `pipeline/` or `src/`. Pure data definitions + path helpers.
-2. **`pipeline/`** (middle): Imports `config/` freely at top level. Imports `src/` only inside functions (lazy).
-3. **`src/`** (bottom): Imports `config.constants` for shared constants. Never imports from `pipeline/`.
+1. **`graphids/config/`** (top): Never imports from `graphids/pipeline/` or `graphids/core/`. Pure data definitions + path helpers.
+2. **`graphids/pipeline/`** (middle): Imports `graphids.config` freely at top level. Imports `graphids.core` only inside functions (lazy).
+3. **`graphids/core/`** (bottom): Imports `graphids.config.constants` for shared constants. Never imports from `graphids.pipeline`.
 
 When adding new code:
-- Constants → `config/constants.py`
-- Hyperparameters → Pydantic models in `config/schema.py`
-- Architecture defaults → YAML files in `config/models/` or `config/auxiliaries/`
-- Path helpers → `config/paths.py`
-- `from config import PipelineConfig, resolve, checkpoint_path` — use the package re-exports
+- Constants → `graphids/config/constants.py`
+- Hyperparameters → Pydantic models in `graphids/config/schema.py`
+- Architecture defaults → YAML files in `graphids/config/models/` or `graphids/config/auxiliaries/`
+- Path helpers → `graphids/config/paths.py`
+- `from graphids.config import PipelineConfig, resolve, checkpoint_path` — use the package re-exports
 
 ## General Style
 

@@ -20,7 +20,7 @@ export PATH="$HOME/KD-GAT/.venv/bin:$PATH"
 export PYTHONPATH=/users/PAS2022/rf15/KD-GAT:$PYTHONPATH
 
 # Then run:
-python -m pipeline.cli ...
+python -m graphids.pipeline.cli ...
 python -m pytest tests/ -v
 ```
 
@@ -33,6 +33,6 @@ python -m pytest tests/ -v
 
 ## Common Failures
 
-- `ModuleNotFoundError: No module named 'config'` → missing PYTHONPATH
+- `ModuleNotFoundError: No module named 'graphids'` → missing PYTHONPATH or venv not activated
 - `ModuleNotFoundError: No module named 'torch'` → venv not activated (using system Python)
 - Never use conda's `gnn-experiments` env — it is deprecated and will be removed

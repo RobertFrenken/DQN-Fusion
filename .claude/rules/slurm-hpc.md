@@ -14,18 +14,18 @@
 - Test on small datasets (`hcrl_ch`) before large ones (`set_02`+).
 - SLURM logs go to `slurm_logs/`, experiment outputs to `experimentruns/`.
 - Heavy tests use `@pytest.mark.slurm` — auto-skipped on login nodes.
-- **Always run tests via SLURM** (`cpu` partition, 8 CPUs, 16GB). Submit with `bash scripts/run_tests_slurm.sh`.
+- **Always run tests via SLURM** (`cpu` partition, 8 CPUs, 16GB). Submit with `bash scripts/slurm/run_tests_slurm.sh`.
 
 ## Login Node Safety
 
 **Safe on login node:**
-- Import checks: `python -c "from module import func; print('OK')"`
-- Exports: `python -m pipeline.export`
-- DuckDB rebuild: `python -m pipeline.build_analytics`
+- Import checks: `python -c "from graphids.config import resolve; print('OK')"`
+- Exports: `python -m graphids.pipeline.export`
+- DuckDB rebuild: `python -m graphids.pipeline.build_analytics`
 - Quarto: `quarto render`, `quarto preview`
 - Git, DVC, W&B sync, ruff
 
 **Must go through SLURM:**
-- `python -m pipeline.cli <any stage>` — all training/evaluation
+- `python -m graphids.pipeline.cli <any stage>` — all training/evaluation
 - `python -m pytest` — test suite
 - Any script that imports and runs models

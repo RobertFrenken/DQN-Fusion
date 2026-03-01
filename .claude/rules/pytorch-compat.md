@@ -2,8 +2,7 @@
 paths:
   - "pyproject.toml"
   - "uv.lock"
-  - "src/**/*.py"
-  - "pipeline/**/*.py"
+  - "graphids/**/*.py"
 ---
 
 # uv + PyTorch + PyG on OSC — Version Compatibility

@@ -1,9 +1,9 @@
 ---
 paths:
-  - "pipeline/lakehouse.py"
-  - "pipeline/export.py"
-  - "pipeline/build_analytics.py"
-  - "pipeline/cli.py"
+  - "graphids/pipeline/lakehouse.py"
+  - "graphids/pipeline/export.py"
+  - "graphids/pipeline/build_analytics.py"
+  - "graphids/pipeline/cli.py"
   - "data/datalake/**"
 ---
 
@@ -11,7 +11,7 @@ paths:
 
 ## W&B
 
-- `cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle.
+- `graphids/pipeline/cli.py` owns `wandb.init()`/`wandb.finish()` lifecycle.
 - Lightning's `WandbLogger` attaches to the active run for per-epoch metrics.
 - Compute nodes auto-set `WANDB_MODE=offline`; sync offline runs via `wandb sync wandb/run-*`.
 
@@ -29,17 +29,15 @@ Parquet-based structured storage in `data/datalake/`:
 | `training_curves/{run_id}.parquet` | Per-epoch metrics from Lightning CSV logs |
 | `analytics.duckdb` | Views + convenience queries over Parquet (always rebuildable) |
 
-**Write path**: `lakehouse.py` appends to Parquet on run completion. `cli.py` calls `register_artifacts()` after each stage. S3 backup via `aws s3 sync` in SLURM job epilog.
+**Write path**: `graphids/pipeline/lakehouse.py` appends to Parquet on run completion. `graphids/pipeline/cli.py` calls `register_artifacts()` after each stage. S3 backup via `aws s3 sync` in SLURM job epilog.
 
-**Read path**: `build_analytics.py` creates DuckDB views over Parquet. `export.py` reads run metadata from datalake.
-
-**Migration**: `python -m pipeline.migrate_datalake` builds initial Parquet from existing 72 runs. Idempotent.
+**Read path**: `graphids/pipeline/build_analytics.py` creates DuckDB views over Parquet. `graphids/pipeline/export.py` reads run metadata from datalake.
 
 ## Analytics DuckDB
 
-- `pipeline/build_analytics.py` creates `data/datalake/analytics.duckdb` with views over Parquet.
+- `graphids/pipeline/build_analytics.py` creates `data/datalake/analytics.duckdb` with views over Parquet.
 - Views: `runs`, `metrics`, `datasets`, `configs`, `artifacts`, `v_leaderboard`, `v_kd_impact`.
-- Rebuild: `python -m pipeline.build_analytics` (sub-second, just creates views).
+- Rebuild: `python -m graphids.pipeline.build_analytics` (sub-second, just creates views).
 
 ## Artifacts
 
@@ -52,4 +50,4 @@ Stored in run directories under `experimentruns/`. Indexed in `artifacts.parquet
 
 ## Report Export
 
-`python -m pipeline.export` reads datalake Parquet → static JSON/Parquet in `reports/data/` (leaderboard, runs, metrics, training curves, datasets, KD transfer, model sizes). ~2s, login node safe. Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/`. Quarto site auto-deploys via GitHub Actions on push to main.
+`python -m graphids.pipeline.export` reads datalake Parquet → static JSON/Parquet in `reports/data/` (leaderboard, runs, metrics, training curves, datasets, KD transfer, model sizes). ~2s, login node safe. Heavy analysis (UMAP, attention, CKA, etc.) lives in `notebooks/analysis/`. Quarto site auto-deploys via GitHub Actions on push to main.

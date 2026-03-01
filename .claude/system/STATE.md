@@ -9,8 +9,8 @@
 
 | Component | Details |
 |-----------|---------|
-| **Config system** | Pydantic v2 frozen models + YAML composition. `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`. 6 datasets in `config/datasets.yaml`. |
-| **Training pipeline** | 72 legacy validation runs archived to `data/datalake_archive/`. CLI: `python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>` |
+| **Config system** | Pydantic v2 frozen models + YAML composition. `resolve(model_type, scale, auxiliaries, **overrides)` → frozen `PipelineConfig`. 6 datasets in `graphids/config/datasets.yaml`. |
+| **Training pipeline** | 72 legacy validation runs archived to `data/datalake_archive/`. CLI: `python -m graphids.pipeline.cli <stage> --model <type> --scale <size> --dataset <name>` |
 | **Ray orchestration** | `train_pipeline()` and `eval_pipeline()` via Ray remote tasks + SLURM. `--local` flag for Ray local mode. Subprocess-per-stage dispatch (intentional — CUDA context isolation). `small_nokd` runs concurrently with `large`. Benchmark mode via `KD_GAT_BENCHMARK=1`. |
 | **SLURM integration** | Pitzer cluster. GPU (2x V100 per node, 362GB RAM, PAS3209) + CPU partitions. |
 | **Graph caching** | All 6 datasets cached with test scenarios (`processed_graphs.pt` + `test_*.pt`). DynamicBatchSampler for variable-size graphs. |

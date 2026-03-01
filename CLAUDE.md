@@ -8,31 +8,30 @@ Large models are compressed into small models via KD auxiliaries for edge deploy
 
 ```bash
 # Run a single stage
-python -m pipeline.cli <stage> --model <type> --scale <size> --dataset <name>
+python -m graphids.pipeline.cli <stage> --model <type> --scale <size> --dataset <name>
 # Stages: autoencoder, curriculum, normal, fusion, evaluation, temporal
 # Models: vgae, gat, dqn | Scales: large, small | Auxiliaries: none, kd_standard
 
 # Examples
-python -m pipeline.cli autoencoder --model vgae --scale large --dataset hcrl_sa
-python -m pipeline.cli curriculum --model gat --scale small --auxiliaries kd_standard --teacher-path <path> --dataset hcrl_sa
-python -m pipeline.cli fusion --model dqn --scale large --dataset hcrl_ch
-python -m pipeline.cli temporal --model gat --scale large --dataset hcrl_sa -O temporal.enabled true
-python -m pipeline.cli autoencoder --model vgae --scale large -O training.lr 0.001 -O vgae.latent_dim 16
+python -m graphids.pipeline.cli autoencoder --model vgae --scale large --dataset hcrl_sa
+python -m graphids.pipeline.cli curriculum --model gat --scale small --auxiliaries kd_standard --teacher-path <path> --dataset hcrl_sa
+python -m graphids.pipeline.cli fusion --model dqn --scale large --dataset hcrl_ch
+python -m graphids.pipeline.cli temporal --model gat --scale large --dataset hcrl_sa -O temporal.enabled true
+python -m graphids.pipeline.cli autoencoder --model vgae --scale large -O training.lr 0.001 -O vgae.latent_dim 16
 
 # Full pipeline via Ray + SLURM
-python -m pipeline.cli flow --dataset hcrl_sa
-sbatch scripts/ray_slurm.sh flow --dataset hcrl_sa
-python -m pipeline.cli flow --dataset hcrl_sa --local  # No SLURM
+python -m graphids.pipeline.cli flow --dataset hcrl_sa
+sbatch scripts/slurm/ray_slurm.sh flow --dataset hcrl_sa
+python -m graphids.pipeline.cli flow --dataset hcrl_sa --local  # No SLURM
 
 # Export + analytics
-python -m pipeline.export                      # All exports → reports/data/ (~2s, login node OK)
-python -m pipeline.export --reports            # Also copy datalake Parquet to reports/data/
-python -m pipeline.build_analytics             # DuckDB rebuild (sub-second, views over Parquet)
-python -m pipeline.migrate_datalake            # One-time: filesystem → Parquet datalake
+python -m graphids.pipeline.export                      # All exports → reports/data/ (~2s, login node OK)
+python -m graphids.pipeline.export --reports            # Also copy datalake Parquet to reports/data/
+python -m graphids.pipeline.build_analytics             # DuckDB rebuild (sub-second, views over Parquet)
 
 # Tests — ALWAYS submit to SLURM
-bash scripts/run_tests_slurm.sh
-bash scripts/run_tests_slurm.sh -k "test_full_pipeline"
+bash scripts/slurm/run_tests_slurm.sh
+bash scripts/slurm/run_tests_slurm.sh -k "test_full_pipeline"
 
 # Reports (Quarto) — site auto-deploys via GitHub Actions on push to main
 quarto preview reports/                     # Dev server

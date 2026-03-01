@@ -3,7 +3,7 @@
 # To add a new dataset:
 #   1. Place raw CSVs in data/{domain}/{dataset_name}/
 #   2. Add an entry below following the existing format
-#   3. Run: python -m pipeline.ingest <dataset_name>
+#   3. Run: python -m graphids.pipeline.ingest <dataset_name>
 #   4. Run: dvc add data/parquet/{domain}/{dataset_name}
 
 hcrl_ch:

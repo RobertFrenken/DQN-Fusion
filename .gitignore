@@ -85,7 +85,7 @@ slurm-*.out
 
 # ===== REPORT DATA =====
 # Tracked: Quarto site needs these at build time (~5 MB total)
-# Regenerate locally: python -m pipeline.export
+# Regenerate locally: python -m graphids.pipeline.export
 
 # Generated figures
 *.png

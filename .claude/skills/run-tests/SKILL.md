@@ -42,9 +42,9 @@ Tests marked `@pytest.mark.slurm` (E2E pipeline, smoke training) are auto-skippe
 login nodes. To run them on a compute node:
 
 ```bash
-bash scripts/run_tests_slurm.sh                         # all tests including slurm-marked
-bash scripts/run_tests_slurm.sh -k "test_full_pipeline"  # specific heavy test
-bash scripts/run_tests_slurm.sh -m slurm                 # only slurm-marked tests
+bash scripts/slurm/run_tests_slurm.sh                         # all tests including slurm-marked
+bash scripts/slurm/run_tests_slurm.sh -k "test_full_pipeline"  # specific heavy test
+bash scripts/slurm/run_tests_slurm.sh -m slurm                 # only slurm-marked tests
 ```
 
 ## Notes
@@ -52,4 +52,4 @@ bash scripts/run_tests_slurm.sh -m slurm                 # only slurm-marked tes
 - Preprocessing tests are slow (they build actual graphs). Use `-k "not preprocessing"` to skip them.
 - Layer boundary tests (`tests/test_layer_boundaries.py`) verify the 3-layer import hierarchy.
 - E2E tests have a known pre-existing assertion issue with config.json.
-- Heavy tests (`@pytest.mark.slurm`) auto-skip on login nodes. Submit via `scripts/run_tests_slurm.sh`.
+- Heavy tests (`@pytest.mark.slurm`) auto-skip on login nodes. Submit via `scripts/slurm/run_tests_slurm.sh`.
