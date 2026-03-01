@@ -6,22 +6,22 @@ Core function:
 """
 
 import json
-import os
 import logging
+import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 import torch
 
+import graphids.config.constants as constants
 from graphids.config.constants import (
-    DEFAULT_WINDOW_SIZE,
     DEFAULT_STRIDE,
-    NODE_FEATURE_COUNT,
+    DEFAULT_WINDOW_SIZE,
     EDGE_FEATURE_COUNT,
+    NODE_FEATURE_COUNT,
     PREPROCESSING_VERSION,
 )
-import graphids.config.constants as constants
 from graphids.core.preprocessing.dataset import GraphDataset
 
 logger = logging.getLogger(__name__)
@@ -235,8 +235,8 @@ def _process_dataset_from_scratch(
     if not os.path.exists(dataset_path):
         raise FileNotFoundError(f"Dataset path does not exist: {dataset_path}")
 
-    from graphids.core.preprocessing.parallel import process_dataset
     from graphids.core.preprocessing.adapters.can_bus import CANBusAdapter
+    from graphids.core.preprocessing.parallel import process_dataset
 
     adapter = CANBusAdapter()
     csv_files = adapter.discover_files(str(dataset_path), "train_")
@@ -319,6 +319,7 @@ def load_test_scenarios(
         Dict mapping scenario name → list of PyG Data objects.
     """
     import pickle
+
     from graphids.core.preprocessing.parallel import process_dataset
     from graphids.core.preprocessing.vocabulary import EntityVocabulary
 
@@ -436,7 +437,7 @@ def _write_cache_metadata(cache_dir, dataset_name, graphs, id_mapping, csv_files
 
     metadata = {
         "dataset": dataset_name,
-        "created_at": datetime.now(timezone.utc).isoformat(),
+        "created_at": datetime.now(UTC).isoformat(),
         "window_size": DEFAULT_WINDOW_SIZE,
         "stride": DEFAULT_STRIDE,
         "num_graphs": len(graphs),

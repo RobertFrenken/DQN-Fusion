@@ -86,7 +86,11 @@ def explain_graphs(
         labels, predictions.
     """
     from torch_geometric.explain import Explainer, GNNExplainer
-    from torch_geometric.explain.config import ExplanationType, ModelMode, ModelTaskLevel
+    from torch_geometric.explain.config import (
+        ExplanationType,
+        ModelMode,
+        ModelTaskLevel,
+    )
 
     wrapped = _wrap_for_explainer(model, model_type)
     wrapped.eval()

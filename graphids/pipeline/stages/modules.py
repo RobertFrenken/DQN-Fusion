@@ -4,13 +4,19 @@ from __future__ import annotations
 import logging
 from typing import Optional
 
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch_lightning as pl
 
 from graphids.config import PipelineConfig
-from .utils import build_optimizer_dict, effective_batch_size, compute_node_budget, make_dataloader
+
+from .utils import (
+    build_optimizer_dict,
+    compute_node_budget,
+    effective_batch_size,
+    make_dataloader,
+)
 
 log = logging.getLogger(__name__)
 
@@ -31,8 +37,8 @@ class VGAEModule(pl.LightningModule):
         cfg: PipelineConfig,
         num_ids: int,
         in_channels: int,
-        teacher: Optional[nn.Module] = None,
-        projection: Optional[nn.Linear] = None,
+        teacher: nn.Module | None = None,
+        projection: nn.Linear | None = None,
     ):
         super().__init__()
         from graphids.core.models.vgae import GraphAutoencoderNeighborhood
@@ -136,7 +142,7 @@ class GATModule(pl.LightningModule):
         num_ids: int,
         in_channels: int,
         num_classes: int = 2,
-        teacher: Optional[nn.Module] = None,
+        teacher: nn.Module | None = None,
     ):
         super().__init__()
         from graphids.core.models.gat import GATWithJK

@@ -12,7 +12,7 @@ Downstream consumption:
 from __future__ import annotations
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -71,7 +71,7 @@ def _append_to_datalake(
         return False
 
     try:
-        now = datetime.now(timezone.utc).isoformat()
+        now = datetime.now(UTC).isoformat()
         datalake = str(_DATALAKE_ROOT)
         con = duckdb.connect()
 

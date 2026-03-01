@@ -7,11 +7,18 @@ from __future__ import annotations
 import pytest
 import torch.nn as nn
 
-from graphids.core.models.registry import (
-    ModelEntry, register, get, fusion_state_dim, extractors, _REGISTRY,
-)
 from graphids.core.models.fusion_features import (
-    FusionFeatureExtractor, VGAEFusionExtractor, GATFusionExtractor,
+    FusionFeatureExtractor,
+    GATFusionExtractor,
+    VGAEFusionExtractor,
+)
+from graphids.core.models.registry import (
+    _REGISTRY,
+    ModelEntry,
+    extractors,
+    fusion_state_dim,
+    get,
+    register,
 )
 
 
@@ -73,7 +80,7 @@ class TestFactory:
 
     def test_vgae_factory(self):
         from graphids.config import resolve
-        from tests.conftest import NUM_IDS, IN_CHANNELS, SMOKE_OVERRIDES
+        from tests.conftest import IN_CHANNELS, NUM_IDS, SMOKE_OVERRIDES
 
         cfg = resolve("vgae", "large", **SMOKE_OVERRIDES)
         model = get("vgae").factory(cfg, NUM_IDS, IN_CHANNELS)
@@ -81,7 +88,7 @@ class TestFactory:
 
     def test_gat_factory(self):
         from graphids.config import resolve
-        from tests.conftest import NUM_IDS, IN_CHANNELS, SMOKE_OVERRIDES
+        from tests.conftest import IN_CHANNELS, NUM_IDS, SMOKE_OVERRIDES
 
         cfg = resolve("gat", "large", **SMOKE_OVERRIDES)
         model = get("gat").factory(cfg, NUM_IDS, IN_CHANNELS)

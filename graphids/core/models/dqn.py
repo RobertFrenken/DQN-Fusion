@@ -1,7 +1,6 @@
 import logging
 from abc import ABC, abstractmethod
 from collections import deque
-from typing import Dict, List, Optional, Tuple
 
 import numpy as np
 import torch
@@ -186,7 +185,7 @@ class EnhancedDQNFusionAgent:
 
     def select_action(
         self, state_features: np.ndarray, training: bool = True
-    ) -> Tuple[float, int, np.ndarray]:
+    ) -> tuple[float, int, np.ndarray]:
         """Select action using epsilon-greedy policy.
 
         Args:
@@ -209,7 +208,7 @@ class EnhancedDQNFusionAgent:
         alpha_value = self.alpha_values[action_idx]
         return alpha_value, action_idx, state
 
-    def _derive_scores(self, state_features: np.ndarray) -> Tuple[float, float]:
+    def _derive_scores(self, state_features: np.ndarray) -> tuple[float, float]:
         """Derive anomaly_score and gat_prob from state features.
 
         Returns:
@@ -296,7 +295,7 @@ class EnhancedDQNFusionAgent:
         experience = (state, action_idx, reward, next_state, done)
         self.replay_buffer.append(experience)
 
-    def train_step(self) -> Optional[float]:
+    def train_step(self) -> float | None:
         """Enhanced training step with Double DQN."""
         if len(self.replay_buffer) < self.batch_size:
             return None
@@ -349,7 +348,7 @@ class EnhancedDQNFusionAgent:
         """Update target network parameters."""
         self.target_network.load_state_dict(self.q_network.state_dict())
 
-    def validate_agent(self, validation_data: List[Tuple], num_samples: int = 1000) -> Dict:
+    def validate_agent(self, validation_data: list[tuple], num_samples: int = 1000) -> dict:
         """Validate agent performance.
 
         Args:

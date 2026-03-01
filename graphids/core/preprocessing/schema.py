@@ -156,7 +156,7 @@ class IRSchema:
 
         # Label values
         unique_labels = df[COL_LABEL].unique()
-        if not set(unique_labels).issubset({0, 1, 0.0, 1.0}):
+        if not set(unique_labels).issubset({0, 1}):
             msg = f"Label column has values outside {{0, 1}}: {sorted(unique_labels)}"
             if strict:
                 raise ValueError(msg)

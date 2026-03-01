@@ -46,7 +46,7 @@ jobs:
           pip install fastapi httpx pydantic pyyaml numpy scikit-learn psutil wandb pytorch-lightning pandas pyarrow pytest
           pip install -e ".[dev]" --no-deps
       - name: Run tests
-        run: pytest tests/test_layer_boundaries.py tests/test_serve.py tests/test_registry.py -v -m "not slurm and not slow"
+        run: pytest tests/test_layer_boundaries.py tests/test_serve.py tests/test_registry.py tests/test_pipeline_integration.py tests/test_fusion_extractors.py -v -m "not slurm and not slow"
 
   quarto-build:
     runs-on: ubuntu-latest

@@ -16,8 +16,7 @@ _project_root = str(Path(__file__).resolve().parent.parent)
 if _project_root not in sys.path:
     sys.path.insert(0, _project_root)
 
-from tests.conftest import NUM_IDS, IN_CHANNELS, SMOKE_OVERRIDES, _make_graph
-
+from tests.conftest import IN_CHANNELS, NUM_IDS, SMOKE_OVERRIDES, _make_graph
 
 # ---------------------------------------------------------------------------
 # P1: GAT return_embedding
@@ -78,8 +77,8 @@ class TestDQNComputeFusionReward:
 
     @pytest.fixture
     def agent(self):
-        from graphids.core.models.registry import fusion_state_dim
         from graphids.core.models.dqn import EnhancedDQNFusionAgent
+        from graphids.core.models.registry import fusion_state_dim
         return EnhancedDQNFusionAgent(
             alpha_steps=11, lr=1e-3, gamma=0.9,
             state_dim=fusion_state_dim(),
@@ -169,8 +168,9 @@ class TestGenerateSweep:
 
     def test_cartesian_product_count(self, tmp_path):
         """2 params x (2, 3) values = 6 commands."""
-        from scripts.generate_sweep import parse_sweep_spec
         import itertools
+
+        from scripts.generate_sweep import parse_sweep_spec
 
         specs = ["training.lr=0.001,0.0005", "vgae.latent_dim=8,16,32"]
         keys, value_lists = [], []
@@ -214,9 +214,10 @@ class TestCLIArchiveRestore:
 
     def test_archive_created_on_rerun(self, tmp_path):
         """When a stage dir has metrics.json, re-running should archive it."""
-        from graphids.config.resolver import resolve
-        from graphids.config import stage_dir
         from datetime import datetime
+
+        from graphids.config import stage_dir
+        from graphids.config.resolver import resolve
 
         cfg = resolve("vgae", "large", dataset="hcrl_sa",
                        experiment_root=str(tmp_path))
@@ -240,9 +241,10 @@ class TestCLIArchiveRestore:
     def test_restore_on_failure(self, tmp_path):
         """On failure, archive should be restored to original path."""
         import shutil
-        from graphids.config.resolver import resolve
-        from graphids.config import stage_dir
         from datetime import datetime
+
+        from graphids.config import stage_dir
+        from graphids.config.resolver import resolve
 
         cfg = resolve("vgae", "large", dataset="hcrl_sa",
                        experiment_root=str(tmp_path))
@@ -272,9 +274,10 @@ class TestCLIArchiveRestore:
     def test_archive_deleted_on_success(self, tmp_path):
         """On success, archive should be cleaned up."""
         import shutil
-        from graphids.config.resolver import resolve
-        from graphids.config import stage_dir
         from datetime import datetime
+
+        from graphids.config import stage_dir
+        from graphids.config.resolver import resolve
 
         cfg = resolve("vgae", "large", dataset="hcrl_sa",
                        experiment_root=str(tmp_path))
@@ -306,6 +309,7 @@ class TestServeSmokeTest:
     def client(self):
         """Create a test client without loading real models."""
         from starlette.testclient import TestClient
+
         from graphids.pipeline.serve import app
         return TestClient(app)
 

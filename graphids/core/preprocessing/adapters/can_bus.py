@@ -16,17 +16,18 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import pandas as pd
 
 from graphids.config.constants import EXCLUDED_ATTACK_TYPES, MAX_DATA_BYTES
+
 from ..schema import (
-    IRSchema,
     CAN_BUS_SCHEMA,
     CAN_BUS_SCHEMA_WITH_ATTACK_TYPE,
     COL_ATTACK_TYPE,
+    IRSchema,
     feature_columns,
 )
 from ..vocabulary import EntityVocabulary

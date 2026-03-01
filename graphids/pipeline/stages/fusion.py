@@ -5,11 +5,12 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-import torch
 import pytorch_lightning as pl
+import torch
 
-from graphids.config import PipelineConfig, stage_dir, checkpoint_path, config_path
-from .utils import load_data, load_model, cache_predictions, cleanup
+from graphids.config import PipelineConfig, checkpoint_path, config_path, stage_dir
+
+from .utils import cache_predictions, cleanup, load_data, load_model
 
 log = logging.getLogger(__name__)
 

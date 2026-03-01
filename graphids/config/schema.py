@@ -207,7 +207,7 @@ class PipelineConfig(BaseModel, frozen=True):
 
     # --- Cross-field validation ---
     @model_validator(mode="after")
-    def _check_cross_field(self) -> "PipelineConfig":
+    def _check_cross_field(self) -> PipelineConfig:
         if self.model_type not in ("vgae", "gat", "dqn"):
             raise ValueError(f"model_type must be vgae/gat/dqn, got '{self.model_type}'")
         if self.scale not in ("large", "small"):
@@ -221,7 +221,7 @@ class PipelineConfig(BaseModel, frozen=True):
         p.write_text(self.model_dump_json(indent=2))
 
     @classmethod
-    def load(cls, path: str | Path) -> "PipelineConfig":
+    def load(cls, path: str | Path) -> PipelineConfig:
         """Load config. Handles nested (new) and flat (legacy) JSON."""
         raw = json.loads(Path(path).read_text())
         if "vgae" in raw and isinstance(raw.get("vgae"), dict):
@@ -229,7 +229,7 @@ class PipelineConfig(BaseModel, frozen=True):
         return cls._from_legacy_flat(raw)
 
     @classmethod
-    def _from_legacy_flat(cls, flat: dict) -> "PipelineConfig":
+    def _from_legacy_flat(cls, flat: dict) -> PipelineConfig:
         """Convert legacy flat config.json to nested format."""
         nested: dict[str, Any] = {}
         vgae: dict[str, Any] = {}

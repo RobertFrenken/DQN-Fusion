@@ -20,11 +20,12 @@ import argparse
 import logging
 import os
 import time
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
-from graphids.config import PipelineConfig, STAGES, config_path, run_id, stage_dir
+from graphids.config import STAGES, PipelineConfig, config_path, run_id, stage_dir
 from graphids.config.resolver import resolve
+
 from .validate import validate
 
 _ON_COMPUTE_NODE = bool(os.environ.get("SLURM_JOB_ID"))
@@ -172,7 +173,7 @@ def _run_flow(args: argparse.Namespace, log: logging.Logger) -> None:
                 log.info("    → %s", s)
         return
 
-    from .orchestration.ray_pipeline import train_pipeline, eval_pipeline
+    from .orchestration.ray_pipeline import eval_pipeline, train_pipeline
 
     if args.eval_only:
         log.info("Starting Ray evaluation flow (datasets=%s, scale=%s)", datasets, scale)
@@ -366,7 +367,7 @@ def main(argv: list[str] | None = None) -> None:
         pass
 
     # ---- Dispatch ----
-    started_at = datetime.now(timezone.utc).isoformat()
+    started_at = datetime.now(UTC).isoformat()
     t_start = time.monotonic()
     try:
         from .stages import STAGE_FNS
@@ -374,7 +375,7 @@ def main(argv: list[str] | None = None) -> None:
         result = STAGE_FNS[args.stage](cfg)
 
         t_end = time.monotonic()
-        completed_at = datetime.now(timezone.utc).isoformat()
+        completed_at = datetime.now(UTC).isoformat()
         duration_seconds = t_end - t_start
 
         # Capture GPU peak memory
@@ -432,7 +433,7 @@ def main(argv: list[str] | None = None) -> None:
 
     except Exception as e:
         t_end = time.monotonic()
-        completed_at = datetime.now(timezone.utc).isoformat()
+        completed_at = datetime.now(UTC).isoformat()
         duration_seconds = t_end - t_start
         # Failure → restore archive
         if archive and archive.exists():

@@ -3,10 +3,10 @@
 Extracted from the monolithic preprocessing.py to decouple dataset
 management from graph construction logic.
 """
+
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Union
 
 import numpy as np
 import torch
@@ -22,7 +22,7 @@ class GraphDataset(torch.utils.data.Dataset):
     graph objects with PyTorch Geometric DataLoader compatibility.
     """
 
-    def __init__(self, data_list: List[Data]):
+    def __init__(self, data_list: list[Data]):
         super().__init__()
         self.data_list = data_list
         if data_list:
@@ -55,17 +55,14 @@ class GraphDataset(torch.utils.data.Dataset):
                     f"expected {expected_edge}, got {g.edge_attr.size(1)}"
                 )
 
-    def get_stats(self) -> Dict[str, Union[int, float]]:
+    def get_stats(self) -> dict[str, int | float]:
         """Get comprehensive statistics about the dataset."""
         if not self.data_list:
             return {"num_graphs": 0}
 
         num_nodes = [g.num_nodes for g in self.data_list]
         num_edges = [g.num_edges for g in self.data_list]
-        labels = [
-            g.y.item() if g.y.dim() == 0 else g.y[0].item()
-            for g in self.data_list
-        ]
+        labels = [g.y.item() if g.y.dim() == 0 else g.y[0].item() for g in self.data_list]
 
         return {
             "num_graphs": len(self.data_list),

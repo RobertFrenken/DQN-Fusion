@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import logging
-import yaml
 from pathlib import Path
+
+import yaml
+
 from .schema import PipelineConfig
 
 CONFIG_DIR = Path(__file__).parent

@@ -13,19 +13,26 @@ import logging
 from pathlib import Path
 
 import numpy as np
+import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import pytorch_lightning as pl
 from torch.utils.data import DataLoader, Dataset
 
-from graphids.config import PipelineConfig, stage_dir, checkpoint_path, config_path, metrics_path
+from graphids.config import (
+    PipelineConfig,
+    checkpoint_path,
+    config_path,
+    metrics_path,
+    stage_dir,
+)
+
 from .utils import (
+    cleanup,
+    graph_label,
     load_data,
     load_model,
     make_trainer,
-    cleanup,
-    graph_label,
 )
 
 log = logging.getLogger(__name__)
@@ -252,8 +259,12 @@ def train_temporal(cfg: PipelineConfig) -> dict:
             all_labels.extend(labels.tolist())
 
     from sklearn.metrics import (
-        accuracy_score, f1_score, precision_score, recall_score,
-        matthews_corrcoef, balanced_accuracy_score,
+        accuracy_score,
+        balanced_accuracy_score,
+        f1_score,
+        matthews_corrcoef,
+        precision_score,
+        recall_score,
     )
 
     result = {

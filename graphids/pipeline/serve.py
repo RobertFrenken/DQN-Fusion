@@ -8,6 +8,7 @@ Usage:
     # Or with reload for development:
     uvicorn pipeline.serve:app --reload
 """
+
 from __future__ import annotations
 
 import logging
@@ -23,27 +24,31 @@ log = logging.getLogger(__name__)
 # Request / response models
 # ---------------------------------------------------------------------------
 
+
 class PredictRequest(BaseModel):
     """CAN frame window for classification."""
+
     node_features: list[list[float]] = Field(
-        ..., max_length=1000,
+        ...,
+        max_length=1000,
         description="Node feature matrix [num_nodes, num_features]",
     )
     edge_index: list[list[int]] = Field(
-        ..., max_length=10000,
+        ...,
+        max_length=10000,
         description="Edge index [2, num_edges] as list of [src, dst] pairs",
     )
-    dataset: str = Field(
-        default="hcrl_sa", description="Dataset the models were trained on"
-    )
+    dataset: str = Field(default="hcrl_sa", description="Dataset the models were trained on")
     scale: str = Field(
-        default="large", pattern=r"^(large|small)$",
+        default="large",
+        pattern=r"^(large|small)$",
         description="Model scale: large or small",
     )
 
 
 class PredictResponse(BaseModel):
     """Classification result with confidence and fusion alpha."""
+
     prediction: int = Field(description="0=normal, 1=attack")
     label: str = Field(description="'normal' or 'attack'")
     confidence: float = Field(description="Softmax probability of predicted class")
@@ -68,9 +73,9 @@ _device: torch.device = torch.device("cpu")
 
 def _load_models(dataset: str, scale: str) -> dict:
     """Load VGAE + GAT + DQN from experimentruns/."""
-    from graphids.config.resolver import resolve
     from graphids.config import checkpoint_path
-    from graphids.pipeline.stages.utils import load_model, load_data
+    from graphids.config.resolver import resolve
+    from graphids.pipeline.stages.utils import load_data, load_model
 
     cache_key = f"{dataset}_{scale}"
     if cache_key in _models:
@@ -100,14 +105,18 @@ def _load_models(dataset: str, scale: str) -> dict:
         from graphids.core.models.registry import fusion_state_dim
 
         agent = EnhancedDQNFusionAgent(
-            lr=dqn_cfg.fusion.lr, gamma=dqn_cfg.dqn.gamma,
-            epsilon=0.0, epsilon_decay=1.0, min_epsilon=0.0,
+            lr=dqn_cfg.fusion.lr,
+            gamma=dqn_cfg.dqn.gamma,
+            epsilon=0.0,
+            epsilon_decay=1.0,
+            min_epsilon=0.0,
             buffer_size=dqn_cfg.dqn.buffer_size,
             batch_size=dqn_cfg.dqn.batch_size,
             target_update_freq=dqn_cfg.dqn.target_update,
             device=str(_device),
             state_dim=fusion_state_dim(),
-            hidden_dim=dqn_cfg.dqn.hidden, num_layers=dqn_cfg.dqn.layers,
+            hidden_dim=dqn_cfg.dqn.hidden,
+            num_layers=dqn_cfg.dqn.layers,
         )
         sd = torch.load(dqn_ckpt, map_location="cpu", weights_only=True)
         agent.q_network.load_state_dict(sd["q_network"])
@@ -122,6 +131,7 @@ def _load_models(dataset: str, scale: str) -> dict:
 # ---------------------------------------------------------------------------
 # App
 # ---------------------------------------------------------------------------
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -160,12 +170,12 @@ async def predict(req: PredictRequest):
 
     try:
         models = _load_models(req.dataset, req.scale)
-    except Exception:
+    except Exception as exc:
         log.exception("Model loading failed for %s/%s", req.dataset, req.scale)
         raise HTTPException(
             status_code=503,
             detail=f"Model loading failed for {req.dataset}/{req.scale}",
-        )
+        ) from exc
 
     if "gat" not in models or "vgae" not in models:
         raise HTTPException(
@@ -185,6 +195,7 @@ async def predict(req: PredictRequest):
         batch_idx = torch.zeros(x.size(0), dtype=torch.long, device=_device)
         # Build 15-D state using registry extractors (VGAE 8-D + GAT 7-D)
         from graphids.core.models.registry import extractors as get_extractors
+
         features = []
         for name, extractor in get_extractors():
             feat = extractor.extract(models[name], data, batch_idx, _device)

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import os
 
-from graphids.config.constants import SLURM_ACCOUNT, SLURM_PARTITION, SLURM_GPU_TYPE
+from graphids.config.constants import SLURM_ACCOUNT, SLURM_GPU_TYPE, SLURM_PARTITION
 
 SCRATCH_ROOT = os.getenv("KD_GAT_SCRATCH", "/fs/scratch/PAS1266")
 RAY_SCRATCH = f"{SCRATCH_ROOT}/.ray"

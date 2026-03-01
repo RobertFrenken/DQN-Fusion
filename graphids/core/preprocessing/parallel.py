@@ -13,14 +13,16 @@ from __future__ import annotations
 
 import hashlib
 import logging
+from collections.abc import Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Sequence
+from typing import TYPE_CHECKING
 
 from graphids.config.constants import (
-    DEFAULT_WINDOW_SIZE,
     DEFAULT_STRIDE,
+    DEFAULT_WINDOW_SIZE,
     PREPROCESSING_VERSION,
 )
+
 from .adapters.can_bus import CANBusAdapter
 from .engine import GraphEngine
 from .schema import IRSchema

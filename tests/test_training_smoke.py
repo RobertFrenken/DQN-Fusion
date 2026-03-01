@@ -8,11 +8,17 @@ Run:  python -m pytest tests/test_training_smoke.py -v -m "not slow"
 from __future__ import annotations
 
 import pytest
-import torch
 import pytorch_lightning as pl
+import torch
 from torch_geometric.loader import DataLoader
 
-from tests.conftest import _make_graph, _make_dataset, NUM_IDS, IN_CHANNELS, SMOKE_OVERRIDES
+from tests.conftest import (
+    IN_CHANNELS,
+    NUM_IDS,
+    SMOKE_OVERRIDES,
+    _make_dataset,
+    _make_graph,
+)
 
 
 @pytest.mark.slurm
@@ -39,9 +45,9 @@ class TestVGAESmoke:
 
     def test_kd_trains(self):
         from graphids.config import resolve
+        from graphids.core.models.vgae import GraphAutoencoderNeighborhood
         from graphids.pipeline.stages.modules import VGAEModule
         from graphids.pipeline.stages.utils import make_projection
-        from graphids.core.models.vgae import GraphAutoencoderNeighborhood
 
         teacher_cfg = resolve("vgae", "large", **SMOKE_OVERRIDES)
         student_cfg = resolve(
@@ -109,8 +115,8 @@ class TestGATSmoke:
 
     def test_kd_trains(self):
         from graphids.config import resolve
-        from graphids.pipeline.stages.modules import GATModule
         from graphids.core.models.gat import GATWithJK
+        from graphids.pipeline.stages.modules import GATModule
 
         teacher_cfg = resolve("gat", "large", **SMOKE_OVERRIDES)
         student_cfg = resolve(
@@ -168,6 +174,7 @@ class TestDQNSmoke:
 
     def test_trains(self):
         import numpy as np
+
         from graphids.core.models.dqn import EnhancedDQNFusionAgent
         from graphids.core.models.registry import fusion_state_dim
 

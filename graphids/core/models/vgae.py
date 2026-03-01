@@ -2,6 +2,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch_geometric.nn import GATConv, GATv2Conv, TransformerConv
+
 from ._utils import checkpoint_conv
 
 
@@ -116,7 +117,7 @@ class GraphAutoencoderNeighborhood(nn.Module):
                 conv_type, in_dim, out_per_head, heads=heads, edge_dim=self._edge_dim,
             ))
             if (not is_last) and self.batch_norm:
-                self.decoder_bns.append(nn.BatchNorm1d((out_per_head * heads)))
+                self.decoder_bns.append(nn.BatchNorm1d(out_per_head * heads))
             # next in_dim for following layer
             in_dim = (out_per_head * heads) if (not is_last) else (in_channels - 1)
 

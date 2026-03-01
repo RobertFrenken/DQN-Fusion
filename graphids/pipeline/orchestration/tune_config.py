@@ -109,8 +109,8 @@ def _trainable(config: dict, stage: str, dataset: str, scale: str) -> None:
         return
 
     # Read metrics from the stage output
-    from graphids.config.resolver import resolve
     from graphids.config import metrics_path, stage_dir
+    from graphids.config.resolver import resolve
 
     overrides = {"dataset": dataset}
     cfg = resolve(model, scale, **overrides)

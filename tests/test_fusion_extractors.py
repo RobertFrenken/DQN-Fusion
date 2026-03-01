@@ -14,12 +14,11 @@ from torch_geometric.data import Data
 from graphids.config import resolve
 from graphids.core.models.fusion_features import (
     FusionFeatureExtractor,
-    VGAEFusionExtractor,
     GATFusionExtractor,
+    VGAEFusionExtractor,
 )
 from graphids.core.models.registry import get as registry_get
-from tests.conftest import NUM_IDS, IN_CHANNELS, SMOKE_OVERRIDES, _make_graph
-
+from tests.conftest import IN_CHANNELS, NUM_IDS, SMOKE_OVERRIDES, _make_graph
 
 # ---------------------------------------------------------------------------
 # Fixtures

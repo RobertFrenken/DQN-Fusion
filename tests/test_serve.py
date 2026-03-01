@@ -1,4 +1,5 @@
 """Mock-based tests for pipeline.serve — no GPU or SLURM required."""
+
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -7,7 +8,7 @@ import pytest
 import torch
 from fastapi.testclient import TestClient
 
-from graphids.pipeline.serve import app, _models
+from graphids.pipeline.serve import _models, app
 
 
 @pytest.fixture()
@@ -48,6 +49,7 @@ def _sample_request() -> dict:
 
 # ---- Tests ----
 
+
 def test_health_empty(client):
     """GET /health → 200 with empty models_loaded."""
     resp = client.get("/health")
@@ -67,7 +69,7 @@ def test_health_schema(client):
 
 def test_predict_no_models_503(client):
     """POST /predict → 503 when no checkpoints found."""
-    with patch("pipeline.serve._load_models", return_value={}):
+    with patch("graphids.pipeline.serve._load_models", return_value={}):
         resp = client.post("/predict", json=_sample_request())
     assert resp.status_code == 503
 
@@ -84,12 +86,12 @@ def test_predict_mocked(client):
     mock_extractors[0][1].extract.return_value = torch.tensor(
         [0.3, 0.1, 0.2, 0.0, 0.5, 1.0, -1.0, 0.77]
     )
-    mock_extractors[1][1].extract.return_value = torch.tensor(
-        [0.2, 0.8, 0.1, 0.3, 0.5, -0.1, 0.9]
-    )
+    mock_extractors[1][1].extract.return_value = torch.tensor([0.2, 0.8, 0.1, 0.3, 0.5, -0.1, 0.9])
 
-    with patch("pipeline.serve._load_models", return_value=models), \
-         patch("src.models.registry.extractors", return_value=mock_extractors):
+    with (
+        patch("graphids.pipeline.serve._load_models", return_value=models),
+        patch("graphids.core.models.registry.extractors", return_value=mock_extractors),
+    ):
         resp = client.post("/predict", json=_sample_request())
 
     assert resp.status_code == 200
@@ -116,12 +118,12 @@ def test_predict_without_dqn(client):
     mock_extractors[0][1].extract.return_value = torch.tensor(
         [0.3, 0.1, 0.2, 0.0, 0.5, 1.0, -1.0, 0.77]
     )
-    mock_extractors[1][1].extract.return_value = torch.tensor(
-        [0.2, 0.8, 0.1, 0.3, 0.5, -0.1, 0.9]
-    )
+    mock_extractors[1][1].extract.return_value = torch.tensor([0.2, 0.8, 0.1, 0.3, 0.5, -0.1, 0.9])
 
-    with patch("pipeline.serve._load_models", return_value=models), \
-         patch("src.models.registry.extractors", return_value=mock_extractors):
+    with (
+        patch("graphids.pipeline.serve._load_models", return_value=models),
+        patch("graphids.core.models.registry.extractors", return_value=mock_extractors),
+    ):
         resp = client.post("/predict", json=_sample_request())
 
     assert resp.status_code == 200
@@ -139,16 +141,16 @@ def test_predict_edge_index_transpose(client):
     mock_extractors[0][1].extract.return_value = torch.tensor(
         [0.3, 0.1, 0.2, 0.0, 0.5, 1.0, -1.0, 0.77]
     )
-    mock_extractors[1][1].extract.return_value = torch.tensor(
-        [0.2, 0.8, 0.1, 0.3, 0.5, -0.1, 0.9]
-    )
+    mock_extractors[1][1].extract.return_value = torch.tensor([0.2, 0.8, 0.1, 0.3, 0.5, -0.1, 0.9])
 
     # edge_index as [N, 2] (common user format) — should be transposed
     req = _sample_request()
     req["edge_index"] = [[0, 1], [1, 2], [2, 3]]  # shape [3, 2]
 
-    with patch("pipeline.serve._load_models", return_value=models), \
-         patch("src.models.registry.extractors", return_value=mock_extractors):
+    with (
+        patch("graphids.pipeline.serve._load_models", return_value=models),
+        patch("graphids.core.models.registry.extractors", return_value=mock_extractors),
+    ):
         resp = client.post("/predict", json=req)
 
     assert resp.status_code == 200

@@ -13,18 +13,19 @@ Run with: python -m pytest tests/test_preprocessing.py -v
 """
 
 import unittest
+
 import numpy as np
 import pandas as pd
 import torch
-
-from graphids.config.constants import NODE_FEATURE_COUNT, EDGE_FEATURE_COUNT
-from graphids.core.preprocessing.vocabulary import EntityVocabulary, _safe_hex_to_int
-from graphids.core.preprocessing.schema import IRSchema, CAN_BUS_SCHEMA
-from graphids.core.preprocessing.engine import GraphEngine
-from graphids.core.preprocessing.dataset import GraphDataset
-from graphids.core.preprocessing.adapters.can_bus import CANBusAdapter
-from graphids.core.preprocessing.parallel import process_dataset
 from torch_geometric.data import Data
+
+from graphids.config.constants import EDGE_FEATURE_COUNT, NODE_FEATURE_COUNT
+from graphids.core.preprocessing.adapters.can_bus import CANBusAdapter
+from graphids.core.preprocessing.dataset import GraphDataset
+from graphids.core.preprocessing.engine import GraphEngine
+from graphids.core.preprocessing.parallel import process_dataset
+from graphids.core.preprocessing.schema import CAN_BUS_SCHEMA, IRSchema
+from graphids.core.preprocessing.vocabulary import EntityVocabulary, _safe_hex_to_int
 
 
 class TestHexConversion(unittest.TestCase):

@@ -4,27 +4,28 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
+import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-import pytorch_lightning as pl
 
 from graphids.config import PipelineConfig, checkpoint_path, config_path
+
 from ..memory import log_memory_state
+from .modules import CurriculumDataModule, GATModule, VGAEModule
 from .utils import (
+    cleanup,
+    compute_node_budget,
+    compute_optimal_batch_size,
+    effective_batch_size,
+    graph_label,
     load_data,
+    load_frozen_cfg,
+    load_model,
     load_teacher,
+    make_dataloader,
     make_projection,
     make_trainer,
-    make_dataloader,
-    compute_optimal_batch_size,
-    compute_node_budget,
-    effective_batch_size,
-    load_model,
-    load_frozen_cfg,
-    cleanup,
-    graph_label,
 )
-from .modules import VGAEModule, GATModule, CurriculumDataModule
 
 log = logging.getLogger(__name__)
 

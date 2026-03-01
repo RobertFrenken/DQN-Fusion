@@ -214,9 +214,9 @@ def _run_stage(
 @ray.remote(num_gpus=1)
 def task_preprocess(dataset: str) -> None:
     """Ensure preprocessed graph cache exists for a dataset."""
-    from graphids.core.training.datamodules import load_dataset
+    from graphids.config import cache_dir, data_dir
     from graphids.config.resolver import resolve
-    from graphids.config import data_dir, cache_dir
+    from graphids.core.training.datamodules import load_dataset
 
     cfg = resolve("vgae", "large", dataset=dataset)
     load_dataset(dataset, data_dir(cfg), cache_dir(cfg), seed=cfg.seed)
@@ -231,8 +231,8 @@ def _make_stage_task(stage: str, model: str):
         dataset: str, scale: str, auxiliaries: str = "none", teacher_path: str | None = None
     ) -> str:
         _run_stage(stage, model, scale, dataset, auxiliaries, teacher_path)
-        from graphids.config.resolver import resolve
         from graphids.config import checkpoint_path
+        from graphids.config.resolver import resolve
 
         cfg = resolve(model, scale, auxiliaries=auxiliaries, dataset=dataset)
         return str(checkpoint_path(cfg, stage))
@@ -265,8 +265,8 @@ def task_eval(dataset: str, scale: str, auxiliaries: str = "none") -> None:
 
 def _get_teacher_ckpts(dataset: str) -> dict[str, str]:
     """Load teacher checkpoint paths from existing large variant runs."""
-    from graphids.config.resolver import resolve
     from graphids.config import checkpoint_path
+    from graphids.config.resolver import resolve
 
     teacher_paths = {}
     for model, stage in [("vgae", "autoencoder"), ("gat", "curriculum"), ("dqn", "fusion")]:

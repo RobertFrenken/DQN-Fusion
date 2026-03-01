@@ -1,4 +1,5 @@
 """Evaluation stage: runs inference on validation and test data."""
+
 from __future__ import annotations
 
 import json
@@ -6,19 +7,20 @@ import logging
 from pathlib import Path
 
 import numpy as np
+import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-import pytorch_lightning as pl
 
-from graphids.config import PipelineConfig, stage_dir, metrics_path, data_dir, cache_dir
+from graphids.config import PipelineConfig, cache_dir, data_dir, metrics_path, stage_dir
+
 from .utils import (
-    load_data,
-    load_model,
-    load_frozen_cfg,
+    _cross_model_path,
     cache_predictions,
     cleanup,
     graph_label,
-    _cross_model_path,
+    load_data,
+    load_frozen_cfg,
+    load_model,
 )
 
 log = logging.getLogger(__name__)
@@ -63,7 +65,11 @@ def evaluate(cfg: PipelineConfig) -> dict:
         gat = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
 
         p, l, s, gat_emb, gat_attn = _run_gat_inference(
-            gat, val_data, device, capture_embeddings=True, capture_attention=True,
+            gat,
+            val_data,
+            device,
+            capture_embeddings=True,
+            capture_attention=True,
         )
         all_metrics["gat"] = _compute_metrics(l, p, s)
         if gat_emb is not None:
@@ -71,19 +77,22 @@ def evaluate(cfg: PipelineConfig) -> dict:
             artifacts["gat_labels"] = l
         if gat_attn:
             artifacts["gat_attention"] = gat_attn
-        log.info("GAT val metrics: %s",
-                 {k: f"{v:.4f}" for k, v in all_metrics["gat"]["core"].items()
-                  if isinstance(v, float)})
+        log.info(
+            "GAT val metrics: %s",
+            {k: f"{v:.4f}" for k, v in all_metrics["gat"]["core"].items() if isinstance(v, float)},
+        )
 
         if test_scenarios:
             test_metrics["gat"] = {}
             for scenario, tdata in test_scenarios.items():
                 tp, tl, ts, _, _ = _run_gat_inference(gat, tdata, device)
                 test_metrics["gat"][scenario] = _compute_metrics(tl, tp, ts)
-                log.info("GAT %s  acc=%.4f f1=%.4f",
-                         scenario,
-                         test_metrics["gat"][scenario]["core"]["accuracy"],
-                         test_metrics["gat"][scenario]["core"]["f1"])
+                log.info(
+                    "GAT %s  acc=%.4f f1=%.4f",
+                    scenario,
+                    test_metrics["gat"][scenario]["core"]["accuracy"],
+                    test_metrics["gat"][scenario]["core"]["f1"],
+                )
 
         del gat
         cleanup()
@@ -93,7 +102,9 @@ def evaluate(cfg: PipelineConfig) -> dict:
     if vgae_ckpt.exists():
         vgae = load_model(cfg, "vgae", vgae_stage, num_ids, in_ch, device)
 
-        errors_np, labels_np, vgae_z = _run_vgae_inference(vgae, val_data, device, capture_embeddings=True)
+        errors_np, labels_np, vgae_z = _run_vgae_inference(
+            vgae, val_data, device, capture_embeddings=True
+        )
         best_thresh, youden_j, vgae_preds = _vgae_threshold(labels_np, errors_np)
         all_metrics["vgae"] = _compute_metrics(labels_np, vgae_preds, errors_np)
         if vgae_z is not None:
@@ -102,9 +113,10 @@ def evaluate(cfg: PipelineConfig) -> dict:
             artifacts["vgae_errors"] = errors_np
         all_metrics["vgae"]["core"]["optimal_threshold"] = best_thresh
         all_metrics["vgae"]["core"]["youden_j"] = youden_j
-        log.info("VGAE val metrics: %s",
-                 {k: f"{v:.4f}" for k, v in all_metrics["vgae"]["core"].items()
-                  if isinstance(v, float)})
+        log.info(
+            "VGAE val metrics: %s",
+            {k: f"{v:.4f}" for k, v in all_metrics["vgae"]["core"].items() if isinstance(v, float)},
+        )
 
         if test_scenarios:
             test_metrics["vgae"] = {}
@@ -113,10 +125,12 @@ def evaluate(cfg: PipelineConfig) -> dict:
                 tp = (te > best_thresh).astype(int)
                 test_metrics["vgae"][scenario] = _compute_metrics(tl, tp, te)
                 test_metrics["vgae"][scenario]["core"]["threshold_from_val"] = best_thresh
-                log.info("VGAE %s  acc=%.4f f1=%.4f",
-                         scenario,
-                         test_metrics["vgae"][scenario]["core"]["accuracy"],
-                         test_metrics["vgae"][scenario]["core"]["f1"])
+                log.info(
+                    "VGAE %s  acc=%.4f f1=%.4f",
+                    scenario,
+                    test_metrics["vgae"][scenario]["core"]["accuracy"],
+                    test_metrics["vgae"][scenario]["core"]["f1"],
+                )
 
         del vgae
         cleanup()
@@ -135,8 +149,11 @@ def evaluate(cfg: PipelineConfig) -> dict:
 
         fusion_cfg = load_frozen_cfg(cfg, "fusion")
         agent = EnhancedDQNFusionAgent(
-            lr=fusion_cfg.fusion.lr, gamma=fusion_cfg.dqn.gamma,
-            epsilon=0.0, epsilon_decay=1.0, min_epsilon=0.0,
+            lr=fusion_cfg.fusion.lr,
+            gamma=fusion_cfg.dqn.gamma,
+            epsilon=0.0,
+            epsilon_decay=1.0,
+            min_epsilon=0.0,
             buffer_size=fusion_cfg.dqn.buffer_size,
             batch_size=fusion_cfg.dqn.batch_size,
             target_update_freq=fusion_cfg.dqn.target_update,
@@ -156,9 +173,14 @@ def evaluate(cfg: PipelineConfig) -> dict:
         artifacts["dqn_alphas"] = fs.tolist()
         artifacts["dqn_labels"] = fl.tolist()
         artifacts["dqn_q_values"] = fq
-        log.info("Fusion val metrics: %s",
-                 {k: f"{v:.4f}" for k, v in all_metrics["fusion"]["core"].items()
-                  if isinstance(v, float)})
+        log.info(
+            "Fusion val metrics: %s",
+            {
+                k: f"{v:.4f}"
+                for k, v in all_metrics["fusion"]["core"].items()
+                if isinstance(v, float)
+            },
+        )
 
         if test_scenarios:
             test_metrics["fusion"] = {}
@@ -166,10 +188,12 @@ def evaluate(cfg: PipelineConfig) -> dict:
                 tc = cache_predictions(models, tdata, device, cfg.fusion.max_val_samples)
                 tp, tl, ts, _ = _run_fusion_inference(agent, tc)
                 test_metrics["fusion"][scenario] = _compute_metrics(tl, tp, ts)
-                log.info("Fusion %s  acc=%.4f f1=%.4f",
-                         scenario,
-                         test_metrics["fusion"][scenario]["core"]["accuracy"],
-                         test_metrics["fusion"][scenario]["core"]["f1"])
+                log.info(
+                    "Fusion %s  acc=%.4f f1=%.4f",
+                    scenario,
+                    test_metrics["fusion"][scenario]["core"]["accuracy"],
+                    test_metrics["fusion"][scenario]["core"]["f1"],
+                )
 
         del vgae, gat
         cleanup()
@@ -216,8 +240,8 @@ def evaluate(cfg: PipelineConfig) -> dict:
         temporal_ckpt = _cross_model_path(cfg, "gat", "temporal", "best_model.pt")
         if temporal_ckpt.exists():
             try:
-                from graphids.core.preprocessing.temporal import TemporalGrouper
                 from graphids.core.models.temporal import TemporalGraphClassifier
+                from graphids.core.preprocessing.temporal import TemporalGrouper
 
                 # Load spatial encoder
                 gat_for_temporal = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
@@ -245,7 +269,8 @@ def evaluate(cfg: PipelineConfig) -> dict:
                 temporal_model.eval()
 
                 grouper = TemporalGrouper(
-                    window=tc.temporal_window, stride=tc.temporal_stride,
+                    window=tc.temporal_window,
+                    stride=tc.temporal_stride,
                 )
                 val_sequences = grouper.group(val_data)
 
@@ -259,12 +284,17 @@ def evaluate(cfg: PipelineConfig) -> dict:
                             t_labels.append(seq_obj.y)
 
                     all_metrics["temporal"] = _compute_metrics(
-                        np.array(t_labels), np.array(t_preds),
+                        np.array(t_labels),
+                        np.array(t_preds),
                     )
-                    log.info("Temporal val metrics: %s",
-                             {k: f"{v:.4f}" for k, v in
-                              all_metrics["temporal"]["core"].items()
-                              if isinstance(v, float)})
+                    log.info(
+                        "Temporal val metrics: %s",
+                        {
+                            k: f"{v:.4f}"
+                            for k, v in all_metrics["temporal"]["core"].items()
+                            if isinstance(v, float)
+                        },
+                    )
 
                 del temporal_model, gat_for_temporal
                 cleanup()
@@ -280,8 +310,10 @@ def evaluate(cfg: PipelineConfig) -> dict:
 
                 gat_for_explain = load_model(cfg, "gat", gat_stage, num_ids, in_ch, device)
                 explanations = explain_graphs(
-                    gat_for_explain, "gat",
-                    val_data[:cfg.training.explainer_samples], device,
+                    gat_for_explain,
+                    "gat",
+                    val_data[: cfg.training.explainer_samples],
+                    device,
                     n_samples=cfg.training.explainer_samples,
                     epochs=cfg.training.explainer_epochs,
                 )
@@ -324,6 +356,7 @@ def evaluate(cfg: PipelineConfig) -> dict:
 # Inference helpers
 # ---------------------------------------------------------------------------
 
+
 def _load_test_data(cfg: PipelineConfig) -> dict:
     """Load held-out test graphs per scenario (cached)."""
     from graphids.core.training.datamodules import load_test_scenarios
@@ -364,13 +397,15 @@ def _run_gat_inference(gat, data, device, capture_embeddings=False, capture_atte
             # Attention capture (separate pass, sampled subset only)
             if capture_attention and idx < ATTENTION_SAMPLE_LIMIT:
                 _, att_weights = gat(g, return_attention_weights=True)
-                attn_data.append({
-                    "graph_idx": idx,
-                    "label": graph_label(g),
-                    "edge_index": g.edge_index.cpu().numpy(),
-                    "node_features": g.x[:, 0].cpu().numpy(),  # CAN IDs
-                    "attention_weights": [a.numpy() for a in att_weights],
-                })
+                attn_data.append(
+                    {
+                        "graph_idx": idx,
+                        "label": graph_label(g),
+                        "edge_index": g.edge_index.cpu().numpy(),
+                        "node_features": g.x[:, 0].cpu().numpy(),  # CAN IDs
+                        "attention_weights": [a.numpy() for a in att_weights],
+                    }
+                )
     emb_array = np.array(embeddings) if capture_embeddings and embeddings else None
     return np.array(preds), np.array(labels), np.array(scores), emb_array, attn_data
 
@@ -386,10 +421,15 @@ def _run_vgae_inference(vgae, data, device, capture_embeddings=False):
     with torch.no_grad():
         for g in data:
             g = g.clone().to(device)
-            batch_idx = (g.batch if hasattr(g, "batch") and g.batch is not None
-                         else torch.zeros(g.x.size(0), dtype=torch.long, device=device))
-            edge_attr = getattr(g, 'edge_attr', None)
-            cont, canid_logits, z_mean, z_logstd, _ = vgae(g.x, g.edge_index, batch_idx, edge_attr=edge_attr)
+            batch_idx = (
+                g.batch
+                if hasattr(g, "batch") and g.batch is not None
+                else torch.zeros(g.x.size(0), dtype=torch.long, device=device)
+            )
+            edge_attr = getattr(g, "edge_attr", None)
+            cont, canid_logits, z_mean, z_logstd, _ = vgae(
+                g.x, g.edge_index, batch_idx, edge_attr=edge_attr
+            )
             err = F.mse_loss(cont, g.x[:, 1:]).item()
             errors.append(err)
             labels.append(graph_label(g))
@@ -406,9 +446,11 @@ def _run_fusion_inference(agent, cache):
     for i in range(len(cache["states"])):
         state_np = cache["states"][i].numpy()
         # Capture raw Q-values before action selection
-        state_t = torch.tensor(
-            agent.normalize_state(state_np), dtype=torch.float32
-        ).unsqueeze(0).to(agent.device)
+        state_t = (
+            torch.tensor(agent.normalize_state(state_np), dtype=torch.float32)
+            .unsqueeze(0)
+            .to(agent.device)
+        )
         with torch.no_grad():
             q_vals = agent.q_network(state_t).squeeze(0).cpu().numpy()
         q_values_list.append(q_vals.tolist())
@@ -426,9 +468,9 @@ def _vgae_threshold(labels, errors):
     fpr_v, tpr_v, thresholds_v = _roc_curve(labels, errors)
     j_scores = tpr_v - fpr_v
     best_idx = np.argmax(j_scores)
-    best_thresh = (float(thresholds_v[best_idx])
-                   if best_idx < len(thresholds_v)
-                   else float(np.median(errors)))
+    best_thresh = (
+        float(thresholds_v[best_idx]) if best_idx < len(thresholds_v) else float(np.median(errors))
+    )
     preds = (errors > best_thresh).astype(int)
     return best_thresh, float(j_scores[best_idx]), preds
 
@@ -436,10 +478,20 @@ def _vgae_threshold(labels, errors):
 def _compute_metrics(labels, preds, scores=None) -> dict:
     """Compute comprehensive classification metrics."""
     from sklearn.metrics import (
-        accuracy_score, precision_score, recall_score, f1_score,
-        roc_auc_score, matthews_corrcoef, balanced_accuracy_score,
-        confusion_matrix, cohen_kappa_score, precision_recall_curve,
-        auc as sk_auc, roc_curve,
+        accuracy_score,
+        balanced_accuracy_score,
+        cohen_kappa_score,
+        confusion_matrix,
+        f1_score,
+        matthews_corrcoef,
+        precision_recall_curve,
+        precision_score,
+        recall_score,
+        roc_auc_score,
+        roc_curve,
+    )
+    from sklearn.metrics import (
+        auc as sk_auc,
     )
 
     cm = confusion_matrix(labels, preds, labels=[0, 1])
@@ -451,25 +503,25 @@ def _compute_metrics(labels, preds, scores=None) -> dict:
     fnr = float(fn / (fn + tp)) if (fn + tp) > 0 else 0.0
 
     core = {
-        "accuracy":          float(accuracy_score(labels, preds)),
-        "precision":         float(precision_score(labels, preds, zero_division=0)),
-        "recall":            float(recall_score(labels, preds, zero_division=0)),
-        "f1":                float(f1_score(labels, preds, zero_division=0)),
-        "specificity":       specificity,
+        "accuracy": float(accuracy_score(labels, preds)),
+        "precision": float(precision_score(labels, preds, zero_division=0)),
+        "recall": float(recall_score(labels, preds, zero_division=0)),
+        "f1": float(f1_score(labels, preds, zero_division=0)),
+        "specificity": specificity,
         "balanced_accuracy": float(balanced_accuracy_score(labels, preds)),
-        "mcc":               float(matthews_corrcoef(labels, preds)),
-        "fpr":               fpr,
-        "fnr":               fnr,
-        "n_samples":         int(len(labels)),
-        "confusion_matrix":  cm.tolist(),
+        "mcc": float(matthews_corrcoef(labels, preds)),
+        "fpr": fpr,
+        "fnr": fnr,
+        "n_samples": int(len(labels)),
+        "confusion_matrix": cm.tolist(),
     }
 
     additional = {
-        "kappa":          float(cohen_kappa_score(labels, preds)),
-        "tpr":            tpr,
-        "tnr":            specificity,
+        "kappa": float(cohen_kappa_score(labels, preds)),
+        "tpr": tpr,
+        "tnr": specificity,
         "detection_rate": tpr,
-        "miss_rate":      fnr,
+        "miss_rate": fnr,
     }
 
     if scores is not None and len(set(labels)) > 1:
@@ -510,6 +562,7 @@ def _compute_metrics(labels, preds, scores=None) -> dict:
 # CKA (Centered Kernel Alignment) for KD transfer analysis
 # ---------------------------------------------------------------------------
 
+
 def _linear_cka(X: np.ndarray, Y: np.ndarray) -> float:
     """Compute Linear CKA between two representation matrices.
 
@@ -524,9 +577,9 @@ def _linear_cka(X: np.ndarray, Y: np.ndarray) -> float:
     Y = Y - Y.mean(axis=0)
     n = X.shape[0]
 
-    hsic_xy = np.linalg.norm(Y.T @ X, 'fro') ** 2 / (n - 1) ** 2
-    hsic_xx = np.linalg.norm(X.T @ X, 'fro') ** 2 / (n - 1) ** 2
-    hsic_yy = np.linalg.norm(Y.T @ Y, 'fro') ** 2 / (n - 1) ** 2
+    hsic_xy = np.linalg.norm(Y.T @ X, "fro") ** 2 / (n - 1) ** 2
+    hsic_xx = np.linalg.norm(X.T @ X, "fro") ** 2 / (n - 1) ** 2
+    hsic_yy = np.linalg.norm(Y.T @ Y, "fro") ** 2 / (n - 1) ** 2
 
     denom = np.sqrt(hsic_xx * hsic_yy)
     return float(hsic_xy / denom) if denom > 0 else 0.0
@@ -558,15 +611,14 @@ def _save_cka(cfg, val_data, device, num_ids, in_ch, out_dir):
     """Compute and save CKA matrix between teacher and student GAT layers."""
     from graphids.config import stage_dir
 
-    # Find teacher checkpoint
-    teacher_stage = stage_dir(cfg, "curriculum").parent
     # Teacher is large-scale, same dataset, no KD
     teacher_gat_stage = "curriculum"
     teacher_ckpt = _cross_model_path(cfg, "gat", teacher_gat_stage, "best_model.pt")
 
     # For KD runs, we need the teacher (large, no-KD) model
     # The teacher path is the large-scale GAT without KD auxiliary
-    from graphids.config import resolve, checkpoint_path
+    from graphids.config import checkpoint_path, resolve
+
     teacher_cfg = resolve("gat", "large", dataset=cfg.dataset)
     teacher_ckpt = checkpoint_path(teacher_cfg, teacher_gat_stage)
 
@@ -599,8 +651,8 @@ def _save_cka(cfg, val_data, device, num_ids, in_ch, out_dir):
 
     cka_data = {
         "matrix": cka_matrix.tolist(),
-        "teacher_layers": [f"Teacher L{i+1}" for i in range(n_teacher)],
-        "student_layers": [f"Student L{i+1}" for i in range(n_student)],
+        "teacher_layers": [f"Teacher L{i + 1}" for i in range(n_teacher)],
+        "student_layers": [f"Student L{i + 1}" for i in range(n_student)],
     }
     cka_path = out_dir / "cka_matrix.json"
     cka_path.write_text(json.dumps(cka_data, indent=2))

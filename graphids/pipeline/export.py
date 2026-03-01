@@ -8,13 +8,14 @@ Data sources:
 Usage:
     python -m graphids.pipeline.export [--output-dir reports/data]
 """
+
 from __future__ import annotations
 
 import argparse
 import csv
 import json
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -28,7 +29,7 @@ def _versioned_envelope(data: list | dict) -> dict:
     """Wrap export data with schema version and timestamp."""
     return {
         "schema_version": "1.0.0",
-        "exported_at": datetime.now(timezone.utc).isoformat(),
+        "exported_at": datetime.now(UTC).isoformat(),
         "data": data,
     }
 
@@ -36,6 +37,7 @@ def _versioned_envelope(data: list | dict) -> dict:
 # ---------------------------------------------------------------------------
 # Data source: datalake Parquet (primary) with filesystem fallback
 # ---------------------------------------------------------------------------
+
 
 def _scan_runs() -> list[dict]:
     """Load run metadata from datalake Parquet, with filesystem dir paths.
@@ -62,7 +64,7 @@ def _scan_runs_from_datalake() -> list[dict]:
     con.close()
 
     runs = []
-    for run_id, dataset, model_type, scale, stage, has_kd, success in rows:
+    for run_id, dataset, model_type, scale, stage, has_kd, _success in rows:
         run_dir = EXPERIMENT_ROOT / run_id
         if not run_dir.is_dir():
             continue
@@ -75,17 +77,19 @@ def _scan_runs_from_datalake() -> list[dict]:
         has_metrics = (run_dir / "metrics.json").exists()
         has_checkpoint = (run_dir / "best_model.pt").exists()
 
-        runs.append({
-            "run_id": run_id,
-            "dataset": dataset,
-            "model_type": model_type,
-            "scale": scale,
-            "stage": stage,
-            "has_kd": 1 if has_kd else 0,
-            "status": "complete" if has_metrics or has_checkpoint else "running",
-            "config": cfg,
-            "dir": run_dir,
-        })
+        runs.append(
+            {
+                "run_id": run_id,
+                "dataset": dataset,
+                "model_type": model_type,
+                "scale": scale,
+                "stage": stage,
+                "has_kd": 1 if has_kd else 0,
+                "status": "complete" if has_metrics or has_checkpoint else "running",
+                "config": cfg,
+                "dir": run_dir,
+            }
+        )
     return runs
 
 
@@ -122,23 +126,27 @@ def _scan_runs_from_filesystem() -> list[dict]:
                     remaining = remaining[:-1]
                 stage = "_".join(remaining)
 
-            has_kd = bool(cfg.get("auxiliaries")) or ("_kd" in run_dir.name and "nokd" not in run_dir.name)
+            has_kd = bool(cfg.get("auxiliaries")) or (
+                "_kd" in run_dir.name and "nokd" not in run_dir.name
+            )
 
             run_id = f"{ds_dir.name}/{run_dir.name}"
             has_metrics = (run_dir / "metrics.json").exists()
             has_checkpoint = (run_dir / "best_model.pt").exists()
 
-            runs.append({
-                "run_id": run_id,
-                "dataset": ds_dir.name,
-                "model_type": model_type,
-                "scale": scale,
-                "stage": stage,
-                "has_kd": 1 if has_kd else 0,
-                "status": "complete" if has_metrics or has_checkpoint else "running",
-                "config": cfg,
-                "dir": run_dir,
-            })
+            runs.append(
+                {
+                    "run_id": run_id,
+                    "dataset": ds_dir.name,
+                    "model_type": model_type,
+                    "scale": scale,
+                    "stage": stage,
+                    "has_kd": 1 if has_kd else 0,
+                    "status": "complete" if has_metrics or has_checkpoint else "running",
+                    "config": cfg,
+                    "dir": run_dir,
+                }
+            )
     return runs
 
 
@@ -168,7 +176,9 @@ def _extract_core_metrics(metrics: dict, base: dict, target_metrics: set) -> lis
         for name in target_metrics:
             val = core.get(name)
             if isinstance(val, (int, float)):
-                rows.append({**base, "model": model_key, "metric_name": name, "best_value": round(val, 6)})
+                rows.append(
+                    {**base, "model": model_key, "metric_name": name, "best_value": round(val, 6)}
+                )
     return rows
 
 
@@ -185,8 +195,10 @@ def export_leaderboard(output_dir: Path) -> Path:
             continue
 
         base = {
-            "dataset": run["dataset"], "model_type": run["model_type"],
-            "scale": run["scale"], "has_kd": run["has_kd"],
+            "dataset": run["dataset"],
+            "model_type": run["model_type"],
+            "scale": run["scale"],
+            "has_kd": run["has_kd"],
         }
         rows.extend(_extract_core_metrics(metrics, base, target_metrics))
 
@@ -204,29 +216,27 @@ def export_runs(output_dir: Path) -> Path:
         completed_at = None
         cfg_path = run["dir"] / "config.json"
         if cfg_path.exists():
-            started_at = datetime.fromtimestamp(
-                cfg_path.stat().st_mtime, tz=timezone.utc
-            ).isoformat()
+            started_at = datetime.fromtimestamp(cfg_path.stat().st_mtime, tz=UTC).isoformat()
         for end_file in ("best_model.pt", "metrics.json"):
             p = run["dir"] / end_file
             if p.exists():
-                completed_at = datetime.fromtimestamp(
-                    p.stat().st_mtime, tz=timezone.utc
-                ).isoformat()
+                completed_at = datetime.fromtimestamp(p.stat().st_mtime, tz=UTC).isoformat()
                 break
 
-        rows.append({
-            "run_id": run["run_id"],
-            "dataset": run["dataset"],
-            "model_type": run["model_type"],
-            "scale": run["scale"],
-            "stage": run["stage"],
-            "has_kd": run["has_kd"],
-            "status": run["status"],
-            "teacher_run": "",
-            "started_at": started_at,
-            "completed_at": completed_at,
-        })
+        rows.append(
+            {
+                "run_id": run["run_id"],
+                "dataset": run["dataset"],
+                "model_type": run["model_type"],
+                "scale": run["scale"],
+                "stage": run["stage"],
+                "has_kd": run["has_kd"],
+                "status": run["status"],
+                "teacher_run": "",
+                "started_at": started_at,
+                "completed_at": completed_at,
+            }
+        )
 
     out = output_dir / "runs.json"
     out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
@@ -254,12 +264,14 @@ def export_metrics(output_dir: Path) -> Path:
                 section = model_data.get(scenario_type, {})
                 for metric_name, value in section.items():
                     if isinstance(value, (int, float)):
-                        rows.append({
-                            "model": model_key,
-                            "scenario": "val",
-                            "metric_name": metric_name,
-                            "value": value,
-                        })
+                        rows.append(
+                            {
+                                "model": model_key,
+                                "scenario": "val",
+                                "metric_name": metric_name,
+                                "value": value,
+                            }
+                        )
 
         fname = run["run_id"].replace("/", "_") + ".json"
         (metrics_dir / fname).write_text(json.dumps(_versioned_envelope(rows), indent=2))
@@ -283,8 +295,7 @@ def export_metric_catalog(output_dir: Path) -> Path:
             model_data = metrics.get(model_key, {})
             for section in ("core", "additional"):
                 all_names.update(
-                    k for k, v in model_data.get(section, {}).items()
-                    if isinstance(v, (int, float))
+                    k for k, v in model_data.get(section, {}).items() if isinstance(v, (int, float))
                 )
 
     catalog = sorted(all_names)
@@ -303,13 +314,15 @@ def export_datasets(output_dir: Path) -> Path:
     catalog = load_catalog()
     rows = []
     for name, entry in catalog.items():
-        rows.append({
-            "name": name,
-            "domain": getattr(entry, "domain", "automotive"),
-            "protocol": getattr(entry, "protocol", "CAN"),
-            "source": getattr(entry, "source", ""),
-            "description": getattr(entry, "description", ""),
-        })
+        rows.append(
+            {
+                "name": name,
+                "domain": getattr(entry, "domain", "automotive"),
+                "protocol": getattr(entry, "protocol", "CAN"),
+                "source": getattr(entry, "source", ""),
+                "description": getattr(entry, "description", ""),
+            }
+        )
 
     out = output_dir / "datasets.json"
     out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
@@ -351,16 +364,18 @@ def export_kd_transfer(output_dir: Path) -> Path:
             s_core = s_metrics.get(model_key, {}).get("core", {})
             for mn in target_metrics:
                 if mn in t_core and mn in s_core:
-                    rows.append({
-                        "student_run": student["run_id"],
-                        "dataset": ds,
-                        "model_type": teacher["model_type"],
-                        "student_scale": "small",
-                        "teacher_run": teacher["run_id"],
-                        "metric_name": mn,
-                        "student_value": round(s_core[mn], 6),
-                        "teacher_value": round(t_core[mn], 6),
-                    })
+                    rows.append(
+                        {
+                            "student_run": student["run_id"],
+                            "dataset": ds,
+                            "model_type": teacher["model_type"],
+                            "student_scale": "small",
+                            "teacher_run": teacher["run_id"],
+                            "metric_name": mn,
+                            "student_value": round(s_core[mn], 6),
+                            "teacher_value": round(t_core[mn], 6),
+                        }
+                    )
 
     out = output_dir / "kd_transfer.json"
     out.write_text(json.dumps(_versioned_envelope(rows), indent=2))
@@ -387,8 +402,9 @@ def export_training_curves(output_dir: Path) -> Path:
             if not run_dir.is_dir():
                 continue
 
-            csv_logs = list(run_dir.glob("csv_logs/*/metrics.csv")) + \
-                       list(run_dir.glob("lightning_logs/*/metrics.csv"))
+            csv_logs = list(run_dir.glob("csv_logs/*/metrics.csv")) + list(
+                run_dir.glob("lightning_logs/*/metrics.csv")
+            )
             if not csv_logs:
                 continue
 
@@ -404,20 +420,20 @@ def export_training_curves(output_dir: Path) -> Path:
                             if key == "epoch" or key == "step" or val == "":
                                 continue
                             try:
-                                rows.append({
-                                    "epoch": int(float(epoch)),
-                                    "metric_name": key,
-                                    "value": float(val),
-                                })
+                                rows.append(
+                                    {
+                                        "epoch": int(float(epoch)),
+                                        "metric_name": key,
+                                        "value": float(val),
+                                    }
+                                )
                             except (ValueError, TypeError):
                                 continue
 
                 if rows:
                     run_id = f"{ds_dir.name}/{run_dir.name}"
                     fname = run_id.replace("/", "_") + ".json"
-                    (curves_dir / fname).write_text(
-                        json.dumps(_versioned_envelope(rows), indent=2)
-                    )
+                    (curves_dir / fname).write_text(json.dumps(_versioned_envelope(rows), indent=2))
                     exported_files.append(fname)
                     count += 1
             except Exception as e:
@@ -444,19 +460,21 @@ def export_model_sizes(output_dir: Path) -> Path:
             try:
                 cfg = resolve(model_type, scale, dataset="hcrl_sa")
                 from graphids.core.models.registry import get as get_model
+
                 entry = get_model(model_type)
                 model = entry.factory(cfg, num_ids, in_ch)
                 param_count = sum(p.numel() for p in model.parameters())
-                sizes.append({
-                    "model_type": model_type,
-                    "scale": scale,
-                    "param_count": param_count,
-                    "param_count_M": round(param_count / 1e6, 3),
-                })
+                sizes.append(
+                    {
+                        "model_type": model_type,
+                        "scale": scale,
+                        "param_count": param_count,
+                        "param_count_M": round(param_count / 1e6, 3),
+                    }
+                )
                 del model
             except Exception as e:
-                log.warning("Could not instantiate %s/%s for param count: %s",
-                            model_type, scale, e)
+                log.warning("Could not instantiate %s/%s for param count: %s", model_type, scale, e)
 
     out = output_dir / "model_sizes.json"
     out.write_text(json.dumps(_versioned_envelope(sizes), indent=2))
@@ -486,8 +504,8 @@ def export_data_for_reports(reports_data_dir: Path | None = None) -> None:
     # Training curves: merge all into a single file for easy DuckDB-WASM loading
     tc_dir = _DATALAKE_ROOT / "training_curves"
     if tc_dir.is_dir():
-        import pyarrow.parquet as pq
         import pyarrow as pa
+        import pyarrow.parquet as pq
 
         tables = []
         for f in sorted(tc_dir.glob("*.parquet")):
@@ -508,6 +526,7 @@ def export_data_for_reports(reports_data_dir: Path | None = None) -> None:
 # Main
 # ---------------------------------------------------------------------------
 
+
 def export_all(output_dir: Path, *, include_reports: bool = False) -> None:
     """Run all exports."""
     output_dir.mkdir(parents=True, exist_ok=True)
@@ -521,7 +540,10 @@ def export_all(output_dir: Path, *, include_reports: bool = False) -> None:
     export_metric_catalog(output_dir)
 
     for name, path in [
-        ("leaderboard", lb), ("runs", runs), ("datasets", ds), ("kd_transfer", kd),
+        ("leaderboard", lb),
+        ("runs", runs),
+        ("datasets", ds),
+        ("kd_transfer", kd),
     ]:
         if path.stat().st_size < 10:
             log.warning("EMPTY EXPORT: %s (%s)", name, path)
@@ -544,11 +566,14 @@ def main(argv: list[str] | None = None) -> None:
         description="Export experiment results to static JSON/Parquet for Quarto site",
     )
     parser.add_argument(
-        "--output-dir", type=Path, default=DEFAULT_OUTPUT_DIR,
+        "--output-dir",
+        type=Path,
+        default=DEFAULT_OUTPUT_DIR,
         help=f"Output directory (default: {DEFAULT_OUTPUT_DIR})",
     )
     parser.add_argument(
-        "--reports", action="store_true",
+        "--reports",
+        action="store_true",
         help="Also copy datalake Parquet data to reports/data/ for Quarto site",
     )
     args = parser.parse_args(argv)

@@ -12,7 +12,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from graphids.config import PipelineConfig
 
-from graphids.config import STAGES, get_datasets, data_dir
+from graphids.config import STAGES, data_dir, get_datasets
 
 _log = logging.getLogger(__name__)
 

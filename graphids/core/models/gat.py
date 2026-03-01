@@ -1,8 +1,15 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from torch_geometric.nn import GATConv, GATv2Conv, TransformerConv, JumpingKnowledge, global_mean_pool
+from torch_geometric.nn import (
+    GATConv,
+    GATv2Conv,
+    JumpingKnowledge,
+    TransformerConv,
+    global_mean_pool,
+)
 from torch_geometric.nn.aggr import MultiAggregation
+
 from ._utils import checkpoint_conv
 
 

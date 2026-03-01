@@ -11,21 +11,25 @@ Registration order determines feature concatenation order in
 """
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable, Optional
 
 import torch.nn as nn
 
-from .fusion_features import FusionFeatureExtractor, VGAEFusionExtractor, GATFusionExtractor
+from .fusion_features import (
+    FusionFeatureExtractor,
+    GATFusionExtractor,
+    VGAEFusionExtractor,
+)
 
-_REGISTRY: dict[str, "ModelEntry"] = {}
+_REGISTRY: dict[str, ModelEntry] = {}
 
 
 @dataclass
 class ModelEntry:
     model_type: str
     factory: Callable  # (cfg, num_ids, in_ch) -> nn.Module
-    extractor: Optional[FusionFeatureExtractor]
+    extractor: FusionFeatureExtractor | None
 
 
 def register(entry: ModelEntry) -> None:

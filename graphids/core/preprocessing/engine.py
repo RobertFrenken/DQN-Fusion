@@ -20,10 +20,11 @@ import torch
 from torch_geometric.data import Data
 
 from graphids.config.constants import (
-    DEFAULT_WINDOW_SIZE,
     DEFAULT_STRIDE,
+    DEFAULT_WINDOW_SIZE,
     EDGE_FEATURE_COUNT,
 )
+
 from .schema import IRSchema
 
 log = logging.getLogger(__name__)
