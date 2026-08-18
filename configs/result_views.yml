@@ -18,4 +18,5 @@ any:
   metrics:
     - test/test/auroc_macro
     - test/test/mcc
+    - test/test/auroc_per_attack/fuzzing
     - test/test/f1_per_class/attack
